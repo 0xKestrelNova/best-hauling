@@ -1936,6 +1936,7 @@ function renderJourney() {
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
   renderJourneyMap();
   renderSoute();
+  ajusterRangeeVoyage(); // après la carte ET la soute : les deux pèsent sur l'équilibre des colonnes
 }
 
 // Récap du voyage (colonne de gauche, sous le vaisseau) : remplit l'espace avec des KPIs utiles.
@@ -1954,14 +1955,22 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
        ${kpi(systems, "système" + (systems > 1 ? "s" : ""))}
        ${kpi(MARKET ? materials : "…", "matériau" + (materials > 1 ? "x" : ""))}
      </div>`;
-  // Bascule intelligente : si la carte Voyage est bien plus haute que la colonne de gauche
-  // (voyage long / jambe dépliée), on empile en pleine largeur pour supprimer le grand vide.
-  // Mesure synchrone (getBoundingClientRect force le reflow) -> fiable même onglet non peint.
-  const row = $("shipJourneyRow"), jc = $("journeyCard"), vl = $("voyageLeft");
-  if (row && jc && vl && !jc.hidden) {
-    row.classList.remove("stacked"); // mesure toujours dans la disposition côte-à-côte de base
-    if (jc.getBoundingClientRect().height > vl.getBoundingClientRect().height + 140) row.classList.add("stacked");
-  }
+}
+
+// Bascule intelligente : si la carte Voyage est bien plus haute que TOUT ce qui l'accompagne
+// (voyage long / jambe dépliée), on empile en pleine largeur pour supprimer le grand vide.
+// On mesure la plus haute des AUTRES colonnes, pas seulement celle de gauche : depuis que la carte
+// du parcours est la troisième colonne, c'est souvent ELLE qui remplit le vide, et ne regarder
+// qu'à gauche empilait la rangée dès que la colonne du vaisseau était vide.
+// À appeler APRÈS le rendu de la carte : mesurée avant, elle est encore masquée (ou à sa taille du
+// rendu précédent) et la rangée s'empilait sur une hauteur qui n'existait plus.
+// Mesure synchrone (getBoundingClientRect force le reflow) -> fiable même onglet non peint.
+function ajusterRangeeVoyage() {
+  const row = $("shipJourneyRow"), jc = $("journeyCard"), vl = $("voyageLeft"), jm = $("journeyMap");
+  if (!row || !jc || !vl || jc.hidden) return;
+  row.classList.remove("stacked"); // mesure toujours dans la disposition côte-à-côte de base
+  const h = (el) => (el && !el.hidden ? el.getBoundingClientRect().height : 0);
+  if (h(jc) > Math.max(h(vl), h(jm)) + 140) row.classList.add("stacked");
 }
 
 // Bascule entre les vues et rafraîchit la bonne.
