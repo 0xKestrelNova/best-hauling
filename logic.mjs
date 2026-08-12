@@ -197,20 +197,40 @@ export function netMarginRoi(margin, buyPrice, units, fees) {
 }
 
 // ---------- Corrections locales : décision de fraîcheur (pure, sans effet de bord) ----------
-// o = correction { price?, vol?, base } (base = date UEX du point au moment de la correction).
-// Renvoie prix/volume effectifs + drapeaux + `stale` (true = périmée par un relevé plus récent).
-export function effValue(o, price, vol, dataUpdated) {
-  if (!o) return { price, vol, oprice: false, ovol: false, stale: false };
+// Durée de validité d'un VOLUME corrigé. Un stock et une demande sont des quantités qui REPOUSSENT :
+// le jeu réapprovisionne par paliers de 5 à 15 min, quand UEX ne republie un point que tous les
+// 3,1 jours en médiane (mesuré sur 2 592 relevés). Sans cette borne, la déduction d'un chargement
+// survivait des JOURS à un stock déjà revenu — un facteur ~70 entre les deux horizons. Un prix, lui,
+// n'a pas de durée de vie : rien ne régénère un prix faux, il reste faux.
+// Ce n'est PAS une mesure, et aucune ne peut la fonder : depuis le patch 3.20 les inventaires de
+// boutique ont quitté les fichiers du jeu, et aucun site ne publie de débit de recharge par terminal
+// (cf. docs/superpowers/specs/2026-08-12-peremption-des-volumes-et-corrections-groupees-design.md).
+export const DUREE_VOL = 3 * 3600;
+
+// o = correction { price?, vol?, base, pris? } — `base` = date UEX du point au moment de la
+// correction, `pris` = heure MURALE de la saisie du volume.
+// Renvoie prix/volume effectifs + drapeaux, et DEUX péremptions distinctes :
+//   `stale`    = UEX a republié le point -> toute la correction est morte ;
+//   `staleVol` = le volume a dépassé sa durée de vie -> lui seul est mort, le prix survit.
+// Deux drapeaux et non un objet : `stale` garde exactement son sens d'avant, donc un lecteur qu'on
+// aurait oublié de mettre à jour perd la nouveauté au lieu de lire un objet toujours vrai.
+export function effValue(o, price, vol, dataUpdated, nowSec = Date.now() / 1000, dureeVol = DUREE_VOL) {
+  if (!o) return { price, vol, oprice: false, ovol: false, stale: false, staleVol: false };
   const base = o.base != null ? o.base : o.ts != null ? o.ts : Infinity; // legacy: ts ; sinon jamais périmé
   if (dataUpdated && base !== Infinity && dataUpdated > base) {
-    return { price, vol, oprice: false, ovol: false, stale: true };
+    return { price, vol, oprice: false, ovol: false, stale: true, staleVol: false };
   }
+  // `pris` absent = correction d'un format antérieur : pas de péremption par durée, sinon toutes
+  // celles déjà en localStorage disparaîtraient au premier chargement. La frontière appartient à la
+  // correction (`> dureeVol`, pas `>=`), même convention que `base == relevé` juste au-dessus.
+  const staleVol = o.vol != null && o.pris != null && nowSec - o.pris > dureeVol;
   return {
     price: o.price != null ? o.price : price,
-    vol: o.vol != null ? o.vol : vol,
+    vol: o.vol != null && !staleVol ? o.vol : vol,
     oprice: o.price != null,
-    ovol: o.vol != null,
+    ovol: o.vol != null && !staleVol,
     stale: false,
+    staleVol,
   };
 }
 
@@ -520,21 +540,36 @@ export function addableUnits(it, rem) {
 // Le store est un objet { "commodité|terminal|side": { price?, vol?, base } }.
 export const ovKey = (commodity, terminal, side) => `${commodity}|${terminal}|${side}`;
 
-// Valeur effective (corrigée si besoin) + suppression de la correction périmée du store.
-// Renvoie { price, vol, oprice, ovol, stale }. Seul effet de bord : delete store[key] si périmé.
-export function effFromStore(store, key, price, vol, dataUpdated) {
-  const r = effValue(store[key], price, vol, dataUpdated);
+// Valeur effective (corrigée si besoin) + retrait de ce qui est périmé.
+// Renvoie { price, vol, oprice, ovol, stale, staleVol }. Effets de bord, et rien d'autre :
+//   UEX a republié -> la clé entière part ; le volume a vieilli -> lui seul part, et la clé avec
+//   s'il ne restait que lui.
+export function effFromStore(store, key, price, vol, dataUpdated, nowSec = Date.now() / 1000, dureeVol = DUREE_VOL) {
+  const r = effValue(store[key], price, vol, dataUpdated, nowSec, dureeVol);
   if (r.stale) delete store[key];
+  else if (r.staleVol) {
+    const o = store[key];
+    delete o.vol;
+    delete o.pris;
+    if (o.price == null) delete store[key];
+  }
   return r;
 }
 
 // Enregistre/efface une correction. field = "price"|"vol". value null/"" efface ce champ.
 // baseUpdated = date UEX du point (ancre de fraîcheur). Supprime la clé si plus rien de corrigé.
-export function setInStore(store, key, field, value, baseUpdated) {
+export function setInStore(store, key, field, value, baseUpdated, nowSec = Date.now() / 1000) {
   const o = store[key] || {};
   const n = value == null || value === "" ? NaN : Math.max(0, Math.round(Number(value)));
   if (Number.isFinite(n)) o[field] = n;
   else delete o[field];
+  // `pris` n'existe que pour un volume : lui seul a une durée de vie. Nom volontairement distinct de
+  // `ts`, que effValue lit encore comme alias historique de `base` — les confondre périmerait les
+  // corrections d'anciens formats au lieu de les épargner.
+  if (field === "vol") {
+    if (Number.isFinite(n)) o.pris = Number(nowSec) || 0;
+    else delete o.pris;
+  }
   if (o.price != null || o.vol != null) { o.base = Number(baseUpdated) || 0; store[key] = o; }
   else delete store[key];
   return store;

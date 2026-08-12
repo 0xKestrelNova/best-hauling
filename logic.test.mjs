@@ -278,7 +278,7 @@ test("computeUnits : prend la plus petite contrainte (soute vs budget)", () => {
 
 // ---------- effValue (corrections locales + fraîcheur) ----------
 test("effValue : pas de correction -> valeurs brutes", () => {
-  assert.deepEqual(effValue(undefined, 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false });
+  assert.deepEqual(effValue(undefined, 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false, staleVol: false });
 });
 
 test("effValue : correction appliquée si plus récente que le relevé", () => {
@@ -303,6 +303,69 @@ test("effValue : base == relevé n'est PAS périmé (correction fraîche contre 
   assert.equal(r.stale, false);
   assert.equal(r.vol, 5);
   assert.equal(r.ovol, true);
+});
+
+// ---------- Péremption par DURÉE des volumes corrigés (spec 2026-08-12) ----------
+// Un volume est une quantité qui repousse : le jeu réapprovisionne par paliers de 5 à 15 min, alors
+// qu'UEX ne republie un point que tous les 3,1 jours en médiane. Une déduction de chargement
+// survivait donc des jours à un stock déjà revenu. Un PRIX, lui, ne se régénère pas : il garde le
+// comportement d'avant. La péremption par durée est donc par CHAMP.
+const MAINTENANT = 1_700_000_000;
+const IL_Y_A = (s) => MAINTENANT - s;
+
+test("effValue : un volume corrigé depuis plus de 3 h revient à la valeur UEX", () => {
+  const o = { vol: 12, base: 1000, pris: IL_Y_A(3 * 3600 + 1) };
+  const r = effValue(o, 100, 500, 900, MAINTENANT);
+  assert.equal(r.vol, 500);        // retour au stock UEX
+  assert.equal(r.ovol, false);
+  assert.equal(r.staleVol, true);
+  assert.equal(r.stale, false);    // ce n'est pas UEX qui l'a périmée
+});
+
+test("effValue : un volume corrigé depuis moins de 3 h s'applique", () => {
+  const r = effValue({ vol: 12, base: 1000, pris: IL_Y_A(2 * 3600) }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.vol, 12);
+  assert.equal(r.ovol, true);
+  assert.equal(r.staleVol, false);
+});
+
+test("effValue : à 3 h PILE le volume n'est pas encore périmé", () => {
+  // Même convention que `base == relevé` : la frontière appartient à la correction.
+  const r = effValue({ vol: 12, base: 1000, pris: IL_Y_A(3 * 3600) }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.staleVol, false);
+  assert.equal(r.vol, 12);
+});
+
+test("effValue : le PRIX survit à la péremption du volume", () => {
+  // C'est tout l'intérêt d'une péremption par champ : rien ne régénère un prix faux.
+  const o = { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) };
+  const r = effValue(o, 100, 500, 900, MAINTENANT);
+  assert.equal(r.price, 7000);
+  assert.equal(r.oprice, true);
+  assert.equal(r.vol, 500);
+  assert.equal(r.ovol, false);
+});
+
+test("effValue : sans `pris` (corrections déjà en localStorage), aucune péremption par durée", () => {
+  // Sinon toutes les corrections existantes disparaîtraient au premier chargement de la nouvelle
+  // version. Elles s'aligneront à la prochaine saisie.
+  const r = effValue({ vol: 12, base: 1000 }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.staleVol, false);
+  assert.equal(r.vol, 12);
+});
+
+test("effValue : un relevé UEX plus récent périme TOUT, même un volume de deux minutes", () => {
+  const o = { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(120) };
+  const r = effValue(o, 100, 500, 1500, MAINTENANT);
+  assert.equal(r.stale, true);
+  assert.equal(r.price, 100);
+  assert.equal(r.vol, 500);
+});
+
+test("effValue : la durée est réglable", () => {
+  const o = { vol: 12, base: 1000, pris: IL_Y_A(3600) };
+  assert.equal(effValue(o, 100, 500, 900, MAINTENANT, 30 * 60).staleVol, true);  // 30 min
+  assert.equal(effValue(o, 100, 500, 900, MAINTENANT, 6 * 3600).staleVol, false); // 6 h
 });
 
 test("effValue : compat ascendante — legacy ts, et sans date jamais périmé", () => {
@@ -633,14 +696,16 @@ test("ovKey : clé stable commodité|terminal|side", () => {
 });
 
 test("setInStore : enregistre prix + base, efface un champ, supprime la clé si vide", () => {
+  // Horloge passée explicitement : un volume enregistre son heure de saisie (`pris`), qui serait
+  // sinon celle du run et rendrait la comparaison non déterministe.
   const store = {};
-  setInStore(store, "A|T|buy", "price", "7000", 111);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, base: 111 }); // valeur arrondie + base
-  setInStore(store, "A|T|buy", "vol", 50, 222);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, vol: 50, base: 222 });
-  setInStore(store, "A|T|buy", "price", "", 222); // efface le prix
-  assert.deepEqual(store["A|T|buy"], { vol: 50, base: 222 });
-  setInStore(store, "A|T|buy", "vol", null, 222);  // plus rien -> clé supprimée
+  setInStore(store, "A|T|buy", "price", "7000", 111, MAINTENANT);
+  assert.deepEqual(store["A|T|buy"], { price: 7000, base: 111 }); // valeur arrondie + base, pas de `pris`
+  setInStore(store, "A|T|buy", "vol", 50, 222, MAINTENANT);
+  assert.deepEqual(store["A|T|buy"], { price: 7000, vol: 50, base: 222, pris: MAINTENANT });
+  setInStore(store, "A|T|buy", "price", "", 222, MAINTENANT); // efface le prix
+  assert.deepEqual(store["A|T|buy"], { vol: 50, base: 222, pris: MAINTENANT });
+  setInStore(store, "A|T|buy", "vol", null, 222, MAINTENANT);  // plus rien -> clé supprimée
   assert.equal("A|T|buy" in store, false);
 });
 
@@ -654,7 +719,7 @@ test("setInStore : borne à >= 0 et arrondit", () => {
 
 test("effFromStore : valeur brute si pas de correction", () => {
   const store = {};
-  assert.deepEqual(effFromStore(store, "k", 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false });
+  assert.deepEqual(effFromStore(store, "k", 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false, staleVol: false });
 });
 
 test("effFromStore : applique la correction plus récente que le relevé", () => {
@@ -671,6 +736,37 @@ test("effFromStore : SUPPRIME du store la correction périmée par un relevé pl
   assert.equal(r.stale, true);
   assert.equal(r.price, 100);          // retour à la valeur UEX
   assert.equal("k" in store, false);   // effet de bord : périmée -> supprimée
+});
+
+test("setInStore : un volume enregistre l'heure de saisie, un prix non", () => {
+  const store = {};
+  setInStore(store, "A|T|buy", "vol", 12, 111, MAINTENANT);
+  assert.equal(store["A|T|buy"].pris, MAINTENANT);
+  const store2 = {};
+  setInStore(store2, "A|T|buy", "price", 7000, 111, MAINTENANT);
+  assert.equal("pris" in store2["A|T|buy"], false); // un prix n'a pas de durée de vie
+});
+
+test("setInStore : effacer le volume retire aussi son heure de saisie", () => {
+  const store = {};
+  setInStore(store, "k", "vol", 12, 111, MAINTENANT);
+  setInStore(store, "k", "price", 7000, 111, MAINTENANT);
+  setInStore(store, "k", "vol", null, 111, MAINTENANT);
+  assert.deepEqual(store.k, { price: 7000, base: 111 }); // ni vol, ni pris
+});
+
+test("effFromStore : le volume périmé quitte le store, le prix y reste", () => {
+  const store = { k: { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) } };
+  const r = effFromStore(store, "k", 100, 500, 900, MAINTENANT);
+  assert.equal(r.price, 7000);
+  assert.equal(r.vol, 500);
+  assert.deepEqual(store.k, { price: 7000, base: 1000 }); // le volume et son heure sont partis
+});
+
+test("effFromStore : un volume périmé seul fait disparaître la clé", () => {
+  const store = { k: { vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) } };
+  effFromStore(store, "k", 100, 500, 900, MAINTENANT);
+  assert.equal("k" in store, false);
 });
 
 // ---------- safeKey / encodeState / decodeState (persistance) ----------
