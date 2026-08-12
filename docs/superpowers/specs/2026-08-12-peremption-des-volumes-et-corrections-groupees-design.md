@@ -87,8 +87,15 @@ jours. La péremption par durée est donc **par champ**, ce qui est nouveau.
   `ageDays(updated, nowSec = Date.now() / 1000)` (`logic.mjs:16`). La fonction reste pure et testable.
 - `effValue` peut désormais périmer **`vol` seul en gardant `price`**. Aujourd'hui elle renvoie un
   `stale` global et `effFromStore` supprime la clé entière (`logic.mjs:527`) : il faut distinguer
-  « la clé est morte » de « le volume est mort ». Forme retenue : `stale` devient un objet
-  `{ price: bool, vol: bool }`, et `effFromStore` ne supprime la clé que si plus rien ne survit.
+  « la clé est morte » de « le volume est mort ». Forme retenue : **deux drapeaux distincts**, `stale`
+  (UEX a republié, toute la correction meurt) et `staleVol` (le volume seul meurt), et `effFromStore`
+  ne supprime la clé que si plus rien ne survit.
+
+  > Cette forme corrige celle d'abord retenue ici — un objet `stale: { price, vol }`. Un objet rend
+  > `if (r.stale)` **toujours vrai** chez ses deux lecteurs (`effFromStore`, `effVals`) : un lecteur
+  > qu'on aurait oublié de mettre à jour aurait silencieusement effacé des corrections valides. Avec
+  > deux drapeaux, `stale` garde exactement son sens d'avant et un oubli fait seulement rater la
+  > nouveauté. Implémenté ainsi dans la PR #6.
 - **Compatibilité ascendante** : une correction déjà en localStorage n'a pas de `pris`. Son absence
   vaut « pas de péremption par durée » — sinon toutes les corrections existantes disparaîtraient au
   premier chargement. Elles s'alignent à la prochaine saisie.
