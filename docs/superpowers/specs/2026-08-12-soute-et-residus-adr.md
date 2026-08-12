@@ -2,7 +2,7 @@
 
 **Statut :** Accepté
 **Date :** 2026-08-12
-**Décideur :** naoutix (propriétaire du dépôt)
+**Décideur :** 0xKestrelNova (propriétaire du dépôt)
 
 ## Contexte
 

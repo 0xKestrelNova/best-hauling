@@ -2,7 +2,7 @@
 
 **Statut :** Accepté
 **Date :** 2026-08-12 (décisions d'interface tranchées le même jour, cf. « Décisions d'interface »)
-**Décideur :** naoutix (propriétaire du dépôt)
+**Décideur :** 0xKestrelNova (propriétaire du dépôt)
 **Premier ADR du dépôt** — la numérotation commence ici. Les deux documents existants de
 `docs/superpowers/specs/` sont des specs de conception, pas des décisions d'architecture.
 

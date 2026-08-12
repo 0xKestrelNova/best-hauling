@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Site statique des meilleures routes d'arbitrage de commodités Star Citizen (données UEX Corp).",
   "license": "MIT",
-  "author": "naoutix",
+  "author": "0xKestrelNova",
   "type": "module",
   "private": true,
   "engines": {
@@ -20,6 +20,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/naoutix/best-hauling.git"
+    "url": "https://github.com/0xkestrelnova/best-hauling.git"
   }
 }
