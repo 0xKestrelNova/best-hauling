@@ -192,10 +192,16 @@ n'as pas touché n'est **pas** persisté — la jambe reste branchée sur le mar
 
 ### La carte du parcours
 
-Sous le compagnon, un bandeau pose les arrêts **dans l'espace** : un disque par système traversé,
-le vaisseau sur l'escale courante, et un corridor violet `⚡` quand le parcours change de système.
+À côté du compagnon, une **troisième colonne** pose les arrêts **dans l'espace** : un disque par
+système traversé, le vaisseau sur l'escale courante, et un corridor violet `⚡` quand le parcours
+change de système. Elle ne reste à côté que si elle y garde une largeur lisible (≈ 460 px) —
+en dessous, elle repasse en **bandeau pleine largeur** sur sa propre ligne, ce qui vaut mieux qu'une
+colonne où les libellés d'escale tomberaient sous 5 px.
 Un saut est **routé par les deux passerelles** — on ne change pas de système n'importe où : le
 trajet part de l'escale, rejoint la passerelle d'ici, traverse, puis repart de celle de là-bas.
+Chaque bout se décide **séparément** : partir d'une passerelle ne dispense pas de **ressortir par
+celle d'en face**, parce qu'un saut débouche toujours de l'autre côté du tunnel (`Stanton Gateway
+(Pyro)` → New Babbage passe donc par `Pyro Gateway (Stanton)`).
 Chaque jambe est un **arc orienté** : le chevron dit le sens, et la courbure suit le trajet, si
 bien qu'un aller-retour bombe des deux côtés au lieu de se superposer.
 **Cliquer une escale déplace « je suis ici »**, exactement comme le fil d'étapes textuel — la carte
