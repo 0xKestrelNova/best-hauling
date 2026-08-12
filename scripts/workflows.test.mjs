@@ -36,6 +36,25 @@ test("ci.yml : l'installation est verrouillée sur le lockfile", () => {
   assert.match(runs, /\bnpm ci\b/);
 });
 
+test("ci.yml : le navigateur est mis en cache, et les deux installations sont EXCLUSIVES", () => {
+  // Le cache ne porte que le binaire du navigateur. Les paquets système dont Chromium dépend vivent
+  // dans l'image du runner, hors du cache : sur un succès de cache il faut donc encore les poser.
+  // Une seule étape `install --with-deps` conditionnée au cache manqué laisserait un runner sans ces
+  // paquets, et l'échec serait un crash de navigateur — pas un message d'installation manquante.
+  const e2e = jobs(lire("ci.yml")).e2e;
+  assert.match(e2e, /uses: actions\/cache@[0-9a-f]{40}\s+# v\d/, "cache épinglé par SHA");
+  assert.match(e2e, /path: ~\/\.cache\/ms-playwright/);
+  assert.match(e2e, /key: .*hashFiles\('package-lock\.json'\)/, "la clé porte le lockfile");
+  assert.match(e2e, /cache: npm/, "le registre npm est mis en cache lui aussi");
+  // Exclusivité : exactement une étape par branche du cache, et jamais les deux ensemble.
+  const manque = e2e.match(/cache-hit != 'true'/g) || [];
+  const touche = e2e.match(/cache-hit == 'true'/g) || [];
+  assert.equal(manque.length, 1, "une seule étape sur cache manqué");
+  assert.equal(touche.length, 1, "une seule étape sur cache touché");
+  assert.match(e2e, /cache-hit != 'true'\n\s+run: npx playwright install --with-deps chromium/);
+  assert.match(e2e, /cache-hit == 'true'\n\s+run: npx playwright install-deps chromium/);
+});
+
 test("update-data.yml : les permissions du GITHUB_TOKEN sont scopées par job", () => {
   const y = lire("update-data.yml");
   const g = permissionsGlobales(y);
