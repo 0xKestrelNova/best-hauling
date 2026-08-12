@@ -153,12 +153,15 @@
           </div>
 
           <aside id="journeyCard" class="journey-card" hidden></aside>
-        </div>
 
-        <!-- Carte 2D du parcours : bandeau pleine largeur sous le compagnon (ADR-001). Purement
-             décorative — absente tant qu'il n'y a pas de voyage, et son échec de chargement ne
-             doit rien casser d'autre. La géométrie vient de data/starmap.json. -->
-        <aside id="journeyMap" class="journey-map" hidden></aside>
+          <!-- Carte 2D du parcours : TROISIÈME COLONNE, à côté du voyage en cours (ADR-001).
+               Elle vivait en bandeau pleine largeur, où le dessin plafonné à 760 px laissait deux
+               bandes vides sur un grand écran. Purement décorative — absente tant qu'il n'y a pas
+               de voyage, et son échec de chargement ne doit rien casser d'autre. La géométrie
+               vient de data/starmap.json. Sous ~1100 px, `flex-wrap` la renvoie sur sa
+               propre ligne : c'est le repli, et il redonne exactement l'ancien bandeau. -->
+          <aside id="journeyMap" class="journey-map" hidden></aside>
+        </div>
 
         <section id="enrouteControls" class="enroute-controls" hidden>
           <div class="field">

@@ -2227,6 +2227,38 @@ test("journeyMap : un parcours qui inclut DÉJÀ les passerelles n'est pas rout�
   assert.deepEqual(c.jambes.map((j) => j.saut), [false, true, false]);
 });
 
+test("journeyMap : partir DE la passerelle route quand même par celle d'EN FACE", () => {
+  // On prend le tunnel là où on est déjà, mais on en ressort forcément de l'autre côté : le trajet
+  // Stanton Gateway (Pyro) -> New Babbage passe par Pyro Gateway (Stanton), il ne coupe pas droit.
+  const c = journeyMap(st("Stanton Gateway (Pyro)", "New Babbage"), 0, STARMAP, infoT);
+  assert.equal(c.jambes.length, 2);
+  assert.deepEqual(c.jambes.map((j) => j.saut), [true, false]); // corridor, puis vol dans Stanton
+  // Le corridor part de l'escale elle-même et débouche dans le disque de Stanton…
+  const stanton = c.systemes.find((s) => s.nom === "Stanton");
+  assert.deepEqual([c.jambes[0].x1, c.jambes[0].y1], [c.arrets[0].x, c.arrets[0].y]);
+  assert.ok(Math.hypot(c.jambes[0].x2 - stanton.cx, c.jambes[0].y2 - stanton.cy) < stanton.r * 1.1);
+  // …exactement là où la seconde jambe reprend, pour finir sur l'arrivée.
+  assert.deepEqual([c.jambes[1].x1, c.jambes[1].y1], [c.jambes[0].x2, c.jambes[0].y2]);
+  assert.deepEqual([c.jambes[1].x2, c.jambes[1].y2], [c.arrets[1].x, c.arrets[1].y]);
+  // La reprise est bien SUR la passerelle d'arrivée, pas au hasard dans le disque.
+  const pg = journeyMap(st("Megumi", "New Babbage"), 0, STARMAP, infoT).jambes[1];
+  assert.deepEqual([c.jambes[1].x1, c.jambes[1].y1], [pg.x2, pg.y2]);
+});
+
+test("journeyMap : arriver À la passerelle route quand même par celle de départ", () => {
+  // Symétrique : New Babbage -> Stanton Gateway (Pyro) traverse d'abord Pyro Gateway (Stanton).
+  const c = journeyMap(st("New Babbage", "Stanton Gateway (Pyro)"), 0, STARMAP, infoT);
+  assert.equal(c.jambes.length, 2);
+  assert.deepEqual(c.jambes.map((j) => j.saut), [false, true]); // vol dans Stanton, puis corridor
+  assert.deepEqual([c.jambes[1].x2, c.jambes[1].y2], [c.arrets[1].x, c.arrets[1].y]);
+});
+
+test("journeyMap : gateway à gateway du même lien reste un seul corridor", () => {
+  const c = journeyMap(st("Stanton Gateway (Pyro)", "Pyro Gateway (Stanton)"), 0, STARMAP, infoT);
+  assert.equal(c.jambes.length, 1);
+  assert.equal(c.jambes[0].saut, true);
+});
+
 test("journeyMap : sans géométrie de passerelle, le saut retombe sur une ligne directe", () => {
   const sansPasserelle = { Pyro: { ancres: { Terminus: STARMAP.Pyro.ancres.Terminus } }, Stanton: STARMAP.Stanton };
   const c = journeyMap(st("Megumi", "New Babbage"), 0, sansPasserelle, infoT);

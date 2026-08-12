@@ -1597,15 +1597,19 @@ export function journeyMap(stations, current, starmap, infoTerminal, enVol = fal
   const passerelles = (a, b) => {
     if (a.systeme === b.systeme) return [];
     const nomA = nomPasserelle(a.systeme, b.systeme), nomB = nomPasserelle(b.systeme, a.systeme);
-    // Un parcours qui inclut DÉJÀ les passerelles comme escales ne doit pas être routé deux fois.
-    if (a.nom === nomA || b.nom === nomB) return [];
     const sysA = parSysteme.get(a.systeme), sysB = parSysteme.get(b.systeme);
     const ancreA = (starmap[a.systeme] || {}).ancres || {}, ancreB = (starmap[b.systeme] || {}).ancres || {};
-    if (!sysA || !sysB || !ancreA[nomA] || !ancreB[nomB]) return []; // géométrie absente : ligne droite
-    return [
-      { ...posAncre(sysA, ancreA[nomA]), nom: nomA, systeme: a.systeme, passerelle: true },
-      { ...posAncre(sysB, ancreB[nomB]), nom: nomB, systeme: b.systeme, passerelle: true },
-    ];
+    // Une extrémité qui EST déjà la passerelle de son côté ne se réinsère pas — mais chaque côté se
+    // décide SÉPARÉMENT : partir de la passerelle ne dispense pas de ressortir par celle d'en face,
+    // parce qu'un saut débouche toujours de l'autre côté du tunnel. Les traiter d'un bloc coupait
+    // « Stanton Gateway (Pyro) -> New Babbage » en ligne droite, sans Pyro Gateway (Stanton).
+    const points = [];
+    for (const [ici, sys, ancres, nom] of [[a, sysA, ancreA, nomA], [b, sysB, ancreB, nomB]]) {
+      if (ici.nom === nom) continue;
+      if (!sys || !ancres[nom]) return []; // géométrie absente : ligne droite
+      points.push({ ...posAncre(sys, ancres[nom]), nom, systeme: ici.systeme, passerelle: true });
+    }
+    return points;
   };
 
   // Chaque segment est un ARC, et sa courbure suit le SENS du trajet : l'aller et le retour d'un
