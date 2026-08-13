@@ -4,7 +4,7 @@
 import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
   ovKey, effFromStore, setInStore, DUREE_VOL, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
@@ -328,7 +328,13 @@ const withFeeText = (base, cell) => esc(cell.text ? `${base} · ${cell.text}` : 
 // vit dans logic.mjs (lineHaulFee), qui sait qu'une ligne « vend ailleurs » n'est pas déchargée et
 // qu'une ligne « acquis ailleurs » n'a pas été chargée : c'est la MÊME règle que manifestTotals,
 // donc le total et les lignes ne peuvent pas diverger.
-const lineNet = (units, l, pair) => units * (l.margin || 0) - lineHaulFee(units, l, pair);
+// `lineNet` vit dans logic.mjs : c'est une règle de décision (elle filtre les suggestions et le
+// manifeste optimal), pas un détail de rendu. Signe compris — un net négatif se dit.
+// Préfixe un montant de son signe RÉEL. Un « + » posé d'office écrivait « +-1 234 » dès que les
+// frais mangeaient la marge, en vert, sur le seul chiffre qui disait de ne pas charger la ligne.
+const signe = (n, texte) => (n < 0 ? texte : "+" + texte);
+// Classe de couleur assortie : le vert de `.profit` ne doit pas habiller une perte.
+const classeProfit = (n) => (n < 0 ? "perte" : "profit");
 // Texte de la cellule « profit » d'une ligne de manifeste. Partagé par le premier rendu et par la
 // mise à jour en direct : deux conventions différentes et éditer une quantité changerait le sens
 // de la cellule. Une ligne « vend ailleurs » n'a pas de profit sur ce trajet — elle a quand même
@@ -336,7 +342,8 @@ const lineNet = (units, l, pair) => units * (l.margin || 0) - lineHaulFee(units,
 function lineProfitText(units, l, pair) {
   const fees = lineHaulFee(units, l, pair);
   if (l.sellPrice == null) return fees > 0 ? fmtFee(-fees, fees) : "—";
-  return "+" + fmtFee(lineNet(units, l, pair), fees);
+  const net = lineNet(units, l, pair);
+  return signe(net, fmtFee(net, fees));
 }
 
 // Flash discret quand des corrections ont été périmées par une mise à jour UEX.
@@ -1904,12 +1911,17 @@ function renderJourney() {
     const charge = MARKET && jambeChargee(leg, i); // ce manifeste est-il déjà en soute ?
     const expanded = i === journeyExpandedLeg;
     let cargo, total;
+    // `totalJambe` porte le NOMBRE quand `total` n'en est que le rendu : c'est lui qui décide du
+    // signe et de la couleur. Une jambe dont les frais dépassent la marge est une vraie réponse,
+    // pas un cas limite — elle s'affichait « +-1 234 », en vert.
+    let totalJambe = 0;
     if (!MARKET) { cargo = '<span class="muted">calcul…</span>'; total = "—"; }
     else if (!lines.length) { cargo = '<span class="muted">aucun fret rentable</span>'; total = "0"; }
     else {
       cargo = lines.map((l) => `<span class="jcargo-item">${freshDot(lineFreshUpdated(l))}${commodityIcon(l.kind)}<span>${esc(l.name)}${illegalTag(l.illegal)}</span> <b>${fmt(l.units)} SCU</b></span>`).join("");
       const t = manifestTotals(lines, pair);
       total = fmtFee(t.profit, t.fees);
+      totalJambe = t.profit;
       totalProfit += t.profit;
       totalFees += t.fees;
       totalScu += lines.reduce((s, l) => s + l.units, 0);
@@ -1932,7 +1944,7 @@ function renderJourney() {
     return `<div class="jleg${i === JOURNEY.current ? " current" : ""}${expanded ? " expanded" : ""}">
         <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" aria-expanded="${expanded}" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
           ? '<span class="jleg-pinned" title="Quantités figées : le stock ou la demande de ce chargement a été corrigé depuis. Le trajet reste tel que tu l\'as décidé — les prix, eux, continuent de suivre le marché. « ↺ optimal » recalcule tout.">🔒</span>'
-          : '<span class="jleg-edited" title="Manifeste personnalisé">✎</span>') : ""}${MARKET && lines && lines.length ? `<button class="jleg-load${charge ? " charge" : ""}" data-leg="${i}" title="${charge ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}">${charge ? "⬢ à bord" : "✓ chargé"}</button>` : ""}<span class="jleg-profit profit">+${total}</span><span class="jleg-caret">${expanded ? "▾" : "▸"}</span></div>
+          : '<span class="jleg-edited" title="Manifeste personnalisé">✎</span>') : ""}${MARKET && lines && lines.length ? `<button class="jleg-load${charge ? " charge" : ""}" data-leg="${i}" title="${charge ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}">${charge ? "⬢ à bord" : "✓ chargé"}</button>` : ""}<span class="jleg-profit ${classeProfit(totalJambe)}">${signe(totalJambe, total)}</span><span class="jleg-caret">${expanded ? "▾" : "▸"}</span></div>
         <div class="jleg-cargo">${cargo}</div>
         ${editor}
       </div>`;
@@ -1972,7 +1984,7 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
   const kpi = (v, lbl) => `<div class="recap-kpi"><b>${v}</b><span>${lbl}</span></div>`;
   recap.innerHTML =
     `<div class="recap-head">◈ Résumé du voyage</div>
-     <div class="recap-profit"${totalFees > 0 ? ` title="Frais d'autoload ≈ ${fmt(totalFees)} aUEC déjà déduits — estimation (±3 %)"` : ""}>${MARKET ? (totalFees > 0 ? "≈ +" : "+") + fmt(totalProfit) : "…"} <span>aUEC</span></div>
+     <div class="recap-profit ${classeProfit(totalProfit)}"${totalFees > 0 ? ` title="Frais d'autoload ≈ ${fmt(totalFees)} aUEC déjà déduits — estimation (±3 %)"` : ""}>${MARKET ? signe(totalProfit, (totalFees > 0 ? "≈ " : "") + fmt(totalProfit)) : "…"} <span>aUEC</span></div>
      <div class="recap-kpis">
        ${kpi(n, "saut" + (n > 1 ? "s" : ""))}
        ${kpi(MARKET ? fmt(totalScu) : "…", "SCU")}

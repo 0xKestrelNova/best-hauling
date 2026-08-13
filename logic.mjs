@@ -467,6 +467,18 @@ export function lineHaulFee(units, line, pair) {
   });
 }
 
+// Ce qu'une LIGNE de manifeste rapporte réellement : sa marge sur le volume, moins la manutention
+// qu'elle subit. Cette valeur ne sert pas qu'à l'affichage — c'est elle qui DÉCIDE quelles
+// commodités le manifeste optimal retient (manifestsFrom) et lesquelles la boîte de suggestions
+// propose. Elle vivait dans app.js, hors de portée des tests, alors que son total (manifestTotals)
+// est ici et testé : les deux pouvaient diverger sans que rien ne le dise.
+// Elle est NÉGATIVE quand les frais mangent la marge — ce n'est pas un cas limite mais le cas
+// qu'on cherche : c'est exactement à ce signe qu'on reconnaît une ligne qu'il vaut mieux laisser
+// au sol. Tout affichage doit donc porter le signe réel, jamais un « + » posé d'office.
+export function lineNet(units, line, pair) {
+  return units * (line.margin || 0) - lineHaulFee(units, line, pair);
+}
+
 // ---------- Chaîne multi-sauts (A -> B -> C ...) ----------
 // Meilleure chaîne de `hops` sauts depuis `start`, sans revisiter un terminal.
 // adj : Map<terminal, leg[]> ; leg = { to, margin, stock, demand, buyPrice, fee?, ... }.
