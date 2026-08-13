@@ -1356,7 +1356,7 @@ test("permalien : une ancre quelconque n'est pas un état — les défauts du HT
   await expect(page.locator("#budget")).toHaveValue("1000000");
 });
 
-// ---------- Accessibilité : tri au clavier, aria-sort, noms accessibles (#57, #58, #59) ----------
+// ---------- Accessibilité : tri au clavier, activation des jambes, aria, noms accessibles (#9, #57, #58, #59) ----------
 
 test("tri : Entrée puis Espace sur un en-tête trient la table, et aria-sort suit (#58)", async ({ page }) => {
   const score = page.locator('#routes th[data-sort="score"]');
@@ -1388,6 +1388,47 @@ test("tri : les en-têtes de Boucles sont eux aussi actionnables au clavier (#58
   await expect(profit).toHaveAttribute("aria-sort", "descending");
   await expect(score).toHaveAttribute("aria-sort", "none");
   await expect(profit).toHaveClass(/sorted-desc/); // l'indicateur ▾ visuel suit la même colonne
+});
+
+test("jambe : Entrée puis Espace sur l'en-tête déplient et replient l'éditeur, aria-expanded suit (#9)", async ({ page }) => {
+  // L'en-tête est annoncé `role="button"` et prend le focus (tabindex=0) : ne rien faire sous Entrée
+  // promet une action qui n'existe pas. L'éditeur de manifeste était donc à la souris seulement.
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
+  const head = () => page.locator("#journeyCard .jleg-head").first();
+
+  await head().press("Enter");
+  await expect(page.locator("#journeyCard .jman")).toBeVisible();          // avant le correctif : rien
+  await expect(head()).toHaveAttribute("aria-expanded", "true");           // le caret ▾ est visuel seul
+  // Le re-rendu détruit l'en-tête activé : sans restitution du focus, la deuxième Entrée part de
+  // <body> et la tabulation repart du haut du document.
+  expect(await page.evaluate(() => document.activeElement?.classList.contains("jleg-head"))).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.dataset.leg)).toBe("0");
+
+  await head().press(" ");                                                // et la page ne défile pas
+  await expect(page.locator("#journeyCard .jman")).toHaveCount(0);
+  await expect(head()).toHaveAttribute("aria-expanded", "false");
+});
+
+test("jambe : Entrée sur « ✓ chargé » charge la soute SANS déplier l'éditeur (#9)", async ({ page }) => {
+  // Le bouton vit DANS l'en-tête : un handler clavier posé sur closest(".jleg-head") ferait les deux
+  // gestes d'un coup — charger la soute ET basculer l'éditeur.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").press("Enter");
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveText(/à bord/i);
+  await expect(page.locator("#journeyCard .jman")).toHaveCount(0);
+  await expect(page.locator("#journeyCard .jleg-head").first()).toHaveAttribute("aria-expanded", "false");
+});
+
+test("raccourcis : focus sur un élément activable, « 1 »…« 6 » ne changent plus de vue (#9)", async ({ page }) => {
+  // La garde des raccourcis ne testait que INPUT/SELECT/TEXTAREA/.editv — un div `role="button"`
+  // n'est rien de tout ça. Tabuler jusqu'à l'en-tête d'une jambe puis taper « 2 » faisait basculer
+  // sur Boucles : l'utilisateur clavier perdait son contexte au moment d'agir dessus.
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
+  await page.locator("#journeyCard .jleg-head").first().press("2");
+  await expect(page.locator("#viewRoutes")).toHaveClass(/active/); // on est resté sur Trajets
+  await expect(page.locator("#loops")).toBeHidden();
 });
 
 test("noms accessibles : soute et budget ont chacun le leur (#57)", async ({ page }) => {

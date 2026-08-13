@@ -1652,7 +1652,14 @@ function legSuggestCtx(leg, lines, f) {
 }
 
 // Actions d'édition d'une jambe (i = index de jambe).
-function toggleLegEditor(i) { journeyExpandedLeg = journeyExpandedLeg === i ? -1 : i; renderJourney(); }
+function toggleLegEditor(i) {
+  journeyExpandedLeg = journeyExpandedLeg === i ? -1 : i;
+  renderJourney();
+  // renderJourney() réécrit tout le compagnon : l'en-tête qu'on vient d'activer n'existe plus et le
+  // focus retombe sur <body>. À la souris ça ne se voit pas ; au clavier on perdait sa place, la
+  // deuxième Entrée (replier) ne partait plus de nulle part et Tab reprenait au début du document.
+  $("journeyCard")?.querySelector(`.jleg-head[data-leg="${i}"]`)?.focus();
+}
 function editLegQty(i, li, val) {
   // Le voyage peut avoir été effacé entre le focus et le blur (cliquer ✕ blure d'abord le champ) :
   // sans cette garde, l'édition en vol était réécrite APRÈS la purge et ressuscitait toute seule.
@@ -1906,7 +1913,7 @@ function renderJourney() {
       </div>`;
     }
     return `<div class="jleg${i === JOURNEY.current ? " current" : ""}${expanded ? " expanded" : ""}">
-        <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
+        <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" aria-expanded="${expanded}" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
           ? '<span class="jleg-pinned" title="Quantités figées : le stock ou la demande de ce chargement a été corrigé depuis. Le trajet reste tel que tu l\'as décidé — les prix, eux, continuent de suivre le marché. « ↺ optimal » recalcule tout.">🔒</span>'
           : '<span class="jleg-edited" title="Manifeste personnalisé">✎</span>') : ""}${MARKET && lines && lines.length ? `<button class="jleg-load${charge ? " charge" : ""}" data-leg="${i}" title="${charge ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}">${charge ? "⬢ à bord" : "✓ chargé"}</button>` : ""}<span class="jleg-profit profit">+${total}</span><span class="jleg-caret">${expanded ? "▾" : "▸"}</span></div>
         <div class="jleg-cargo">${cargo}</div>
@@ -2890,6 +2897,16 @@ async function init() {
     const step = e.target.closest(".jstep");
     if (step) setJourneyStop(Number(step.dataset.i));
   });
+  // L'en-tête d'une jambe est annoncé `role="button"` : Entrée/Espace doivent l'activer comme le clic
+  // (même corps, cf. sortableHeader). On teste `e.target` LUI-MÊME et non `closest()` — modèle
+  // `.editv` plutôt que `.jm-arret` : le bouton « ✓ chargé » vit DANS l'en-tête, et un closest()
+  // déplierait l'éditeur EN PLUS de charger la soute à chaque Entrée sur ce bouton.
+  $("journeyCard").addEventListener("keydown", (e) => {
+    if (!e.target.classList || !e.target.classList.contains("jleg-head")) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); // Espace ne doit pas défiler la page
+    toggleLegEditor(Number(e.target.dataset.leg));
+  });
   // Ajout d'arrêt / de commodité à la touche Entrée.
   document.addEventListener("keydown", (e) => {
     if (e.target.id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(e.target.value); }
@@ -2925,7 +2942,12 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const el = document.activeElement;
-    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.classList.contains("editv"))) return;
+    // `role="button"` couvre d'un coup tout ce que l'app rend activable sans être un <button> :
+    // l'en-tête d'une jambe, une escale de la carte, une valeur corrigeable. Sans lui, tabuler
+    // jusqu'à l'un d'eux puis taper « 1 »…« 6 » changeait de vue — l'utilisateur clavier perdait son
+    // contexte au moment précis où il essayait d'agir dessus.
+    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ||
+               el.getAttribute("role") === "button" || el.classList.contains("editv"))) return;
     if (e.key === "/") { e.preventDefault(); $("search").focus(); }
     else if (e.key === "1") switchView("routes");
     else if (e.key === "2") switchView("loops");

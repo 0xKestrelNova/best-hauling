@@ -47,7 +47,9 @@ Autres éléments :
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
-- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`6` vues).
+- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`6` vues) ; tout ce qui s'active
+  au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
+  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
 
 ### Portée des filtres par vue
