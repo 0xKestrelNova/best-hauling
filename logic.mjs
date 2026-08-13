@@ -1261,6 +1261,61 @@ export function removeJourneyStop(journey, stopIndex, bridge) {
   };
 }
 
+// ---------- Le RANG d'une jambe, et ses TROIS porteurs ----------
+// Trois choses sont indexées par le rang d'une jambe : le manifeste ÉDITÉ, le 🔒 qui dit pourquoi
+// il l'est, et l'étiquette `leg` que le chargement pose sur les lots de la soute. Retirer un arrêt
+// renumérote les jambes : n'en décaler que deux les fait diverger. C'est le troisième, oublié, qui
+// rendait « ✓ chargé » une jambe dont le fret était déjà à bord — et un second clic la doublait.
+
+// Nouvelle clé d'une jambe après un retrait d'arrêt : la même, renumérotée — ou `null` si la jambe
+// a disparu du parcours. Une clé illisible ressort INTACTE : on ne renumérote pas ce qu'on n'a pas
+// su lire, et surtout on n'écrit pas de « NaN| » dans un store persisté.
+// `retrait` = ce que removeJourneyStop vient de renvoyer.
+export function cleApresRetrait(cle, { removedFrom, removedCount, insertedCount = 0 }) {
+  const s = String(cle), sep = s.indexOf("|");
+  const i = sep < 0 ? NaN : Number(s.slice(0, sep));
+  if (!Number.isInteger(i) || i < 0) return cle;
+  if (i < removedFrom) return cle;                               // avant la coupe : inchangée
+  if (i < removedFrom + removedCount) return null;               // jambe disparue
+  return `${i - (removedCount - insertedCount)}${s.slice(sep)}`; // après : recule d'autant
+}
+
+const sansEtiquette = (lot) => { const { leg, ...reste } = lot; return reste; };
+
+// Réindexe LES TROIS PORTEURS d'un seul appel — c'est tout l'intérêt : ils ne peuvent plus
+// diverger, et un appelant ne peut plus en oublier un. Les STORES perdent l'entrée d'une jambe
+// disparue (le plan qu'elle portait n'existe plus) ; les LOTS, jamais : le fret est réellement à
+// bord. On leur retire seulement leur étiquette — ils restent en soute, visibles, vendables, mais
+// rattachés à aucune jambe. Les recoller au pont A→C serait pire : sa cargaison est RECALCULÉE, le
+// voyage prétendrait l'avoir chargée, et son vrai chargement deviendrait impossible.
+export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrait) {
+  const decale = (store) => {
+    const suivant = {};
+    for (const [k, v] of Object.entries(store)) {
+      const n = cleApresRetrait(k, retrait);
+      if (n != null) suivant[n] = v;
+    }
+    return suivant;
+  };
+  return {
+    edits: decale(edits),
+    pins: decale(pins),
+    lots: lots.map((l) => {
+      if (l.leg == null) return l;
+      const n = cleApresRetrait(l.leg, retrait);
+      return n === l.leg ? l : n != null ? { ...l, leg: n } : sansEtiquette(l);
+    }),
+  };
+}
+
+// Effacer le parcours DÉLIE les lots sans les débarquer : le parcours est un plan, la soute est du
+// fret payé (ADR-002). Sans ça, un voyage ultérieur dont la jambe 0 relie les deux mêmes terminaux
+// s'affichait « ⬢ à bord » et le clic déchargeait les lots de l'ancien — la résurrection déjà
+// corrigée pour les manifestes édités, à laquelle les étiquettes avaient échappé.
+export function detacherLotsDeJambe(lots) {
+  return lots.map((l) => (l.leg == null ? l : sansEtiquette(l)));
+}
+
 // Déplace la position courante (bornée à 0..legs.length).
 export function setJourneyPosition(journey, i) {
   return { ...journey, current: Math.max(0, Math.min(journey.legs.length, i | 0)) };

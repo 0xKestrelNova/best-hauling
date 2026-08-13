@@ -18,6 +18,7 @@ import {
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
+  reindexerRangsJambe, detacherLotsDeJambe,
   encodeJourney, decodeJourney,
 } from "./logic.mjs";
 
@@ -1515,6 +1516,11 @@ function clearJourney() {
   // sur un parcours ULTÉRIEUR passant par les mêmes terminaux, badge ✎ compris.
   JOURNEY_EDITS = {}; saveJourneyEdits();
   JOURNEY_PINS = {}; saveJourneyPins();
+  // Troisième porteur du rang : l'étiquette posée sur les lots. Le fret, lui, RESTE à bord — le
+  // parcours est un plan, la soute est du fret payé (ADR-002). Sans ce détachement, un voyage
+  // ultérieur dont la jambe 0 relie les deux mêmes terminaux s'affichait « ⬢ à bord », et le clic
+  // déchargeait les lots de l'ancien voyage en restaurant leurs stocks.
+  SOUTE = detacherLotsDeJambe(SOUTE); saveSoute();
   journeyExpandedLeg = -1;
   renderJourney();
   saveState();
@@ -1807,30 +1813,18 @@ function beginJourney(label) {
   refresh();
 }
 
-// Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
-// Réindexe les manifestes édités après une modification du parcours : la clé porte le RANG de la
-// jambe, donc retirer un arrêt décalerait sinon l'édition d'une jambe sur sa voisine.
-function reindexLegEdits(removedFrom, removedCount, insertedCount) {
-  const decalage = removedCount - insertedCount;
-  // Les deux stores sont indexés par le MÊME rang de jambe : les décaler séparément les ferait
-  // diverger, et un 🔒 se retrouverait sur une jambe dont l'intention a disparu.
-  const decale = (store) => {
-    const suivant = {};
-    for (const [k, v] of Object.entries(store)) {
-      const sep = k.indexOf("|");
-      const i = Number(k.slice(0, sep));
-      if (i < removedFrom) suivant[k] = v;                       // avant la coupe : inchangé
-      else if (i < removedFrom + removedCount) continue;         // jambe disparue : son édition part
-      else suivant[`${i - decalage}${k.slice(sep)}`] = v;        // après : recule d'autant
-    }
-    return suivant;
-  };
-  JOURNEY_EDITS = decale(JOURNEY_EDITS);
-  JOURNEY_PINS = decale(JOURNEY_PINS);
-  if (journeyExpandedLeg >= removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
-  saveJourneyEdits(); saveJourneyPins();
+// Réindexe tout ce qui est indexé par le RANG des jambes après une modification du parcours. Les
+// TROIS porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute — passent par le même
+// appel pur : les décaler séparément les ferait diverger, et c'est d'en avoir oublié un que venait
+// le double chargement (la jambe renumérotée se croyait vide alors que son fret était à bord).
+function reindexerApresRetrait(retrait) {
+  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE }, retrait);
+  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots;
+  if (journeyExpandedLeg >= retrait.removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
+  saveJourneyEdits(); saveJourneyPins(); saveSoute();
 }
 
+// Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
 function removeJourneyStop(stopIndex) {
   if (!JOURNEY) return;
   const legs = JOURNEY.legs;
@@ -1845,7 +1839,7 @@ function removeJourneyStop(stopIndex) {
   }
   const r = removeStopPure(JOURNEY, stopIndex, bridge);
   if (!r) { clearJourney(); return; }
-  reindexLegEdits(r.removedFrom, r.removedCount, r.insertedCount);
+  reindexerApresRetrait(r);
   // `start` n'est présent que sur le parcours réduit à un seul arrêt : le reporter tel quel, sinon
   // la station survivante n'a plus rien pour se décrire (journeyStations la lit là) et le voyage
   // s'affiche vide alors qu'il reste un point de départ.
