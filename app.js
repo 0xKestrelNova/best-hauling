@@ -5,7 +5,7 @@ import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee,
-  ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
+  ovKey, effFromStore, setInStore, DUREE_VOL, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
@@ -166,7 +166,8 @@ const OV_KEY = "best-hauling-overrides";
 // base = date UEX (updated) du point AU MOMENT de la correction : la correction vaut
 // « contre cet export ». Elle n'est périmée que si UEX republie ce point plus récemment.
 let OVERRIDES = {};
-let supersededKeys = new Set(); // corrections périmées pendant le rendu courant (pour le flash)
+let supersededKeys = new Set(); // corrections périmées par UEX pendant le rendu courant (pour le flash)
+let expiredVolKeys = new Set(); // volumes périmés par l'ÂGE pendant le rendu courant (autre cause, autre message)
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -185,7 +186,10 @@ const ovCount = () => Object.keys(OVERRIDES).length; // ovKey vient de logic.mjs
 function effVals(commodity, terminal, side, price, vol, dataUpdated) {
   const k = ovKey(commodity, terminal, side);
   const r = effFromStore(OVERRIDES, k, price, vol, dataUpdated); // décision + suppression périmée (logic.mjs)
-  if (r.stale) { saveOverrides(); supersededKeys.add(k); } // effets de bord app : persistance + flash
+  // effets de bord app : persistance + flash. `staleVol` est l'autre cause — le volume a dépassé sa
+  // durée de vie (DUREE_VOL) et le prix, s'il y en avait un, est resté.
+  if (r.stale) { saveOverrides(); supersededKeys.add(k); }
+  else if (r.staleVol) { saveOverrides(); expiredVolKeys.add(k); }
   return r;
 }
 
@@ -344,12 +348,23 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
 }
+// DEUX causes de péremption, donc deux messages : dire « mise à jour UEX » à propos d'un volume qui a
+// simplement vieilli serait faux, et enverrait chercher un changement de données qui n'a pas eu lieu.
+// Si les deux tombent dans le même rendu, la mise à jour UEX passe en premier — c'est un fait
+// extérieur, l'autre est une simple horloge.
 function notifySuperseded() {
-  if (!supersededKeys.size) return;
-  const n = supersededKeys.size;
+  const nUex = supersededKeys.size, nAge = expiredVolKeys.size;
+  if (!nUex && !nAge) return;
   supersededKeys = new Set();
+  expiredVolKeys = new Set();
   updateOvBadge();
-  showToast(`✎ ${n} correction${n > 1 ? "s" : ""} périmée${n > 1 ? "s" : ""} par une mise à jour UEX`);
+  const s = (n) => (n > 1 ? "s" : "");
+  if (nUex) showToast(`✎ ${nUex} correction${s(nUex)} périmée${s(nUex)} par une mise à jour UEX`);
+  if (nAge) {
+    const h = Math.round(DUREE_VOL / 3600);
+    const msg = `✎ ${nAge} volume${s(nAge)} corrigé${s(nAge)} périmé${s(nAge)} — plus de ${h} h, le comptoir s'est rempli depuis`;
+    if (nUex) setTimeout(() => showToast(msg), 1200); else showToast(msg);
+  }
 }
 
 // Applique les corrections à une paire buy/sell et renvoie des copies patchées + marge/roi.
