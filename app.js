@@ -9,7 +9,7 @@ import {
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
-  manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel,
+  manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, legsToPin, journeyMap,
@@ -777,8 +777,69 @@ function setupEnRoute() {
   $("commodityList").innerHTML = MARKET.commodities
     .map((c) => `<option value="${esc(c.name)}">${esc(c.code || "")}</option>`).join("");
 
+  monteStationPicker();
+
   enrouteReady = true;
   resolveOrigin(); // au cas où une valeur a été restaurée
+}
+
+// Sélecteur de station de la vue Corrections : les 114 terminaux rangés système › zone › station
+// (ADR-003). Monté une seule fois, depuis setupEnRoute, car il lui faut MARKET.
+function monteStationPicker() {
+  const input = $("station"), list = $("stationPickList");
+  if (!input || !list) return;
+  // On aplatit l'arbre : le filtre et la navigation travaillent sur une liste PLATE déjà triée,
+  // et c'est sa contiguïté par (système, zone) qui permet au rendu de reposer un en-tête au simple
+  // changement de clé. Filtrer l'arbre lui-même casserait cette propriété.
+  const plates = stationTree(MARKET.terminals).flatMap((s) => s.zones.flatMap((z) => z.stations));
+
+  // Un `<img onerror>` posé par innerHTML est INERTE sous `script-src 'self'` (index.html:23) et
+  // laisserait une image cassée. Les événements `error` ne remontent pas, mais ils descendent :
+  // un seul écouteur en phase de CAPTURE, posé une fois, couvre tous les rendus à venir.
+  list.addEventListener("error", (e) => {
+    if (e.target.tagName === "IMG") e.target.closest("li")?.classList.add("no-shot");
+  }, true);
+
+  montePicker({
+    input, list,
+    options: () => plates,
+    // Nom ET code : taper « PYROG » remonte les deux passerelles homonymes, que le badge distingue.
+    filtre: (s, q) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q),
+    max: 0, // 114 lignes tiennent : plafonner masquerait des stations sans le dire
+    rendu: (m) => {
+      let grp = "", html = "";
+      m.forEach((s, i) => {
+        const cle = `${s.system} › ${s.zone}`;
+        // En-tête SANS data-i : ni sélectionnable au clavier, ni cliquable.
+        if (cle !== grp) { grp = cle; html += `<li role="presentation" class="opt-grp">${sysBadge(s.system)}<span>${esc(s.zone)}</span></li>`; }
+        html += `<li role="option" data-i="${i}">${vignetteStation(s)}` +
+          `<span class="stn-opt-name">${esc(s.name)}</span>` +
+          `<span class="stn-opt-code">${esc(s.code)}</span>` +
+          (s.outpost ? '<span class="stn-opt-post" title="Avant-poste : élévateur de fret parfois en panne">⚠ avant-poste</span>' : "") +
+          `</li>`;
+      });
+      return html;
+    },
+    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : resolveStation résout par correspondance
+    // exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
+    choisir: (s) => { input.value = s.label; resolveStation(); refresh(); saveState(); },
+  });
+}
+
+// Vignette d'une station : la photo UEX si elle existe, sinon un carré teinté par système portant
+// le code. 17 terminaux sur 114 n'ont pas de photo — la vignette générée évite le trou, sans
+// requête. Le filtre `^https://` est délibéré même si aucune URL non-https n'existe aujourd'hui :
+// l'attribut est interpolé dans du HTML, et c'est justement parce qu'aucune donnée ne le déclenche
+// qu'aucun test ne l'attraperait s'il manquait.
+function vignetteStation(s) {
+  // La photo se pose EN ABSOLU par-dessus le repli, dans un conteneur commun. La superposer à coups
+  // de marge négative les décalait de la valeur du `gap` flex, et le code débordait derrière la
+  // photo (« TA » derrière celle de Nyx Gateway (Stanton), dont le code est NYXSTA).
+  const photo = s.shot && /^https:\/\//i.test(s.shot)
+    ? `<img class="stn-shot" src="${esc(s.shot)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+    : "";
+  return `<span class="stn-vign sys-${esc((s.system || "").toLowerCase())}">` +
+    `<span class="stn-shot-gen">${esc(s.code)}</span>${photo}</span>`;
 }
 
 // Résout le terminal de départ depuis le texte du champ (libellé exact).
@@ -2134,17 +2195,24 @@ function setupLoopSort() {
   });
 }
 
-// Charge les vaisseaux et gère une autocomplétion maison (filtre par sous-chaîne,
-// fiable sur tous les navigateurs, avec navigation clavier).
-async function loadShips() {
-  const ships = await fetch("data/ships.json").then((r) => r.json()).catch(() => []);
-  // Tri par capacité de soute décroissante : les plus gros haulers apparaissent en premier.
-  ships.sort((a, b) => b.scu - a.scu);
-  const input = $("ship");
-  const list = $("shipList");
-  const byName = new Map(ships.map((s) => [s.name.toLowerCase(), s.scu]));
+// Autocomplétion maison, partagée par le champ Vaisseau et le sélecteur de station (ADR-003).
+// Un `<datalist>` natif ne se met pas en forme et cale sa liste sur la largeur du champ : les noms
+// de station y sont tronqués (jusqu'à 33 caractères pour « Terra Gateway (Stanton) — Stanton »).
+//
+// Trois généralisations par rapport à l'autocomplétion vaisseau dont elle est tirée, chacune
+// indispensable au sélecteur de station :
+//   1. `options` est une FONCTION relue à chaque ouverture, et non un tableau capturé au montage :
+//      les vaisseaux existent dès le départ, les stations seulement après market.json.
+//   2. la navigation passe par `li[data-i]` et non par `list.children`. Des en-têtes de groupe
+//      brisent la bijection enfants ↔ résultats : sans ce filtre, la 3e flèche bas poserait
+//      `.active` sur un en-tête non sélectionnable et Entrée choisirait la mauvaise station.
+//   3. `rendu` reçoit le tableau ENTIER et rend le HTML en bloc, ce qui permet d'intercaler
+//      ces en-têtes.
+// `max: 0` = pas de plafond (les 114 stations tiennent ; les vaisseaux, eux, se coupent à 12).
+function montePicker({ input, list, options, filtre, rendu, choisir, max = 12 }) {
   let matches = [];
   let active = -1;
+  const items = () => [...list.querySelectorAll("li[data-i]")];
 
   function hide() {
     list.hidden = true;
@@ -2153,22 +2221,71 @@ async function loadShips() {
     input.setAttribute("aria-expanded", "false");
   }
 
-  // q vide -> toute la liste (parcours au focus) ; sinon filtre par sous-chaîne (max 12).
+  // q vide -> toute la liste (parcours au focus) ; sinon filtre par sous-chaîne.
   function show(q) {
-    const pool = q ? ships.filter((s) => s.name.toLowerCase().includes(q)) : ships;
-    matches = q ? pool.slice(0, 12) : pool;
+    const tout = options() || [];
+    const pool = q ? tout.filter((o) => filtre(o, q)) : tout;
+    matches = q && max > 0 ? pool.slice(0, max) : pool;
     if (!matches.length) return hide();
     active = 0;
-    list.innerHTML = matches
-      .map(
-        (s, i) =>
-          `<li role="option" data-i="${i}" class="${i === 0 ? "active" : ""}">` +
-          `<span>${esc(s.name)}</span><span class="scu">${s.scu.toLocaleString("fr-FR")} SCU</span></li>`
-      )
-      .join("");
+    list.innerHTML = rendu(matches);
+    highlight();
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
   }
+
+  function highlight() {
+    items().forEach((li, i) => li.classList.toggle("active", i === active));
+    items()[active]?.scrollIntoView({ block: "nearest" });
+  }
+
+  function valide(o) {
+    if (!o) return;
+    hide();
+    choisir(o);
+  }
+
+  input.addEventListener("input", () => show(input.value.trim().toLowerCase()));
+  input.addEventListener("focus", () => show(input.value.trim().toLowerCase()));
+
+  input.addEventListener("keydown", (e) => {
+    if (list.hidden) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      active = Math.min(active + 1, matches.length - 1);
+      highlight();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      active = Math.max(active - 1, 0);
+      highlight();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      valide(matches[active]);
+    } else if (e.key === "Escape") {
+      hide();
+    }
+  });
+
+  // mousedown (et non click) pour devancer le blur du champ.
+  list.addEventListener("mousedown", (e) => {
+    const li = e.target.closest("li[data-i]"); // les en-têtes de groupe n'en portent pas : inertes
+    if (!li) return;
+    e.preventDefault();
+    valide(matches[Number(li.dataset.i)]);
+  });
+
+  input.addEventListener("blur", () => setTimeout(hide, 150));
+  return { hide, show };
+}
+
+// Charge les vaisseaux et branche leur autocomplétion.
+async function loadShips() {
+  const ships = await fetch("data/ships.json").then((r) => r.json()).catch(() => []);
+  // Tri par capacité de soute décroissante : les plus gros haulers apparaissent en premier.
+  ships.sort((a, b) => b.scu - a.scu);
+  const input = $("ship");
+  const list = $("shipList");
+  const byName = new Map(ships.map((s) => [s.name.toLowerCase(), s.scu]));
 
   function showCard(s) {
     const card = $("shipCard");
@@ -2188,58 +2305,26 @@ async function loadShips() {
     card.hidden = false;
   }
 
-  function choose(s) {
-    if (!s) return;
-    input.value = s.name;
-    $("cargo").value = s.scu;
-    hide();
-    showCard(s);
-    refresh();
-  }
-
   // Affiche la carte du vaisseau déjà présent dans le champ (ex. après restauration d'état).
   showShipCard = () => {
     const s = ships.find((x) => x.name.toLowerCase() === input.value.trim().toLowerCase());
     if (s) showCard(s);
   };
 
-  function highlight() {
-    [...list.children].forEach((li, i) => li.classList.toggle("active", i === active));
-    list.children[active]?.scrollIntoView({ block: "nearest" });
-  }
-
-  input.addEventListener("input", () => show(input.value.trim().toLowerCase()));
-
-  // Cliquer/placer le curseur dans le champ ouvre la liste sans avoir à taper.
-  input.addEventListener("focus", () => show(input.value.trim().toLowerCase()));
-
-  input.addEventListener("keydown", (e) => {
-    if (list.hidden) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      active = Math.min(active + 1, matches.length - 1);
-      highlight();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      active = Math.max(active - 1, 0);
-      highlight();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      choose(matches[active]);
-    } else if (e.key === "Escape") {
-      hide();
-    }
+  montePicker({
+    input, list,
+    options: () => ships,
+    filtre: (s, q) => s.name.toLowerCase().includes(q),
+    rendu: (m) => m.map((s, i) =>
+      `<li role="option" data-i="${i}"><span>${esc(s.name)}</span>` +
+      `<span class="scu">${s.scu.toLocaleString("fr-FR")} SCU</span></li>`).join(""),
+    choisir: (s) => {
+      input.value = s.name;
+      $("cargo").value = s.scu;
+      showCard(s);
+      refresh();
+    },
   });
-
-  // mousedown (et non click) pour devancer le blur du champ.
-  list.addEventListener("mousedown", (e) => {
-    const li = e.target.closest("li");
-    if (!li) return;
-    e.preventDefault();
-    choose(matches[Number(li.dataset.i)]);
-  });
-
-  input.addEventListener("blur", () => setTimeout(hide, 150));
 
   // Modifier la soute à la main efface le nom du vaisseau et la carte.
   $("cargo").addEventListener("input", () => {

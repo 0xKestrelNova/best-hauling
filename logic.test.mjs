@@ -23,6 +23,7 @@ import {
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
   cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
+  stationTree,
 } from "./logic.mjs";
 
 // ---------- Temps de trajet ----------
@@ -3366,4 +3367,73 @@ test("interrupteur inactif : aucune fonction de métriques ne facture quoi que c
   assert.equal(manifestTotals(t.lines).fees, 0);
   assert.equal(buildChainAdjacency(MKT_NET(), { legalOnly: false, noOutpost: false }, idResolve).get(0)[0].fee, null);
   assert.equal(bestChain(ADJ, "A", 2, { cargo: 50 }).profit, 1_750); // fixture historique, sans `fee`
+});
+
+// ---------- stationTree : les 114 terminaux rangés système › zone › station (ADR-003) ----------
+// L'arbre qui alimente le sélecteur de station. La ZONE est ce qui demande le plus d'attention :
+// 12 terminaux sur 114 n'ont pas de planète — les 7 portes de saut, les 4 PSS et Levski. L'ADR-003
+// a d'abord voulu combler le trou avec `orbit_name`, avant de mesurer qu'il n'en recopie pas le nom
+// du terminal mais une variante (« Pyro Gateway (Stanton system) »), rendant la règle fausse sur 11
+// des 12. On s'en tient donc à : planète, sinon « Espace profond ».
+const TERMINAUX_ARBRE = () => [
+  { name: "Ruin Station", system: "Pyro", planet: "Pyro V", outpost: false, code: "RUIN", shot: "https://x/r.jpg" },
+  { name: "Levski", system: "Nyx", planet: "", outpost: false, code: "LEVSKI", shot: "" },
+  { name: "Écho", system: "Stanton", planet: "Ærea", outpost: true, code: "ECHO", shot: "" },
+  { name: "Area 18", system: "Stanton", planet: "ArcCorp", outpost: false, code: "A18", shot: "" },
+  { name: "Astor", system: "Stanton", planet: "Ærea", outpost: false, code: "AST", shot: "" },
+];
+
+test("stationTree range les systèmes dans l'ordre Stanton, Pyro, Nyx quelle que soit l'entrée", () => {
+  // L'entrée est délibérément dans l'ordre inverse : c'est la fonction qui ordonne, pas les données.
+  const arbre = stationTree(TERMINAUX_ARBRE());
+  assert.deepEqual(arbre.map((s) => s.systeme), ["Stanton", "Pyro", "Nyx"]);
+});
+
+test("stationTree : un système inconnu passe en queue plutôt que de disparaître", () => {
+  const arbre = stationTree([...TERMINAUX_ARBRE(), { name: "Ailleurs", system: "Terra", planet: "", outpost: false, code: "T", shot: "" }]);
+  assert.equal(arbre.at(-1).systeme, "Terra");
+  assert.equal(arbre.length, 4);
+});
+
+test("stationTree : sans planète, la zone est « Espace profond »", () => {
+  const nyx = stationTree(TERMINAUX_ARBRE()).find((s) => s.systeme === "Nyx");
+  assert.deepEqual(nyx.zones.map((z) => z.zone), ["Espace profond"]);
+  assert.equal(nyx.zones[0].stations[0].name, "Levski");
+});
+
+test("stationTree trie zones et stations en français (accents compris)", () => {
+  const stanton = stationTree(TERMINAUX_ARBRE()).find((s) => s.systeme === "Stanton");
+  // « Ærea » se classe avant « ArcCorp » en tri français, pas en tri par point de code.
+  assert.deepEqual(stanton.zones.map((z) => z.zone), ["Ærea", "ArcCorp"]);
+  assert.deepEqual(stanton.zones[0].stations.map((s) => s.name), ["Astor", "Écho"]);
+});
+
+test("stationTree : chaque station porte son index d'origine et son libellé canonique", () => {
+  // L'index est la SEULE clé fiable : `code` n'est pas unique (PYROG × 2 dans les vraies données).
+  // Le libellé est pré-calculé pour que le choix n'ait rien à reconstruire — c'est lui qu'attend
+  // resolveStation, par correspondance exacte.
+  const pyro = stationTree(TERMINAUX_ARBRE()).find((s) => s.systeme === "Pyro");
+  const ruin = pyro.zones[0].stations[0];
+  assert.equal(ruin.i, 0); // premier du tableau d'entrée
+  assert.equal(ruin.label, stationLabel("Ruin Station", "Pyro"));
+  assert.equal(ruin.code, "RUIN");
+  assert.equal(ruin.outpost, false);
+});
+
+test("stationTree : deux terminaux de même code restent deux stations distinctes", () => {
+  const arbre = stationTree([
+    { name: "Pyro Gateway (Stanton)", system: "Stanton", planet: "", outpost: false, code: "PYROG", shot: "" },
+    { name: "Pyro Gateway (Nyx)", system: "Nyx", planet: "", outpost: false, code: "PYROG", shot: "" },
+  ]);
+  const plates = arbre.flatMap((s) => s.zones.flatMap((z) => z.stations));
+  assert.equal(plates.length, 2);
+  assert.notDeepEqual(plates[0].i, plates[1].i);
+});
+
+test("stationTree : les stations d'une même zone sont CONTIGUËS une fois l'arbre aplati", () => {
+  // Contrainte structurelle du rendu groupé : il pose un en-tête dès que (système, zone) change,
+  // par simple comparaison au précédent. Sans contiguïté, le même en-tête reviendrait plusieurs fois.
+  const plates = stationTree(TERMINAUX_ARBRE()).flatMap((s) => s.zones.flatMap((z) => z.stations));
+  const cles = plates.map((s) => `${s.system} › ${s.zone}`);
+  assert.deepEqual(cles, [...new Set(cles)].flatMap((c) => cles.filter((x) => x === c)));
 });

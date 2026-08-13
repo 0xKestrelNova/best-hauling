@@ -223,9 +223,15 @@
         </section>
 
         <section id="correctionsControls" class="enroute-controls" hidden>
-          <div class="field">
+          <div class="field picker-field">
             <label for="station">Station à corriger</label>
-            <input id="station" list="stationList" type="text" placeholder="Tape une station (ex : Levski)" autocomplete="off" />
+            <input id="station" type="text" placeholder="Tape une station ou son code (ex : Levski, ARCL1)" autocomplete="off"
+                   role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="stationPickList" />
+            <ul id="stationPickList" class="autocomplete stn-pick" role="listbox" hidden></ul>
+            <!-- La datalist RESTE, et sans son `list` sur #station : trois autres champs s'en
+                 servent encore (#destTerminal, #journeyStart, #journeyAddStop) et huit assertions
+                 E2E la lisent, dont une comme barrière de synchro « market.json est arrivé ». Elle
+                 n'alimente simplement plus ce champ-ci, que le sélecteur groupé a repris. -->
             <datalist id="stationList"></datalist>
           </div>
           <p class="enroute-hint">Corrige les <b>prix et stocks</b> d'une station même hors trajet (clique un chiffre). Tes corrections sont <b>locales</b> (jamais partagées) et périment automatiquement dès qu'UEX publie un relevé plus récent. Utilise le champ <b>Commodité</b> pour filtrer la station.</p>

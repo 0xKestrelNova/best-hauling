@@ -1074,6 +1074,53 @@ export function parseStationLabel(label) {
   return i < 0 ? { name: s, system: "" } : { name: s.slice(0, i), system: s.slice(i + 3) };
 }
 
+// Ordre d'affichage des systèmes dans le sélecteur de station : par volume décroissant de
+// terminaux (Stanton 80, Pyro 27, Nyx 7). C'est aussi l'ordre dans lequel un joueur les rencontre.
+// Un système absent de cette liste n'est pas perdu : il passe en queue, trié par son nom.
+const ORDRE_SYSTEMES = ["Stanton", "Pyro", "Nyx"];
+
+// Zone d'un terminal : l'échelon intermédiaire entre le système et la station.
+// 12 terminaux sur 114 n'ont pas de planète — les 7 portes de saut, les 4 PSS et Levski. L'ADR-003
+// a d'abord voulu combler ce trou avec `orbit_name`, sur la foi qu'il recopiait le nom du terminal.
+// Mesuré contre l'API : il en donne une VARIANTE (« Pyro Gateway (Stanton system) » pour le
+// terminal « Pyro Gateway (Stanton) », « People's Service Station Alpha » pour « PSS Alpha »). Le
+// test « orbite ≠ nom » était donc vrai partout, et la règle fausse sur 11 des 12. Le champ
+// n'achetait qu'un seul libellé utile — « Delamar » pour Levski — au prix de cette erreur : on y a
+// renoncé, et les 12 tombent ensemble dans « Espace profond ».
+const zoneDe = (t) => t.planet || "Espace profond";
+
+// Range les terminaux en système › zone › station, pour un sélecteur qui se parcourt à l'œil.
+// Fonction PURE : elle reçoit le tableau, ne lit aucune globale, et ne le modifie pas.
+// Renvoie [{ systeme, zones: [{ zone, stations: [...] }] }].
+// Chaque station porte `i`, son index dans le tableau d'ENTRÉE : c'est la seule clé fiable, `code`
+// n'étant pas unique (PYROG désigne les deux Pyro Gateway). `label` est pré-calculé parce que c'est
+// lui, et lui seul, que le champ doit recevoir — resolveStation résout par correspondance exacte.
+export function stationTree(terminals) {
+  const parSysteme = new Map();
+  (terminals || []).forEach((t, i) => {
+    const systeme = t.system || "?";
+    const zone = zoneDe(t);
+    if (!parSysteme.has(systeme)) parSysteme.set(systeme, new Map());
+    const zones = parSysteme.get(systeme);
+    if (!zones.has(zone)) zones.set(zone, []);
+    zones.get(zone).push({
+      i, name: t.name, system: systeme, zone,
+      code: t.code || "", shot: t.shot || "", outpost: !!t.outpost,
+      label: stationLabel(t.name, systeme),
+    });
+  });
+
+  const rang = (s) => { const r = ORDRE_SYSTEMES.indexOf(s); return r < 0 ? ORDRE_SYSTEMES.length : r; };
+  return [...parSysteme.entries()]
+    .sort((a, b) => rang(a[0]) - rang(b[0]) || a[0].localeCompare(b[0], "fr"))
+    .map(([systeme, zones]) => ({
+      systeme,
+      zones: [...zones.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], "fr"))
+        .map(([zone, stations]) => ({ zone, stations: stations.sort((x, y) => x.name.localeCompare(y.name, "fr")) })),
+    }));
+}
+
 // ---------- Compagnon de voyage : modèle de « parcours » (pur, sérialisable) ----------
 // Un parcours = suite ORDONNÉE de sauts (legs) contigus + position courante (index de station).
 //   leg = { from, fromSystem, to, toSystem, commodity, buyPrice, sellPrice, margin }

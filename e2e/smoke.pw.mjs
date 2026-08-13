@@ -1665,3 +1665,87 @@ test("saisie : pas un history.replaceState par frappe, et « Partager » ne copi
   const barre = await page.evaluate(() => location.hash.replace(/^#/, ""));
   expect(new URLSearchParams(barre).get("station")).not.toBe(gare);
 });
+
+// ---------- Sélecteur de station groupé (ADR-003, LOT 2) ----------
+// Ouvre le sélecteur de la vue Corrections et rend la main quand il est peuplé.
+async function ouvrePicker(page, q = "") {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 }); // marché arrivé
+  if (q) await page.locator("#station").pressSequentially(q, { delay: 1 });
+  else await page.locator("#station").focus();
+  await expect(page.locator("#stationPickList")).toBeVisible();
+}
+
+test("sélecteur : le nom complet d'une station longue est lisible sans troncature (#36)", async ({ page }) => {
+  // « Terra Gateway (Stanton) — Stanton » fait 33 caractères, le plus long des 114 terminaux.
+  // Un <datalist> natif cale sa liste sur la largeur du champ et le coupe : c'est le défaut corrigé.
+  await ouvrePicker(page, "terra gateway");
+  const opt = page.locator("#stationPickList li[data-i]").first();
+  await expect(opt).toContainText("Terra Gateway (Stanton)");
+
+  // Aucun débordement interne : le texte tient dans sa ligne, il n'est pas rogné.
+  const rogne = await opt.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  expect(rogne, "l'option ne doit pas déborder de sa propre ligne").toBe(false);
+
+  // Et la liste s'affranchit de la largeur du champ — c'est ce qui rend la place nécessaire.
+  const [wListe, wChamp] = await Promise.all([
+    page.locator("#stationPickList").evaluate((e) => e.getBoundingClientRect().width),
+    page.locator("#station").evaluate((e) => e.getBoundingClientRect().width),
+  ]);
+  expect(wListe).toBeGreaterThan(wChamp);
+});
+
+test("sélecteur : chercher par code UEX remonte les deux passerelles homonymes (#36)", async ({ page }) => {
+  // PYROG désigne À LA FOIS Pyro Gateway (Stanton) et Pyro Gateway (Nyx) : le code n'est pas unique,
+  // et c'est leur badge système qui les distingue à l'œil.
+  await ouvrePicker(page, "pyrog");
+  const opts = page.locator("#stationPickList li[data-i]");
+  await expect(opts).toHaveCount(2);
+  await expect(opts.nth(0)).toContainText("Pyro Gateway");
+  await expect(opts.nth(1)).toContainText("Pyro Gateway");
+  // Ce qui les distingue à l'œil, c'est leur EN-TÊTE : chacune tombe dans le groupe de son système,
+  // et le filtrage n'en conserve que deux. Sans cela l'utilisateur verrait deux lignes identiques.
+  const groupes = await page.locator("#stationPickList li.opt-grp .sys").allTextContents();
+  expect(new Set(groupes.map((s) => s.trim()))).toEqual(new Set(["Stanton", "Nyx"]));
+});
+
+test("sélecteur : les flèches ne s'arrêtent jamais sur un en-tête de groupe (#36)", async ({ page }) => {
+  // Les en-têtes brisent la bijection enfants ↔ résultats : sans filtrage sur li[data-i], la 3e
+  // flèche bas poserait .active sur un en-tête et Entrée choisirait la mauvaise station.
+  await ouvrePicker(page);
+  await expect(page.locator("#stationPickList li.opt-grp").first()).toBeVisible();
+  for (let i = 0; i < 3; i++) await page.locator("#station").press("ArrowDown");
+  await expect(page.locator("#stationPickList li.opt-grp.active")).toHaveCount(0);
+  await expect(page.locator("#stationPickList li[data-i].active")).toHaveCount(1);
+});
+
+test("sélecteur : Entrée écrit le libellé canonique, et la station s'affiche (#36)", async ({ page }) => {
+  await ouvrePicker(page, "levski");
+  await page.locator("#station").press("Enter");
+  // Libellé canonique « Nom — Système » : c'est ce qu'attend resolveStation, et ce qu'encode le lien.
+  await expect(page.locator("#station")).toHaveValue("Levski — Nyx");
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible();
+});
+
+test("sélecteur : la datalist historique survit pour les autres champs (#36)", async ({ page }) => {
+  // #destTerminal, #journeyStart et #journeyAddStop s'en servent encore, et huit assertions la lisent.
+  await ouvrePicker(page);
+  await expect(page.locator("#stationList option")).toHaveCount(114);
+  await expect(page.locator("#station")).not.toHaveAttribute("list", /.+/);
+});
+
+test("sélecteur : quand la photo existe, la vignette de repli ne dépasse pas derrière (#36)", async ({ page }) => {
+  // Photo et vignette générée occupent la MÊME case : la seconde n'est qu'un repli. Superposées à
+  // coups de marge négative, elles se décalaient de la valeur du `gap` flex et le code débordait —
+  // on lisait « TA » derrière la photo de Nyx Gateway (Stanton), dont le code est NYXSTA.
+  await ouvrePicker(page, "gate");
+  const avecPhoto = page.locator("#stationPickList li[data-i]:not(.no-shot)").filter({ has: page.locator("img.stn-shot") }).first();
+  await expect(avecPhoto).toBeVisible();
+  const boites = await avecPhoto.evaluate((li) => {
+    const img = li.querySelector("img.stn-shot").getBoundingClientRect();
+    const gen = li.querySelector(".stn-shot-gen").getBoundingClientRect();
+    return { img: [img.x, img.y, img.width, img.height], gen: [gen.x, gen.y, gen.width, gen.height] };
+  });
+  // Exactement superposées : aucun pixel du repli n'est visible à côté de la photo.
+  expect(boites.gen).toEqual(boites.img);
+});
