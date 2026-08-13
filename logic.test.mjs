@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
   normalizeScores, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
   profitPerHour, rawScoreOf, routePasses, loopPasses,
@@ -22,6 +22,7 @@ import {
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
+  cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
 } from "./logic.mjs";
 
 // ---------- Temps de trajet ----------
@@ -278,7 +279,7 @@ test("computeUnits : prend la plus petite contrainte (soute vs budget)", () => {
 
 // ---------- effValue (corrections locales + fraîcheur) ----------
 test("effValue : pas de correction -> valeurs brutes", () => {
-  assert.deepEqual(effValue(undefined, 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false });
+  assert.deepEqual(effValue(undefined, 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false, staleVol: false });
 });
 
 test("effValue : correction appliquée si plus récente que le relevé", () => {
@@ -303,6 +304,69 @@ test("effValue : base == relevé n'est PAS périmé (correction fraîche contre 
   assert.equal(r.stale, false);
   assert.equal(r.vol, 5);
   assert.equal(r.ovol, true);
+});
+
+// ---------- Péremption par DURÉE des volumes corrigés (spec 2026-08-12) ----------
+// Un volume est une quantité qui repousse : le jeu réapprovisionne par paliers de 5 à 15 min, alors
+// qu'UEX ne republie un point que tous les 3,1 jours en médiane. Une déduction de chargement
+// survivait donc des jours à un stock déjà revenu. Un PRIX, lui, ne se régénère pas : il garde le
+// comportement d'avant. La péremption par durée est donc par CHAMP.
+const MAINTENANT = 1_700_000_000;
+const IL_Y_A = (s) => MAINTENANT - s;
+
+test("effValue : un volume corrigé depuis plus de 3 h revient à la valeur UEX", () => {
+  const o = { vol: 12, base: 1000, pris: IL_Y_A(3 * 3600 + 1) };
+  const r = effValue(o, 100, 500, 900, MAINTENANT);
+  assert.equal(r.vol, 500);        // retour au stock UEX
+  assert.equal(r.ovol, false);
+  assert.equal(r.staleVol, true);
+  assert.equal(r.stale, false);    // ce n'est pas UEX qui l'a périmée
+});
+
+test("effValue : un volume corrigé depuis moins de 3 h s'applique", () => {
+  const r = effValue({ vol: 12, base: 1000, pris: IL_Y_A(2 * 3600) }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.vol, 12);
+  assert.equal(r.ovol, true);
+  assert.equal(r.staleVol, false);
+});
+
+test("effValue : à 3 h PILE le volume n'est pas encore périmé", () => {
+  // Même convention que `base == relevé` : la frontière appartient à la correction.
+  const r = effValue({ vol: 12, base: 1000, pris: IL_Y_A(3 * 3600) }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.staleVol, false);
+  assert.equal(r.vol, 12);
+});
+
+test("effValue : le PRIX survit à la péremption du volume", () => {
+  // C'est tout l'intérêt d'une péremption par champ : rien ne régénère un prix faux.
+  const o = { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) };
+  const r = effValue(o, 100, 500, 900, MAINTENANT);
+  assert.equal(r.price, 7000);
+  assert.equal(r.oprice, true);
+  assert.equal(r.vol, 500);
+  assert.equal(r.ovol, false);
+});
+
+test("effValue : sans `pris` (corrections déjà en localStorage), aucune péremption par durée", () => {
+  // Sinon toutes les corrections existantes disparaîtraient au premier chargement de la nouvelle
+  // version. Elles s'aligneront à la prochaine saisie.
+  const r = effValue({ vol: 12, base: 1000 }, 100, 500, 900, MAINTENANT);
+  assert.equal(r.staleVol, false);
+  assert.equal(r.vol, 12);
+});
+
+test("effValue : un relevé UEX plus récent périme TOUT, même un volume de deux minutes", () => {
+  const o = { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(120) };
+  const r = effValue(o, 100, 500, 1500, MAINTENANT);
+  assert.equal(r.stale, true);
+  assert.equal(r.price, 100);
+  assert.equal(r.vol, 500);
+});
+
+test("effValue : la durée est réglable", () => {
+  const o = { vol: 12, base: 1000, pris: IL_Y_A(3600) };
+  assert.equal(effValue(o, 100, 500, 900, MAINTENANT, 30 * 60).staleVol, true);  // 30 min
+  assert.equal(effValue(o, 100, 500, 900, MAINTENANT, 6 * 3600).staleVol, false); // 6 h
 });
 
 test("effValue : compat ascendante — legacy ts, et sans date jamais périmé", () => {
@@ -633,14 +697,16 @@ test("ovKey : clé stable commodité|terminal|side", () => {
 });
 
 test("setInStore : enregistre prix + base, efface un champ, supprime la clé si vide", () => {
+  // Horloge passée explicitement : un volume enregistre son heure de saisie (`pris`), qui serait
+  // sinon celle du run et rendrait la comparaison non déterministe.
   const store = {};
-  setInStore(store, "A|T|buy", "price", "7000", 111);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, base: 111 }); // valeur arrondie + base
-  setInStore(store, "A|T|buy", "vol", 50, 222);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, vol: 50, base: 222 });
-  setInStore(store, "A|T|buy", "price", "", 222); // efface le prix
-  assert.deepEqual(store["A|T|buy"], { vol: 50, base: 222 });
-  setInStore(store, "A|T|buy", "vol", null, 222);  // plus rien -> clé supprimée
+  setInStore(store, "A|T|buy", "price", "7000", 111, MAINTENANT);
+  assert.deepEqual(store["A|T|buy"], { price: 7000, base: 111 }); // valeur arrondie + base, pas de `pris`
+  setInStore(store, "A|T|buy", "vol", 50, 222, MAINTENANT);
+  assert.deepEqual(store["A|T|buy"], { price: 7000, vol: 50, base: 222, pris: MAINTENANT });
+  setInStore(store, "A|T|buy", "price", "", 222, MAINTENANT); // efface le prix
+  assert.deepEqual(store["A|T|buy"], { vol: 50, base: 222, pris: MAINTENANT });
+  setInStore(store, "A|T|buy", "vol", null, 222, MAINTENANT);  // plus rien -> clé supprimée
   assert.equal("A|T|buy" in store, false);
 });
 
@@ -654,7 +720,7 @@ test("setInStore : borne à >= 0 et arrondit", () => {
 
 test("effFromStore : valeur brute si pas de correction", () => {
   const store = {};
-  assert.deepEqual(effFromStore(store, "k", 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false });
+  assert.deepEqual(effFromStore(store, "k", 100, 50, 123), { price: 100, vol: 50, oprice: false, ovol: false, stale: false, staleVol: false });
 });
 
 test("effFromStore : applique la correction plus récente que le relevé", () => {
@@ -671,6 +737,37 @@ test("effFromStore : SUPPRIME du store la correction périmée par un relevé pl
   assert.equal(r.stale, true);
   assert.equal(r.price, 100);          // retour à la valeur UEX
   assert.equal("k" in store, false);   // effet de bord : périmée -> supprimée
+});
+
+test("setInStore : un volume enregistre l'heure de saisie, un prix non", () => {
+  const store = {};
+  setInStore(store, "A|T|buy", "vol", 12, 111, MAINTENANT);
+  assert.equal(store["A|T|buy"].pris, MAINTENANT);
+  const store2 = {};
+  setInStore(store2, "A|T|buy", "price", 7000, 111, MAINTENANT);
+  assert.equal("pris" in store2["A|T|buy"], false); // un prix n'a pas de durée de vie
+});
+
+test("setInStore : effacer le volume retire aussi son heure de saisie", () => {
+  const store = {};
+  setInStore(store, "k", "vol", 12, 111, MAINTENANT);
+  setInStore(store, "k", "price", 7000, 111, MAINTENANT);
+  setInStore(store, "k", "vol", null, 111, MAINTENANT);
+  assert.deepEqual(store.k, { price: 7000, base: 111 }); // ni vol, ni pris
+});
+
+test("effFromStore : le volume périmé quitte le store, le prix y reste", () => {
+  const store = { k: { price: 7000, vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) } };
+  const r = effFromStore(store, "k", 100, 500, 900, MAINTENANT);
+  assert.equal(r.price, 7000);
+  assert.equal(r.vol, 500);
+  assert.deepEqual(store.k, { price: 7000, base: 1000 }); // le volume et son heure sont partis
+});
+
+test("effFromStore : un volume périmé seul fait disparaître la clé", () => {
+  const store = { k: { vol: 12, base: 1000, pris: IL_Y_A(4 * 3600) } };
+  effFromStore(store, "k", 100, 500, 900, MAINTENANT);
+  assert.equal("k" in store, false);
 });
 
 // ---------- safeKey / encodeState / decodeState (persistance) ----------
@@ -2636,6 +2733,55 @@ test("removeJourneyStop : retirer le dernier arrêt restant -> null (voyage effa
   assert.equal(removeJourneyStop(startJourneyAt({ name: "A", system: "S" }), 0), null);
 });
 
+// ---------- Le rang de jambe et ses TROIS porteurs (manifeste, 🔒, étiquette de lot) ----------
+const lotDe = (leg) => ({ name: "Gold", units: 100, paid: 1000, from: "Megumi", at: 1, ...(leg ? { leg } : {}) });
+
+test("reindexerRangsJambe : une jambe qui recule emmène son manifeste, son 🔒 ET ses lots", () => {
+  // A→B→C, la jambe 1 (B→C) est chargée. On retire l'arrêt A : elle devient la jambe 0.
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0);
+  const r = reindexerRangsJambe({
+    edits: { "1|B|C": [{ name: "Gold", units: 100 }] },
+    pins: { "1|B|C": true },
+    lots: [lotDe("1|B|C")],
+  }, retrait);
+  assert.deepEqual(Object.keys(r.edits), ["0|B|C"]);
+  assert.deepEqual(Object.keys(r.pins), ["0|B|C"]);
+  assert.equal(r.lots.length, 1);
+  assert.equal(r.lots[0].leg, "0|B|C"); // avant : l'étiquette restait sur « 1|B|C », la jambe se croyait vide
+});
+
+test("reindexerRangsJambe : les lots d'une jambe DISPARUE restent à bord, sans étiquette", () => {
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0); // la jambe A→B disparaît
+  const r = reindexerRangsJambe({ edits: { "0|A|B": [] }, pins: {}, lots: [lotDe("0|A|B"), lotDe("1|B|C")] }, retrait);
+  assert.deepEqual(r.edits, {});          // le PLAN de la jambe retirée part avec elle
+  assert.equal(r.lots.length, 2);         // le FRET, lui, est réellement à bord : il ne part pas
+  assert.equal("leg" in r.lots[0], false);
+  assert.equal(r.lots[0].units, 100);
+  assert.equal(r.lots[1].leg, "0|B|C");
+});
+
+test("reindexerRangsJambe : un arrêt du MILIEU emporte deux jambes, le pont n'hérite de rien", () => {
+  // A→B→C→D, on retire B : A→B et B→C disparaissent au profit du pont A→C (rang 0).
+  const retrait = removeJourneyStop(parcours(["A", "B", "C", "D"], 0), 1, jambe("A", "C"));
+  const r = reindexerRangsJambe({ edits: {}, pins: {}, lots: [lotDe("0|A|B"), lotDe("2|C|D")] }, retrait);
+  assert.equal("leg" in r.lots[0], false); // recoller ces lots au pont le dirait chargé à tort
+  assert.equal(r.lots[1].leg, "1|C|D");
+});
+
+test("cleApresRetrait : une clé illisible traverse intacte plutôt que de devenir « NaN| »", () => {
+  const retrait = { removedFrom: 0, removedCount: 1, insertedCount: 0 };
+  assert.equal(cleApresRetrait("1|B|C", retrait), "0|B|C");
+  assert.equal(cleApresRetrait("0|A|B", retrait), null);
+  assert.equal(cleApresRetrait("sans-rang", retrait), "sans-rang");
+});
+
+test("detacherLotsDeJambe : effacer le voyage délie les lots sans les débarquer", () => {
+  const r = detacherLotsDeJambe([lotDe("0|A|B"), lotDe(null)]);
+  assert.equal(r.length, 2);
+  assert.equal("leg" in r[0], false);
+  assert.equal(r[0].units, 100); // le fret payé survit à l'effacement du parcours (ADR-002)
+});
+
 // ---------- Suggestions d'arrêts : mêmes filtres que la vue qui les affichera ----------
 const MARCHE_ARRETS = {
   terminals: [
@@ -2956,6 +3102,28 @@ test("lineHaulFee : une ligne ordinaire paie les deux opérations, et rien ne ch
   // Interrupteur inactif : aucune de ces lignes ne coûte quoi que ce soit.
   for (const l of [ordinaire, nulle]) assert.equal(lineHaulFee(32, l, null), 0);
   assert.equal(manifestTotals([ordinaire]).fees, 0);
+});
+
+test("lineNet : la valeur qui DÉCIDE et celle qui s'AFFICHE sont la même, signe compris", () => {
+  const ligne = manifestLine(C_LIBRE, PRIX(100, 500), PRIX(300, 500), NOW, NOW, 32, 32);
+  const paire = { buy: PT_A, sell: PT_B };
+  // Sans frais, le net EST la marge sur le volume — c'est le contrat de l'interrupteur inactif.
+  assert.equal(lineNet(32, ligne, null), 32 * ligne.margin);
+  // Avec frais, le net est amputé d'exactement ce que lineHaulFee facture : le total du manifeste
+  // (manifestTotals) et la ligne affichée ne peuvent donc plus diverger.
+  assert.equal(lineNet(32, ligne, paire), 32 * ligne.margin - lineHaulFee(32, ligne, paire));
+  assert.equal(lineNet(32, ligne, paire), manifestTotals([{ ...ligne, units: 32 }], paire).profit);
+});
+
+test("lineNet : NÉGATIF quand la manutention dépasse la marge — c'est le cas qu'on cherche", () => {
+  // Marge de 1 aUEC/SCU sur 1 SCU : la base de 150 par opération l'écrase. Une ligne pareille fait
+  // PERDRE de l'argent, et c'est à ce signe que le manifeste optimal la laisse au sol.
+  const maigre = manifestLine(C_LIBRE, PRIX(100, 500), PRIX(101, 500), NOW, NOW, 1, 1);
+  const net = lineNet(1, maigre, { buy: PT_A, sell: PT_B });
+  assert.ok(net < 0, `attendu négatif, obtenu ${net}`);
+  // Le rendu doit porter ce signe : un « + » posé d'office écrivait « +-350 », en vert, sur le seul
+  // chiffre qui disait de ne pas charger la ligne.
+  assert.equal(net < 0, true);
 });
 
 // --- Marché : le classement suit le net (manifestsFrom / bestManifest / multiTrips / chaîne) ---

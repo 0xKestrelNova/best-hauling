@@ -39,7 +39,9 @@ Autres éléments :
 - **Vaisseau** : autocomplétion par sous-chaîne (128 modèles UEX), remplit la soute automatiquement, affiche la photo.
 - **Contraintes désactivables** : couper le budget → meilleure route pour la soute ; couper la soute → meilleure route pour le budget.
 - **Multi commodité** (vue Trajets) : balaie tout le marché et propose les **chargements combinés** A→B — la soute se remplit par marge décroissante, plafonnée par le stock et la demande. Quand c'est le **budget** qui borne, ce glouton se fait drainer par les lignes chères — une commodité à 50 000 aUEC/SCU épuise 100 000 en 2 SCU et laisse la soute vide. L'app essaie donc aussi un remplissage par **rendement du capital** et garde le meilleur des deux : jamais pire, et 31 manifestes sur 4 316 y gagnent plus de 5 % sur l'instantané actuel. Le menu **liste** à côté de la coche décide de la portée : **combinés seuls** (défaut — un trajet qui tient en une seule commodité est déjà dans la liste normale) ou **avec les simples**, qui remet les deux sortes dans le **même classement** quand on veut juste la meilleure option, combinée ou non. Nécessite la soute activée ; la coche est grisée sinon.
-- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **ni du prix ni de la commodité** (c'est de la manutention, pas une commission) : indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload).
+- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **ni du prix ni de la commodité** (c'est de la manutention, pas une commission) : indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload). Un net **négatif** —
+la manutention dépasse la marge, c'est le cas que l'interrupteur sert à révéler — s'affiche avec son
+signe et **en rouge**, jamais dans le vert des gains.
 - **Mode Butin** (vue Commodités) : quand le coût d'acquisition est nul, la marge n'a plus de sens — seul compte le **prix de revente**. Ce mode liste **tout ce qui se vend** chez UEX, y compris les ~36 commodités sans aucun point d'achat, et n'affiche que **où l'écouler**. Sa heatmap se calcule **par rang** et non par ratio : les prix de revente s'étalent sur cinq ordres de grandeur (34 M aUEC/SCU pour le Saldynium contre 1 000 pour l'Iron Ore), une échelle linéaire écraserait tout le board.
 - **Décomposition SCU en caisses** (32/24/16/8/4/2/1) sur le manifeste et en infobulle.
 - **Manifeste ajustable** : chaque ligne se modifie à la main — tu peux **dépasser le stock UEX** (vol de fret, relevé périmé…) ; le champ passe en ambre pour le signaler.
@@ -47,7 +49,9 @@ Autres éléments :
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
-- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`6` vues).
+- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`6` vues) ; tout ce qui s'active
+  au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
+  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
 
 ### Portée des filtres par vue
@@ -126,9 +130,10 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 └───────────────────────────┬───────────────────────────────────┘
                             │ artefact Pages
 ┌─ Front (statique, navigateur) ────────────────────────────────┐
-│  index.html                                                   │
+│  index.html  (+ <meta> Content-Security-Policy)               │
 │    ├─ logic.mjs   ← fonctions PURES (calcul), testées         │
-│    └─ app.js      ← module ES : rendu DOM, état, interactions │
+│    ├─ app.js      ← module ES : rendu DOM, état, interactions │
+│    └─ rail.js     ← bascule du menu (script classique)        │
 │  sw.js (service worker) + manifest.webmanifest → PWA offline  │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -137,6 +142,15 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 (temps de trajet, score, `computeUnits`, **filtres partagés** par vue, corrections, remplissage glouton,
 chaîne, **graphe de marché**, **résumés de commodités**, décodage d'état…), importée à la fois par
 `app.js` (navigateur) et par les tests. `app.js` ne fait que le rendu et le câblage.
+
+**Content-Security-Policy** : l'app injecte des données **communautaires** (noms de terminaux et de
+commodités venus d'UEX) dans `innerHTML`. L'échappement (`esc`) reste la défense qui compte, mais
+elle est doublée d'une politique déclarée en `<meta>` — GitHub Pages ne laisse configurer aucun
+en-tête HTTP. `script-src 'self'` est la directive utile : aucun script inline, aucun `eval`, aucune
+origine tierce. C'est pour elle que la bascule du menu a quitté `index.html` pour
+[`rail.js`](rail.js) ; `'unsafe-inline'` n'est concédé qu'au **style**, faute de quoi les barres de
+score et le vaisseau de la carte seraient figés. Toute retouche des `<script>` de la page se
+répercute dans `SHELL` (sw.js) **et** dans la ligne `cp` de l'assemblage — un test le tient.
 
 Fichiers de données (dans [`data/`](data/)) :
 
@@ -234,14 +248,21 @@ trouvée — un coût réellement nul.
 La soute tient un **lot par chargement** : la même commodité peut y figurer deux fois à des prix
 différents, et le panneau montre le détail. C'est plus lourd qu'une moyenne, mais c'est juste.
 
-Deux règles à connaître :
+Trois règles à connaître :
 
 - **Le prix payé ne se périme jamais.** Partout ailleurs le dépôt refuse de persister un prix — il
   ne garde que l'intention, et relit le marché. Le prix payé échappe à cette règle parce que ce
   n'est pas un prix affiché : c'est le montant d'une transaction qui a eu lieu.
 - **Effacer le voyage ne vide pas la soute.** Le parcours est un plan, la soute est du fret réel :
   reprendre le jeu une semaine plus tard avec un vaisseau rangé plein, c'est une soute exacte, pas
-  une soute périmée. Elle a son propre ✕.
+  une soute périmée. Elle a son propre ✕. Sans voyage, la carte continue de **suivre tes filtres** :
+  la place libre, « où écouler » et le prix de vente se recalculent au **terminal de départ
+  d'« En route »**.
+- **Le lien avec la jambe suit la renumérotation, pas la disparition.** Retirer un arrêt renumérote
+  les jambes : l'étiquette de tes lots se décale avec elles, et le bouton reste `⬢ à bord`. Si la
+  jambe qui les a chargés disparaît — ou si tu effaces le voyage — le fret **reste en soute**, il
+  est réel ; il n'est simplement plus rattaché à une jambe, donc plus annulable depuis le voyage.
+  Le ✕ du lot et le panneau Soute restent les sorties.
 
 **Charger vide le rayon.** `✓ chargé` retire de la station ce que tu viens d'y prendre — c'est une
 **correction locale** comme une autre, ancrée à la date UEX du point, donc périmée dès qu'UEX
@@ -313,7 +334,31 @@ jamais partagé ni mis dans l'URL) et **intelligent** :
 
 - Une correction est **ancrée** à la date UEX du point au moment où tu la fais.
 - Elle est **périmée automatiquement** dès qu'UEX republie ce point avec un relevé plus récent (retour à la valeur UEX, petit flash de notification).
+- Un **volume** (stock, demande, et la déduction d'un `✓ chargé`) périme **aussi au bout de 3 h**, même si UEX n'a rien republié. Un **prix**, non : les deux ne vieillissent pas pareil, [voir plus bas](#pourquoi-un-volume-périme-en-3-h-et-pas-un-prix).
 - Sémantique respectée : un **stock d'achat à 0 = terminal vide** (plafonne à 0), et une **demande que _tu_ corriges fait autorité** — y compris un 0, qui vaut « pas de demande » et plafonne à 0 même là où UEX ne renseignait rien. Les valeurs UEX brutes, elles, gardent leur sémantique propre (`null` = capacité inconnue, `0` = terminal saturé) : [voir le piège des volumes UEX](#sémantique-des-volumes-uex-piège).
+
+### Pourquoi un volume périme en 3 h, et pas un prix
+
+Un volume est une quantité qui **repousse**. Le jeu réapprovisionne un comptoir par paliers de l'ordre
+de 5 à 15 min, alors qu'**UEX ne republie un point que tous les 3,1 jours en médiane** — mesuré sur les
+2 592 relevés de `commodities_prices_all` ; seuls **29,9 %** des points ont un relevé de moins de 24 h.
+Attendre UEX, c'est donc annoncer un stock à zéro pendant des jours alors qu'il est revenu en moins
+d'une heure : un facteur ~70 entre les deux horizons. Un prix faux, lui, ne se régénère pas — rien ne
+justifie de l'oublier au bout de trois heures.
+
+**Les 3 h ne sont pas une mesure**, et aucune ne peut les fonder : depuis le patch **3.20** les
+inventaires de boutique ont quitté les fichiers du jeu, plus aucun outil ne peut les dataminer, et
+aucun site ne publie de débit de recharge par terminal. Les deux seuls chiffres qui circulent ne
+survivent pas à la confrontation avec UEX — les 15 points de vente de Quantainium y rapportent tous
+`scu_sell = 0`, et les 50 000 SCU annoncés à TDD Area 18 dépassent le 99ᵉ centile des capacités
+publiées (médiane 539 SCU). C'est pourquoi l'app ne tente **aucune** remontée progressive du stock :
+elle se contente de dire qu'au-delà de trois heures, ta valeur ne vaut plus rien. La durée vit dans
+`DUREE_VOL` (`logic.mjs`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
+
+Contrepartie assumée : sur trois heures un comptoir vidé a très probablement déjà tout récupéré, donc
+l'app reste trop pessimiste pendant une partie du délai. En échange, une correction survit à une
+session de jeu entière. Le raisonnement complet est dans
+[la spec](docs/superpowers/specs/2026-08-12-peremption-des-volumes-et-corrections-groupees-design.md).
 
 ## Frais d'autoload
 

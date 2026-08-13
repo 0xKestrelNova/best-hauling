@@ -2,6 +2,25 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
+  <!-- GitHub Pages ne laisse configurer AUCUN en-tête HTTP : la <meta> est le seul vecteur de
+       politique dont dispose ce site. Elle est posée AVANT tout <link> — le préchargeur du
+       navigateur lance des requêtes dès qu'il croise une balise, et ce qui part avant la lecture de
+       la politique lui échappe. Directive par directive :
+         script-src 'self'  — aucun inline (rail.js a été sorti pour ça), aucun eval, aucune origine
+                              tierce : c'est la seule barrière si une interpolation échappait à esc().
+         style-src 'unsafe-inline' — app.js émet des style="" par innerHTML (barre de score,
+                              chevrons et vaisseau de la carte SVG). `style-src-attr` serait plus
+                              fin, mais Firefox l'ignore et retomberait sur style-src : les barres
+                              et le vaisseau y seraient figés. On assume donc l'inline sur le style.
+         img-src 'self' https: — les photos de vaisseaux viennent de data/ships.json, régénéré
+                              toutes les 30 min contre l'API UEX, qui recopie `url_photo` verbatim.
+                              Une liste figée ferait disparaître les photos en production sans
+                              qu'aucun test committé ne le voie.
+         connect-src 'self'  — l'app ne fetch que ses propres data/*.json : coupe l'exfiltration.
+         base-uri/form-action/object-src — surfaces inutilisées ici, donc fermées.
+       frame-ancestors, report-uri et sandbox sont SANS EFFET dans une <meta> : les y écrire ne
+       donnerait qu'une fausse assurance (et Chromium le signale en console). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Best Hauling — Routes commerciales Star Citizen</title>
   <link rel="stylesheet" href="fonts/fonts.css" />
@@ -313,28 +332,10 @@
   </div>
 
   <script type="module" src="app.js"></script>
-  <script>
-    // Barre latérale rétractable (pur vanilla, indépendant de app.js).
-    (function () {
-      var btn = document.getElementById("railToggle");
-      var app = document.getElementById("app");
-      if (!btn || !app) return;
-      var KEY = "best-hauling-rail";
-      try { if (localStorage.getItem(KEY) === "1") app.classList.add("rail-collapsed"); } catch (e) {}
-      var sync = function () {
-        var c = app.classList.contains("rail-collapsed");
-        btn.textContent = c ? "»" : "«";
-        // Le caractère seul ne dit rien à un lecteur d'écran : on tient l'état et le nom à jour.
-        btn.setAttribute("aria-expanded", c ? "false" : "true");
-        btn.setAttribute("aria-label", c ? "Déplier le menu" : "Rétracter le menu");
-      };
-      sync();
-      btn.addEventListener("click", function () {
-        app.classList.toggle("rail-collapsed");
-        try { localStorage.setItem(KEY, app.classList.contains("rail-collapsed") ? "1" : "0"); } catch (e) {}
-        sync();
-      });
-    })();
-  </script>
+  <!-- Sorti de la page pour que `script-src 'self'` ait un sens (cf. la <meta> du <head>).
+       Script CLASSIQUE et non module : il doit continuer de s'exécuter AVANT app.js (différé),
+       sans quoi le rail s'afficherait déplié le temps d'un rendu. Toute retouche ici se répercute
+       dans SHELL (sw.js) et dans la ligne `cp` de update-data.yml — scripts/csp.test.mjs le tient. -->
+  <script src="rail.js"></script>
 </body>
 </html>

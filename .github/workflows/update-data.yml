@@ -68,7 +68,7 @@ jobs:
         if: steps.build.outputs.changed != 'false'
         run: |
           mkdir -p _site/data _site/fonts
-          cp index.html app.js logic.mjs style.css manifest.webmanifest sw.js icon.svg _site/
+          cp index.html app.js rail.js logic.mjs style.css manifest.webmanifest sw.js icon.svg _site/
           cp fonts/* _site/fonts/
           cp data/*.json _site/data/
 

@@ -36,6 +36,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: 20
+          # Cache du registre npm (~/.npm), clé sur package-lock.json. Le job `unit` n'installe
+          # rien — il lance `node --test` sur des modules sans dépendance — donc il n'en a pas besoin.
+          cache: npm
+      # Le navigateur pèse plus lourd que les dépendances : sans cache, chaque run le retélécharge
+      # et le job passait ~3 min. La clé porte le lockfile, donc un bump de Playwright invalide le
+      # cache — un binaire d'une autre version ne peut pas être servi à la place.
+      - name: Cache du navigateur Playwright
+        id: playwright-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
       # `npm install` ne vérifie pas que package-lock.json est en phase avec package.json : quand il
       # ne l'est plus — un bump de plage oublié dans une PR, par exemple — il résout un arbre neuf,
       # ignore les hashes d'intégrité verrouillés et réécrit le lock dans le runner, en exécutant au
@@ -43,8 +55,15 @@ jobs:
       # le badge CI atteste d'un arbre que rien n'a validé. `npm ci` échoue bruyamment à la place.
       - name: Installer les dépendances de test
         run: npm ci --no-audit --no-fund
-      - name: Installer le navigateur Playwright
+      # Deux étapes exclusives, et non une seule avec `--with-deps` : le cache ne porte QUE le
+      # binaire du navigateur (~/.cache/ms-playwright). Les paquets système dont Chromium dépend
+      # vivent dans l'image du runner, hors du cache, et manqueraient donc sur un succès de cache.
+      - name: Installer le navigateur Playwright (cache manqué)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+      - name: Installer les dépendances système du navigateur (cache touché)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       - name: Tests E2E de fumée
         run: npx playwright test
 
