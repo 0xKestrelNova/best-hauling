@@ -94,10 +94,53 @@ test("correction locale : marqueur ✎, compteur, et persistance au rechargement
   await expect(page.locator("#rows .editv.ov").first()).toBeVisible();            // marqueur conservé
 });
 
-test("le schéma de trajet se déplie puis se replie", async ({ page }) => {
+test("▶ tient la cible tactile minimale (#29)", async ({ page }) => {
+  // ▶ est l'action PRINCIPALE d'une ligne : c'est lui qui démarre le compagnon de voyage. Il
+  // mesurait 20×20 px pour un glyphe de 9 px — sous les 24×24 exigés par WCAG 2.2 SC 2.5.8
+  // (niveau AA), et plus petit que le dépliant qui n'était que secondaire. Le seuil testé est
+  // la règle, pas la taille retenue (30×30) : c'est la règle qui ne doit jamais régresser.
+  const b = await page.locator("#rows .journey-pick").first().boundingBox();
+  expect(b.width).toBeGreaterThanOrEqual(24);
+  expect(b.height).toBeGreaterThanOrEqual(24);
+});
+
+test("plus de dépliant 🗺 là où la carte du voyage montre déjà la géographie (#30)", async ({ page }) => {
+  // Trajets simples et En route sortent tous deux de routeRowHTML : une seule suppression couvre
+  // les deux tables. Les boucles ont leur propre rendu, d'où la seconde vérification.
+  await expect(page.locator("#rows .route-toggle")).toHaveCount(0);
+  await page.click("#viewLoops");
+  await expect(page.locator("#loops tr").first()).toBeVisible();
+  await expect(page.locator("#loops .route-toggle")).toHaveCount(0);
+});
+
+test("multi-commodité : ▶ reste le seul bouton plein de la ligne, dépliant ouvert (#29)", async ({ page }) => {
+  // Le ▶ ayant pris le remplissage plein, l'état ouvert du dépliant ne peut plus le prendre aussi :
+  // deux carrés ambre pleins côte à côte annulent la hiérarchie qu'on vient d'établir, et l'emoji
+  // 📦 — glyphe en couleurs, que `color` ne repeint pas — devient illisible sur fond ambre.
+  await page.check("#multiCommodity");
   await page.locator("#rows tr:first-child .route-toggle").click();
-  await expect(page.locator("#rows tr.schema-row .schema")).toBeVisible();
-  await expect(page.locator("#rows tr.schema-row .schema-leg")).toHaveCount(2);
+  // `.route-toggle` porte une transition de 0,12 s sur `background` : lue tout de suite, la valeur
+  // calculée est celle du DÉPART, et l'assertion passait sans rien prouver. On attend donc la fin
+  // des animations des deux boutons — expect.poll ne conviendrait pas non plus, il s'arrête au
+  // PREMIER échantillon conforme, c'est-à-dire encore en pleine transition.
+  const memeFond = await page.evaluate(async () => {
+    const c = document.querySelector("#rows tr:first-child .commodity-cell");
+    const t = c.querySelector(".route-toggle.open"), p = c.querySelector(".journey-pick");
+    await Promise.all([...t.getAnimations(), ...p.getAnimations()].map((a) => a.finished.catch(() => {})));
+    return getComputedStyle(t).backgroundColor === getComputedStyle(p).backgroundColor;
+  });
+  expect(memeFond).toBe(false);
+});
+
+test("multi-commodité : le dépliant garde le chargement, et lui seul (#30)", async ({ page }) => {
+  // Seule table où le dépliant ne fait PAS doublon : la carte du voyage n'affiche aucun chiffre,
+  // et c'est le seul endroit qui dit ce que contient une ligne « 3 commodités ».
+  await page.check("#multiCommodity");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.locator("#rows tr:first-child .route-toggle").click();
+  const detail = page.locator("#rows tr.schema-row");
+  await expect(detail.locator(".sline").first()).toBeVisible();
+  await expect(detail.locator(".schema")).toHaveCount(0); // la géographie part avec le doublon
   await page.locator("#rows tr:first-child .route-toggle").click();
   await expect(page.locator("#rows tr.schema-row")).toHaveCount(0);
 });
