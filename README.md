@@ -241,7 +241,9 @@ Trois règles à connaître :
   n'est pas un prix affiché : c'est le montant d'une transaction qui a eu lieu.
 - **Effacer le voyage ne vide pas la soute.** Le parcours est un plan, la soute est du fret réel :
   reprendre le jeu une semaine plus tard avec un vaisseau rangé plein, c'est une soute exacte, pas
-  une soute périmée. Elle a son propre ✕.
+  une soute périmée. Elle a son propre ✕. Sans voyage, la carte continue de **suivre tes filtres** :
+  la place libre, « où écouler » et le prix de vente se recalculent au **terminal de départ
+  d'« En route »**.
 - **Le lien avec la jambe suit la renumérotation, pas la disparition.** Retirer un arrêt renumérote
   les jambes : l'étiquette de tes lots se décale avec elles, et le bouton reste `⬢ à bord`. Si la
   jambe qui les a chargés disparaît — ou si tu effaces le voyage — le fret **reste en soute**, il

@@ -517,6 +517,42 @@ test("Soute : elle survit au rechargement, et effacer le VOYAGE ne la vide pas",
   await expect(page.locator("#holdCard")).toBeHidden();
 });
 
+test("Soute : sans voyage, la carte suit toujours les filtres (#8)", async ({ page }) => {
+  // Effacer le parcours ne vide pas la soute (c'est le contrat), mais `refresh()` ne repeignait le
+  // compagnon que `if (JOURNEY)` : la carte restait figée sur son dernier rendu pendant que les
+  // tableaux d'à côté, eux, suivaient les filtres.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  const aBord = holdScuDe(await lots(page));
+  expect(aBord).toBeGreaterThan(0);
+
+  await page.locator("#journeyClear").click();
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(0);
+  await expect(page.locator("#holdCard")).toBeVisible(); // le fret est réel, il survit au plan
+
+  // Agrandir la soute doit rebattre « X libres » — sans voyage comme avec.
+  await page.fill("#cargo", String(aBord + 250));
+  await expect(page.locator("#holdCard .hold-meta")).toContainText(/\b250 libres/);
+
+  // Et décocher « Soute (SCU) » doit faire DISPARAÎTRE la place libre : plus de plafond, plus de
+  // chiffre — la carte ne doit pas garder l'ancien.
+  await page.uncheck("#useCargo");
+  await expect(page.locator("#holdCard .hold-meta")).not.toContainText("libres");
+});
+
+test("Soute : le champ de vente fige la station résolue au rendu (#8)", async ({ page }) => {
+  // L'infobulle annonce un prix ; sans index figé, `vendreIci` relisait `stationCourante()` au clic
+  // et pouvait encaisser à une AUTRE station que celle dont l'utilisateur venait de lire le chiffre.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await page.locator("#holdCard .hold-sell-btn").first().click();
+  // `toMatch` et non `Number.isFinite` : getAttribute rend `null` quand l'attribut manque, et
+  // `Number(null)` vaut 0 — un index de terminal parfaitement valide. Le test passerait à faux.
+  expect(await page.locator("#holdCard .hold-sell").first().getAttribute("data-idx")).toMatch(/^\d+$/);
+});
+
 test("Soute : retirer un arrêt AVANT une jambe chargée ne la rend pas rechargeable (#7)", async ({ page }) => {
   // L'étiquette du lot portait le RANG de la jambe, et seuls DEUX des trois porteurs de ce rang
   // étaient renumérotés. Retirer un arrêt d'avant faisait donc repasser le bouton à « ✓ chargé »
