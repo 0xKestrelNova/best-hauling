@@ -694,6 +694,11 @@ input.editv-input { width: 80px; min-width: 0; padding: 2px 5px; font-size: 12px
 
 .roi-badge { color: var(--acc); }
 .profit { color: var(--good); font-weight: 700; text-shadow: 0 0 10px rgba(70, 229, 160, 0.22); }
+/* Le pendant de `.profit` quand le chiffre est négatif : les frais d'autoload peuvent dépasser la
+   marge, et c'est précisément le cas qu'il faut voir. Même graisse, couleur opposée — sans quoi une
+   perte s'affichait dans le vert réservé aux gains. */
+.perte { color: var(--bad); font-weight: 700; text-shadow: 0 0 10px rgba(255, 93, 93, 0.22); }
+.recap-profit.perte { color: var(--bad); text-shadow: 0 0 10px rgba(255, 93, 93, 0.22); }
 .empty { color: var(--muted); padding: 44px; text-align: center; font-size: 14px; }
 
 /* ---------- Manifeste ---------- */

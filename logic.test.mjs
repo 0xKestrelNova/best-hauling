@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
   normalizeScores, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
   profitPerHour, rawScoreOf, routePasses, loopPasses,
@@ -2930,6 +2930,28 @@ test("lineHaulFee : une ligne ordinaire paie les deux opérations, et rien ne ch
   // Interrupteur inactif : aucune de ces lignes ne coûte quoi que ce soit.
   for (const l of [ordinaire, nulle]) assert.equal(lineHaulFee(32, l, null), 0);
   assert.equal(manifestTotals([ordinaire]).fees, 0);
+});
+
+test("lineNet : la valeur qui DÉCIDE et celle qui s'AFFICHE sont la même, signe compris", () => {
+  const ligne = manifestLine(C_LIBRE, PRIX(100, 500), PRIX(300, 500), NOW, NOW, 32, 32);
+  const paire = { buy: PT_A, sell: PT_B };
+  // Sans frais, le net EST la marge sur le volume — c'est le contrat de l'interrupteur inactif.
+  assert.equal(lineNet(32, ligne, null), 32 * ligne.margin);
+  // Avec frais, le net est amputé d'exactement ce que lineHaulFee facture : le total du manifeste
+  // (manifestTotals) et la ligne affichée ne peuvent donc plus diverger.
+  assert.equal(lineNet(32, ligne, paire), 32 * ligne.margin - lineHaulFee(32, ligne, paire));
+  assert.equal(lineNet(32, ligne, paire), manifestTotals([{ ...ligne, units: 32 }], paire).profit);
+});
+
+test("lineNet : NÉGATIF quand la manutention dépasse la marge — c'est le cas qu'on cherche", () => {
+  // Marge de 1 aUEC/SCU sur 1 SCU : la base de 150 par opération l'écrase. Une ligne pareille fait
+  // PERDRE de l'argent, et c'est à ce signe que le manifeste optimal la laisse au sol.
+  const maigre = manifestLine(C_LIBRE, PRIX(100, 500), PRIX(101, 500), NOW, NOW, 1, 1);
+  const net = lineNet(1, maigre, { buy: PT_A, sell: PT_B });
+  assert.ok(net < 0, `attendu négatif, obtenu ${net}`);
+  // Le rendu doit porter ce signe : un « + » posé d'office écrivait « +-350 », en vert, sur le seul
+  // chiffre qui disait de ne pas charger la ligne.
+  assert.equal(net < 0, true);
 });
 
 // --- Marché : le classement suit le net (manifestsFrom / bestManifest / multiTrips / chaîne) ---
