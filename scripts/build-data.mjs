@@ -255,7 +255,17 @@ function buildMarket(byCommodity, term) {
     if (index.has(id)) return index.get(id);
     const t = term.get(id);
     const i = terminals.length;
-    terminals.push({ name: t.name, system: t.system, planet: t.planet, outpost: t.outpost, autoload: t.autoload, maxBox: t.maxBox });
+    // `t` est ici l'entrée DÉJÀ normalisée par l'index (`term.get`), pas l'enregistrement UEX brut :
+    // les noms sont donc `shot`/`shotBy`, jamais `screenshot`/`screenshot_author`.
+    // Le `|| ""` est reposé bien que l'index le garantisse déjà, comme le fait la projection des
+    // commodités pour leur code : buildMarket est une fonction PURE exportée, testée sur des
+    // fixtures écrites à la main. Sans lui, la garantie « jamais undefined » ne tiendrait que par
+    // la fixture, et le test qui la vérifie ne testerait plus rien.
+    terminals.push({
+      name: t.name, system: t.system, planet: t.planet, outpost: t.outpost,
+      autoload: t.autoload, maxBox: t.maxBox,
+      code: t.code || "", shot: t.shot || "", shotBy: t.shotBy || "",
+    });
     index.set(id, i);
     return i;
   };
@@ -322,9 +332,20 @@ async function main() {
       id: t.id,
       orbit: t.id_orbit || 0,
       name: t.nickname || t.name,
-      code: t.code,
+      // Code court UEX (ARCL1, LEVSKI…). Il n'est PAS unique — PYROG désigne à la fois
+      // Pyro Gateway (Stanton) et Pyro Gateway (Nyx) — et ne sert donc jamais de clé : ni index,
+      // ni Map, ni déduplication. Il n'est là que pour s'afficher et se chercher.
+      code: t.code || "",
       system: t.star_system_name || "?",
       planet: t.planet_name || "",
+      // Capture du terminal, soumise par un joueur et hébergée par UEX. Recopiée VERBATIM : UEX
+      // sert deux formes d'URL selon l'âge de la soumission, et deux hôtes CDN distincts — une
+      // liste figée perdrait déjà une photo aujourd'hui (Nyx Gateway (Pyro)).
+      // Les deux champs sont INDÉPENDANTS : 97 de nos 114 terminaux ont une photo, mais 89
+      // seulement un auteur. Huit ont donc une photo sans crédit, et un rendu qui écrit
+      // « photo de {auteur} » dès que la photo existe y afficherait un crédit vide.
+      shot: t.screenshot || "",
+      shotBy: t.screenshot_author || "",
       // Avant-poste de surface = élévateur de fret peu fiable. Stations/villes = fiables.
       outpost: t.id_outpost > 0,
       // Le (dé)chargement automatique n'existe pas partout : sans ce drapeau, l'app facturerait

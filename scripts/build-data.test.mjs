@@ -114,7 +114,9 @@ test("buildMarket déduplique les terminaux et compacte achats/ventes en tuples"
   ]);
   const m = buildMarket(byCommodity, term);
   assert.equal(m.commodities.length, 1); // la commodité sans vente est écartée
-  assert.deepEqual(m.terminals[0], { name: "A", system: "Stanton", planet: "Hurston", outpost: false, autoload: true, maxBox: 32 });
+  // deepEqual compare le terminal ENTIER : toute clé ajoutée à la projection doit apparaître ici,
+  // fût-elle vide. C'est voulu — c'est ce test qui signale qu'on a changé la forme publiée.
+  assert.deepEqual(m.terminals[0], { name: "A", system: "Stanton", planet: "Hurston", outpost: false, autoload: true, maxBox: 32, code: "", shot: "", shotBy: "" });
   const c = m.commodities[0];
   assert.deepEqual(c.buys[0], [0, 100, 50, 111, 4]);  // [idxTerminal, prix, stock, maj, statut]
   assert.deepEqual(c.sells[0], [1, 250, 80, 222, 2]); // [idxTerminal, prix, demande, maj, statut]
@@ -170,12 +172,13 @@ test("une commodité « vente seule » ne produit ni route ni segment (inerte po
 const MARKET = JSON.parse(readFileSync(new URL("../data/market.json", import.meta.url), "utf8"));
 const SHIPS = JSON.parse(readFileSync(new URL("../data/ships.json", import.meta.url), "utf8"));
 
-// `autoload` / `maxBox` ne sont volontairement PAS vérifiés ici : `node --test` tourne AVANT
-// `npm run build` (update-data.yml) et la CI ne re-commite jamais les data/*.json. L'instantané
-// versionné ne portera donc les deux champs qu'après un build local recommité — les exiger ici
-// rendrait la CI rouge sur une PR par ailleurs correcte. Présence et repli sont couverts sur
-// fixture plus bas, là où ils sont de toute façon mieux testés (l'instantané du jour ne contient
-// qu'un seul terminal muet sur la taille de caisse, et aucun plafonné à 1 SCU).
+// `autoload`, `maxBox`, `code`, `shot` et `shotBy` ne sont volontairement PAS vérifiés ici :
+// `node --test` tourne AVANT `npm run build` (update-data.yml) et la CI ne re-commite jamais les
+// data/*.json. L'instantané versionné ne portera donc ces champs qu'après un build local recommité
+// — les exiger ici rendrait la CI rouge sur une PR par ailleurs correcte. Présence et repli sont
+// couverts sur fixture plus bas, là où ils sont de toute façon mieux testés (l'instantané du jour
+// ne contient qu'un seul terminal muet sur la taille de caisse, et aucun plafonné à 1 SCU ; il ne
+// contient pas non plus de terminal à photo sans auteur, cas pourtant réel sur huit d'entre eux).
 test("data/market.json : forme des terminaux", () => {
   assert.ok(MARKET.terminals.length > 0, "aucun terminal");
   for (const t of MARKET.terminals) {
@@ -344,4 +347,64 @@ test("numField : un champ UEX non numérique ne traverse jamais le pipeline", ()
 test("sellDemand : une capacité UEX non numérique ne devient pas un plafond fantaisiste", () => {
   assert.equal(sellDemand({ scu_sell: "toto", scu_sell_stock: 0 }), null); // illisible = inconnu
   assert.equal(sellDemand({ scu_sell: "100", scu_sell_stock: "40" }), 60); // chaînes numériques OK
+});
+
+test("buildMarket publie le code UEX et la photo par terminal", () => {
+  const term = new Map([
+    [10, { name: "GrimHEX", system: "Stanton", planet: "Yela", outpost: false, autoload: true, maxBox: 32,
+           code: "GRIMX", shot: "https://cdn.uexcorp.space/terminals/2/images/abc.jpg", shotBy: "Aazatgrabya" }],
+    // Terminal entièrement muet : c'est le cas des 17 terminaux sans photo, mesuré contre l'API.
+    [20, { name: "Muet", system: "Pyro", planet: "", outpost: true, autoload: false, maxBox: 24 }],
+  ]);
+  const byCommodity = new Map([
+    [1, {
+      name: "Laranite", kind: "metal", illegal: false,
+      buys: [buy({ id: 10, price: 100, stock: 50 })],
+      sells: [buy({ id: 20, price: 250, demand: 80 })],
+    }],
+  ]);
+  const m = buildMarket(byCommodity, term);
+  assert.equal(m.terminals[0].code, "GRIMX");
+  assert.equal(m.terminals[0].shot, "https://cdn.uexcorp.space/terminals/2/images/abc.jpg");
+  assert.equal(m.terminals[0].shotBy, "Aazatgrabya");
+  // Jamais `undefined` : le rendu interpole ces champs, et `undefined` s'y écrirait en toutes lettres.
+  assert.equal(m.terminals[1].code, "");
+  assert.equal(m.terminals[1].shot, "");
+  assert.equal(m.terminals[1].shotBy, "");
+});
+
+test("buildMarket : une photo sans auteur reste une photo (les deux champs sont indépendants)", () => {
+  // Mesuré contre l'API : 97 de nos 114 terminaux ont un screenshot, 89 seulement un auteur.
+  // Huit sont dans l'état photo renseignée / auteur vide — HUR-L2, Lorville L19, Orbituary,
+  // Orison Providence, Pickers Field, TDD Orison, Terra Gateway (Stanton), Terra Mills.
+  // C'est ce test qui verrouille le rendu contre un crédit « photo de  » vide sur ces huit-là.
+  const term = new Map([
+    [10, { name: "Orbituary", system: "Stanton", planet: "", outpost: false,
+           shot: "https://cdn.uexcorp.space/terminals/9/images/def.jpg" }],
+    [20, { name: "Cible", system: "Pyro", planet: "", outpost: false }],
+  ]);
+  const byCommodity = new Map([
+    [1, { name: "Laranite", kind: "metal", illegal: false,
+          buys: [buy({ id: 10, price: 100, stock: 50 })], sells: [buy({ id: 20, price: 250, demand: 80 })] }],
+  ]);
+  const m = buildMarket(byCommodity, term);
+  assert.ok(m.terminals[0].shot.length, "la photo doit survivre à l'absence d'auteur");
+  assert.equal(m.terminals[0].shotBy, "");
+});
+
+test("buildMarket : deux terminaux de même code restent deux entrées distinctes", () => {
+  // PYROG désigne à la fois Pyro Gateway (Stanton) et Pyro Gateway (Nyx), vérifié sur nos 114.
+  // Garde-fou contre un futur lecteur qui indexerait par code : la seule clé est l'index.
+  const term = new Map([
+    [10, { name: "Pyro Gateway (Stanton)", system: "Stanton", planet: "", outpost: false, code: "PYROG" }],
+    [20, { name: "Pyro Gateway (Nyx)", system: "Nyx", planet: "", outpost: false, code: "PYROG" }],
+  ]);
+  const byCommodity = new Map([
+    [1, { name: "Laranite", kind: "metal", illegal: false,
+          buys: [buy({ id: 10, price: 100, stock: 50 })], sells: [buy({ id: 20, price: 250, demand: 80 })] }],
+  ]);
+  const m = buildMarket(byCommodity, term);
+  assert.equal(m.terminals.length, 2);
+  assert.equal(m.terminals[0].code, m.terminals[1].code);
+  assert.notEqual(m.terminals[0].name, m.terminals[1].name);
 });
