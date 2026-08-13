@@ -517,6 +517,69 @@ test("Soute : elle survit au rechargement, et effacer le VOYAGE ne la vide pas",
   await expect(page.locator("#holdCard")).toBeHidden();
 });
 
+test("Soute : sans voyage, la carte suit toujours les filtres (#8)", async ({ page }) => {
+  // Effacer le parcours ne vide pas la soute (c'est le contrat), mais `refresh()` ne repeignait le
+  // compagnon que `if (JOURNEY)` : la carte restait figée sur son dernier rendu pendant que les
+  // tableaux d'à côté, eux, suivaient les filtres.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  const aBord = holdScuDe(await lots(page));
+  expect(aBord).toBeGreaterThan(0);
+
+  await page.locator("#journeyClear").click();
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(0);
+  await expect(page.locator("#holdCard")).toBeVisible(); // le fret est réel, il survit au plan
+
+  // Agrandir la soute doit rebattre « X libres » — sans voyage comme avec.
+  await page.fill("#cargo", String(aBord + 250));
+  await expect(page.locator("#holdCard .hold-meta")).toContainText(/\b250 libres/);
+
+  // Et décocher « Soute (SCU) » doit faire DISPARAÎTRE la place libre : plus de plafond, plus de
+  // chiffre — la carte ne doit pas garder l'ancien.
+  await page.uncheck("#useCargo");
+  await expect(page.locator("#holdCard .hold-meta")).not.toContainText("libres");
+});
+
+test("Soute : le champ de vente fige la station résolue au rendu (#8)", async ({ page }) => {
+  // L'infobulle annonce un prix ; sans index figé, `vendreIci` relisait `stationCourante()` au clic
+  // et pouvait encaisser à une AUTRE station que celle dont l'utilisateur venait de lire le chiffre.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await page.locator("#holdCard .hold-sell-btn").first().click();
+  // `toMatch` et non `Number.isFinite` : getAttribute rend `null` quand l'attribut manque, et
+  // `Number(null)` vaut 0 — un index de terminal parfaitement valide. Le test passerait à faux.
+  expect(await page.locator("#holdCard .hold-sell").first().getAttribute("data-idx")).toMatch(/^\d+$/);
+});
+
+test("Soute : retirer un arrêt AVANT une jambe chargée ne la rend pas rechargeable (#7)", async ({ page }) => {
+  // L'étiquette du lot portait le RANG de la jambe, et seuls DEUX des trois porteurs de ce rang
+  // étaient renumérotés. Retirer un arrêt d'avant faisait donc repasser le bouton à « ✓ chargé »
+  // alors que le fret était à bord — et le clic suivant doublait la soute en redéduisant le stock.
+  await jambeChargeable(page);
+  await expect(page.locator("#journeyCard .jstop-suggest").first()).toBeVisible({ timeout: 8000 });
+  await page.locator("#journeyCard .jstop-suggest").first().click();
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(3);
+  // Le bouton n'existe que sur une jambe qui a du fret : viser nth(1) à l'aveugle pourrait
+  // désigner la jambe 0 — celle qui va disparaître — et rendre le test faussement vert.
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveCount(2);
+
+  await page.locator("#journeyCard .jleg-load").nth(1).click(); // on charge la SECONDE jambe (rang 1)
+  await expect(page.locator("#journeyCard .jleg-load").nth(1)).toHaveText(/à bord/i);
+  const scu = holdScuDe(await lots(page));
+  expect(scu).toBeGreaterThan(0);
+
+  await page.locator("#journeyCard .jstep-del").nth(0).click(); // ✕ 1er arrêt : la jambe passe au rang 0
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(2);
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i); // avant : « ✓ chargé »
+  expect(holdScuDe(await lots(page))).toBe(scu);
+
+  // Et re-cliquer ANNULE le chargement, au lieu d'en ajouter un second exemplaire.
+  await page.locator("#journeyCard .jleg-load").first().click();
+  expect(holdScuDe(await lots(page))).toBe(0);
+});
+
 test("Soute : recharger la même commodité crée un SECOND lot, sans fondre les prix", async ({ page }) => {
   await jambeChargeable(page);
   await page.locator("#journeyCard .jleg-load").click();
@@ -1356,7 +1419,7 @@ test("permalien : une ancre quelconque n'est pas un état — les défauts du HT
   await expect(page.locator("#budget")).toHaveValue("1000000");
 });
 
-// ---------- Accessibilité : tri au clavier, aria-sort, noms accessibles (#57, #58, #59) ----------
+// ---------- Accessibilité : tri au clavier, activation des jambes, aria, noms accessibles (#9, #57, #58, #59) ----------
 
 test("tri : Entrée puis Espace sur un en-tête trient la table, et aria-sort suit (#58)", async ({ page }) => {
   const score = page.locator('#routes th[data-sort="score"]');
@@ -1388,6 +1451,47 @@ test("tri : les en-têtes de Boucles sont eux aussi actionnables au clavier (#58
   await expect(profit).toHaveAttribute("aria-sort", "descending");
   await expect(score).toHaveAttribute("aria-sort", "none");
   await expect(profit).toHaveClass(/sorted-desc/); // l'indicateur ▾ visuel suit la même colonne
+});
+
+test("jambe : Entrée puis Espace sur l'en-tête déplient et replient l'éditeur, aria-expanded suit (#9)", async ({ page }) => {
+  // L'en-tête est annoncé `role="button"` et prend le focus (tabindex=0) : ne rien faire sous Entrée
+  // promet une action qui n'existe pas. L'éditeur de manifeste était donc à la souris seulement.
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
+  const head = () => page.locator("#journeyCard .jleg-head").first();
+
+  await head().press("Enter");
+  await expect(page.locator("#journeyCard .jman")).toBeVisible();          // avant le correctif : rien
+  await expect(head()).toHaveAttribute("aria-expanded", "true");           // le caret ▾ est visuel seul
+  // Le re-rendu détruit l'en-tête activé : sans restitution du focus, la deuxième Entrée part de
+  // <body> et la tabulation repart du haut du document.
+  expect(await page.evaluate(() => document.activeElement?.classList.contains("jleg-head"))).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.dataset.leg)).toBe("0");
+
+  await head().press(" ");                                                // et la page ne défile pas
+  await expect(page.locator("#journeyCard .jman")).toHaveCount(0);
+  await expect(head()).toHaveAttribute("aria-expanded", "false");
+});
+
+test("jambe : Entrée sur « ✓ chargé » charge la soute SANS déplier l'éditeur (#9)", async ({ page }) => {
+  // Le bouton vit DANS l'en-tête : un handler clavier posé sur closest(".jleg-head") ferait les deux
+  // gestes d'un coup — charger la soute ET basculer l'éditeur.
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").press("Enter");
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveText(/à bord/i);
+  await expect(page.locator("#journeyCard .jman")).toHaveCount(0);
+  await expect(page.locator("#journeyCard .jleg-head").first()).toHaveAttribute("aria-expanded", "false");
+});
+
+test("raccourcis : focus sur un élément activable, « 1 »…« 6 » ne changent plus de vue (#9)", async ({ page }) => {
+  // La garde des raccourcis ne testait que INPUT/SELECT/TEXTAREA/.editv — un div `role="button"`
+  // n'est rien de tout ça. Tabuler jusqu'à l'en-tête d'une jambe puis taper « 2 » faisait basculer
+  // sur Boucles : l'utilisateur clavier perdait son contexte au moment d'agir dessus.
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
+  await page.locator("#journeyCard .jleg-head").first().press("2");
+  await expect(page.locator("#viewRoutes")).toHaveClass(/active/); // on est resté sur Trajets
+  await expect(page.locator("#loops")).toBeHidden();
 });
 
 test("noms accessibles : soute et budget ont chacun le leur (#57)", async ({ page }) => {

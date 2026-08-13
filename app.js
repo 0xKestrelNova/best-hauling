@@ -5,7 +5,7 @@ import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
-  ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
+  ovKey, effFromStore, setInStore, DUREE_VOL, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
@@ -18,6 +18,7 @@ import {
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
+  reindexerRangsJambe, detacherLotsDeJambe,
   encodeJourney, decodeJourney,
 } from "./logic.mjs";
 
@@ -166,7 +167,8 @@ const OV_KEY = "best-hauling-overrides";
 // base = date UEX (updated) du point AU MOMENT de la correction : la correction vaut
 // « contre cet export ». Elle n'est périmée que si UEX republie ce point plus récemment.
 let OVERRIDES = {};
-let supersededKeys = new Set(); // corrections périmées pendant le rendu courant (pour le flash)
+let supersededKeys = new Set(); // corrections périmées par UEX pendant le rendu courant (pour le flash)
+let expiredVolKeys = new Set(); // volumes périmés par l'ÂGE pendant le rendu courant (autre cause, autre message)
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -185,7 +187,10 @@ const ovCount = () => Object.keys(OVERRIDES).length; // ovKey vient de logic.mjs
 function effVals(commodity, terminal, side, price, vol, dataUpdated) {
   const k = ovKey(commodity, terminal, side);
   const r = effFromStore(OVERRIDES, k, price, vol, dataUpdated); // décision + suppression périmée (logic.mjs)
-  if (r.stale) { saveOverrides(); supersededKeys.add(k); } // effets de bord app : persistance + flash
+  // effets de bord app : persistance + flash. `staleVol` est l'autre cause — le volume a dépassé sa
+  // durée de vie (DUREE_VOL) et le prix, s'il y en avait un, est resté.
+  if (r.stale) { saveOverrides(); supersededKeys.add(k); }
+  else if (r.staleVol) { saveOverrides(); expiredVolKeys.add(k); }
   return r;
 }
 
@@ -351,12 +356,23 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
 }
+// DEUX causes de péremption, donc deux messages : dire « mise à jour UEX » à propos d'un volume qui a
+// simplement vieilli serait faux, et enverrait chercher un changement de données qui n'a pas eu lieu.
+// Si les deux tombent dans le même rendu, la mise à jour UEX passe en premier — c'est un fait
+// extérieur, l'autre est une simple horloge.
 function notifySuperseded() {
-  if (!supersededKeys.size) return;
-  const n = supersededKeys.size;
+  const nUex = supersededKeys.size, nAge = expiredVolKeys.size;
+  if (!nUex && !nAge) return;
   supersededKeys = new Set();
+  expiredVolKeys = new Set();
   updateOvBadge();
-  showToast(`✎ ${n} correction${n > 1 ? "s" : ""} périmée${n > 1 ? "s" : ""} par une mise à jour UEX`);
+  const s = (n) => (n > 1 ? "s" : "");
+  if (nUex) showToast(`✎ ${nUex} correction${s(nUex)} périmée${s(nUex)} par une mise à jour UEX`);
+  if (nAge) {
+    const h = Math.round(DUREE_VOL / 3600);
+    const msg = `✎ ${nAge} volume${s(nAge)} corrigé${s(nAge)} périmé${s(nAge)} — plus de ${h} h, le comptoir s'est rempli depuis`;
+    if (nUex) setTimeout(() => showToast(msg), 1200); else showToast(msg);
+  }
 }
 
 // Applique les corrections à une paire buy/sell et renvoie des copies patchées + marge/roi.
@@ -1232,8 +1248,12 @@ function stationCourante() {
 
 // Vend `units` SCU ici. Si le comptoir n'a pas tout pris, le reste est marqué REFUSÉ à cette
 // station : il traversera la vente implicite du départ sans être effacé.
-function vendreIci(nom, units) {
-  const idx = stationCourante();
+// `idxFige` : l'index porté par `.hold-sell[data-idx]`, résolu AU RENDU. On vend là où l'utilisateur
+// a lu le prix, pas là où il se trouve à la milliseconde du clic — sinon l'infobulle annonce une
+// station et la vente en encaisse une autre. Repli sur `stationCourante()` pour tout appel qui n'a
+// pas d'affichage derrière lui (venteImplicite, notamment).
+function vendreIci(nom, units, idxFige) {
+  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
   if (idx == null || !MARKET) return;
   const pt = sellableAt(MARKET, idx, nom, effVals);
   if (!pt) return;
@@ -1272,8 +1292,9 @@ function loadDepots() {
 }
 function saveDepots() { try { localStorage.setItem(DEPOTS_KEY, JSON.stringify(DEPOTS)); } catch {} }
 
-function deposerIci(nom, units) {
-  const idx = stationCourante();
+// Même règle que `vendreIci` : on dépose à la station résolue au rendu, celle que le panneau nomme.
+function deposerIci(nom, units, idxFige) {
+  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
   if (idx == null || !MARKET) return;
   const t = MARKET.terminals[idx];
   const r = storeFromHold(SOUTE, DEPOTS, nom, units, stationLabel(t.name, t.system));
@@ -1344,8 +1365,11 @@ function renderSoute() {
     const pt = ici != null && MARKET ? sellableAt(MARKET, ici, g.name, effVals) : null;
     // Vendre suppose que le comptoir reprenne la commodité ; DÉPOSER, non — c'est justement la
     // sortie quand il n'en veut pas. Les deux ouvrent le même champ de quantité.
+    // `data-idx` fige la station telle qu'elle a été résolue POUR CE RENDU : c'est elle qui a fixé
+    // le prix annoncé juste à côté. Sans lui, `vendreIci` relisait `stationCourante()` au clic et
+    // pouvait encaisser ailleurs qu'à l'endroit dont l'utilisateur venait de lire le chiffre.
     const vente = venteEnCours === g.name
-      ? `<span class="hold-sell open"><input class="hold-sell-qty" type="number" min="0" max="${g.units}" value="${g.units}" aria-label="SCU de ${esc(g.name)}" />
+      ? `<span class="hold-sell open" data-idx="${ici}"><input class="hold-sell-qty" type="number" min="0" max="${g.units}" value="${g.units}" aria-label="SCU de ${esc(g.name)}" />
            ${pt ? `<button class="hold-sell-ok" data-name="${esc(g.name)}" title="Vendre ici à ${fmt(pt.price)} aUEC/SCU">✓ vendre</button>` : ""}
            <button class="hold-store" data-name="${esc(g.name)}" title="Déposer à la station : ni vendu, ni perdu">⬓ déposer</button>
            <button class="hold-sell-no" title="Annuler">✕</button></span>`
@@ -1507,6 +1531,11 @@ function clearJourney() {
   // sur un parcours ULTÉRIEUR passant par les mêmes terminaux, badge ✎ compris.
   JOURNEY_EDITS = {}; saveJourneyEdits();
   JOURNEY_PINS = {}; saveJourneyPins();
+  // Troisième porteur du rang : l'étiquette posée sur les lots. Le fret, lui, RESTE à bord — le
+  // parcours est un plan, la soute est du fret payé (ADR-002). Sans ce détachement, un voyage
+  // ultérieur dont la jambe 0 relie les deux mêmes terminaux s'affichait « ⬢ à bord », et le clic
+  // déchargeait les lots de l'ancien voyage en restaurant leurs stocks.
+  SOUTE = detacherLotsDeJambe(SOUTE); saveSoute();
   journeyExpandedLeg = -1;
   renderJourney();
   saveState();
@@ -1659,7 +1688,14 @@ function legSuggestCtx(leg, lines, f) {
 }
 
 // Actions d'édition d'une jambe (i = index de jambe).
-function toggleLegEditor(i) { journeyExpandedLeg = journeyExpandedLeg === i ? -1 : i; renderJourney(); }
+function toggleLegEditor(i) {
+  journeyExpandedLeg = journeyExpandedLeg === i ? -1 : i;
+  renderJourney();
+  // renderJourney() réécrit tout le compagnon : l'en-tête qu'on vient d'activer n'existe plus et le
+  // focus retombe sur <body>. À la souris ça ne se voit pas ; au clavier on perdait sa place, la
+  // deuxième Entrée (replier) ne partait plus de nulle part et Tab reprenait au début du document.
+  $("journeyCard")?.querySelector(`.jleg-head[data-leg="${i}"]`)?.focus();
+}
 function editLegQty(i, li, val) {
   // Le voyage peut avoir été effacé entre le focus et le blur (cliquer ✕ blure d'abord le champ) :
   // sans cette garde, l'édition en vol était réécrite APRÈS la purge et ressuscitait toute seule.
@@ -1799,30 +1835,18 @@ function beginJourney(label) {
   refresh();
 }
 
-// Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
-// Réindexe les manifestes édités après une modification du parcours : la clé porte le RANG de la
-// jambe, donc retirer un arrêt décalerait sinon l'édition d'une jambe sur sa voisine.
-function reindexLegEdits(removedFrom, removedCount, insertedCount) {
-  const decalage = removedCount - insertedCount;
-  // Les deux stores sont indexés par le MÊME rang de jambe : les décaler séparément les ferait
-  // diverger, et un 🔒 se retrouverait sur une jambe dont l'intention a disparu.
-  const decale = (store) => {
-    const suivant = {};
-    for (const [k, v] of Object.entries(store)) {
-      const sep = k.indexOf("|");
-      const i = Number(k.slice(0, sep));
-      if (i < removedFrom) suivant[k] = v;                       // avant la coupe : inchangé
-      else if (i < removedFrom + removedCount) continue;         // jambe disparue : son édition part
-      else suivant[`${i - decalage}${k.slice(sep)}`] = v;        // après : recule d'autant
-    }
-    return suivant;
-  };
-  JOURNEY_EDITS = decale(JOURNEY_EDITS);
-  JOURNEY_PINS = decale(JOURNEY_PINS);
-  if (journeyExpandedLeg >= removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
-  saveJourneyEdits(); saveJourneyPins();
+// Réindexe tout ce qui est indexé par le RANG des jambes après une modification du parcours. Les
+// TROIS porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute — passent par le même
+// appel pur : les décaler séparément les ferait diverger, et c'est d'en avoir oublié un que venait
+// le double chargement (la jambe renumérotée se croyait vide alors que son fret était à bord).
+function reindexerApresRetrait(retrait) {
+  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE }, retrait);
+  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots;
+  if (journeyExpandedLeg >= retrait.removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
+  saveJourneyEdits(); saveJourneyPins(); saveSoute();
 }
 
+// Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
 function removeJourneyStop(stopIndex) {
   if (!JOURNEY) return;
   const legs = JOURNEY.legs;
@@ -1837,7 +1861,7 @@ function removeJourneyStop(stopIndex) {
   }
   const r = removeStopPure(JOURNEY, stopIndex, bridge);
   if (!r) { clearJourney(); return; }
-  reindexLegEdits(r.removedFrom, r.removedCount, r.insertedCount);
+  reindexerApresRetrait(r);
   // `start` n'est présent que sur le parcours réduit à un seul arrêt : le reporter tel quel, sinon
   // la station survivante n'a plus rien pour se décrire (journeyStations la lit là) et le voyage
   // s'affiche vide alors qu'il reste un point de départ.
@@ -1918,7 +1942,7 @@ function renderJourney() {
       </div>`;
     }
     return `<div class="jleg${i === JOURNEY.current ? " current" : ""}${expanded ? " expanded" : ""}">
-        <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
+        <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" aria-expanded="${expanded}" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
           ? '<span class="jleg-pinned" title="Quantités figées : le stock ou la demande de ce chargement a été corrigé depuis. Le trajet reste tel que tu l\'as décidé — les prix, eux, continuent de suivre le marché. « ↺ optimal » recalcule tout.">🔒</span>'
           : '<span class="jleg-edited" title="Manifeste personnalisé">✎</span>') : ""}${MARKET && lines && lines.length ? `<button class="jleg-load${charge ? " charge" : ""}" data-leg="${i}" title="${charge ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}">${charge ? "⬢ à bord" : "✓ chargé"}</button>` : ""}<span class="jleg-profit ${classeProfit(totalJambe)}">${signe(totalJambe, total)}</span><span class="jleg-caret">${expanded ? "▾" : "▸"}</span></div>
         <div class="jleg-cargo">${cargo}</div>
@@ -2005,6 +2029,14 @@ function refresh() {
   // le marché et sur les filtres (cf. README). Le coût est celui d'un manifeste par jambe, sur un
   // parcours qui en compte une poignée ; les champs à saisie libre passent déjà par un debounce.
   if (JOURNEY) renderJourney();
+  // Effacer le parcours NE VIDE PAS la soute (c'est le contrat, cf. README) : hors du cycle de
+  // rendu, son « X libres », son « où écouler » et le prix de son bouton de vente restaient figés
+  // pendant que les tableaux d'à côté suivaient les filtres. On appelle renderSoute() DIRECTEMENT
+  // plutôt que renderJourney() : la branche « sans voyage » de celui-ci réécrit l'invite
+  // « Nouveau voyage », donc détruirait le champ #journeyStart en cours de saisie (texte et focus)
+  // à chaque frappe faite ailleurs dans l'app. Le coût est nul soute vide : renderSoute sort tout
+  // de suite en masquant sa carte.
+  else renderSoute();
   saveState();
 }
 const refreshDebounced = debounce(refresh);
@@ -2838,20 +2870,23 @@ async function init() {
   $("holdCard").addEventListener("click", (e) => {
     if (e.target.closest("#holdClear")) { viderSoute(); return; }
     if (e.target.closest("#holdOffload")) { ecoulerOuvert = !ecoulerOuvert; renderSoute(); return; }
+    // La quantité ET la station se lisent sur le MÊME conteneur : celui que le rendu a produit.
+    // `dataset.idx` absent -> undefined -> NaN -> repli sur stationCourante() ; jamais 0.
     const deposer = e.target.closest(".hold-store");
-    if (deposer) { deposerIci(deposer.dataset.name, Number(deposer.closest(".hold-sell").querySelector(".hold-sell-qty").value)); return; }
+    if (deposer) { const b = deposer.closest(".hold-sell"); deposerIci(deposer.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const ouvrir = e.target.closest(".hold-sell-btn");
     if (ouvrir) { venteEnCours = ouvrir.dataset.name; renderSoute(); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
     if (e.target.closest(".hold-sell-no")) { venteEnCours = null; renderSoute(); return; }
     const ok = e.target.closest(".hold-sell-ok");
-    if (ok) { vendreIci(ok.dataset.name, Number(ok.closest(".hold-sell").querySelector(".hold-sell-qty").value)); return; }
+    if (ok) { const b = ok.closest(".hold-sell"); vendreIci(ok.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const del = e.target.closest(".hold-del");
     if (del) retirerLot(Number(del.dataset.i));
   });
   // Entrée valide la vente, Échap l'annule — même patron que les corrections inline.
   $("holdCard").addEventListener("keydown", (e) => {
     if (!e.target.classList.contains("hold-sell-qty")) return;
-    if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value)); }
+    // Entrée doit encaisser à la même station que le bouton ✓ : même index figé, lu sur le conteneur.
+    if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value), Number(e.target.closest(".hold-sell")?.dataset.idx)); }
     else if (e.key === "Escape") { e.preventDefault(); venteEnCours = null; renderSoute(); }
   });
   $("journeyMap").addEventListener("click", (e) => {
@@ -2902,6 +2937,16 @@ async function init() {
     const step = e.target.closest(".jstep");
     if (step) setJourneyStop(Number(step.dataset.i));
   });
+  // L'en-tête d'une jambe est annoncé `role="button"` : Entrée/Espace doivent l'activer comme le clic
+  // (même corps, cf. sortableHeader). On teste `e.target` LUI-MÊME et non `closest()` — modèle
+  // `.editv` plutôt que `.jm-arret` : le bouton « ✓ chargé » vit DANS l'en-tête, et un closest()
+  // déplierait l'éditeur EN PLUS de charger la soute à chaque Entrée sur ce bouton.
+  $("journeyCard").addEventListener("keydown", (e) => {
+    if (!e.target.classList || !e.target.classList.contains("jleg-head")) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); // Espace ne doit pas défiler la page
+    toggleLegEditor(Number(e.target.dataset.leg));
+  });
   // Ajout d'arrêt / de commodité à la touche Entrée.
   document.addEventListener("keydown", (e) => {
     if (e.target.id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(e.target.value); }
@@ -2937,7 +2982,12 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const el = document.activeElement;
-    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.classList.contains("editv"))) return;
+    // `role="button"` couvre d'un coup tout ce que l'app rend activable sans être un <button> :
+    // l'en-tête d'une jambe, une escale de la carte, une valeur corrigeable. Sans lui, tabuler
+    // jusqu'à l'un d'eux puis taper « 1 »…« 6 » changeait de vue — l'utilisateur clavier perdait son
+    // contexte au moment précis où il essayait d'agir dessus.
+    if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ||
+               el.getAttribute("role") === "button" || el.classList.contains("editv"))) return;
     if (e.key === "/") { e.preventDefault(); $("search").focus(); }
     else if (e.key === "1") switchView("routes");
     else if (e.key === "2") switchView("loops");
