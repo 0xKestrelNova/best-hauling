@@ -885,8 +885,17 @@ test("Manifeste -> voyage : un départ étranger au parcours nomme les deux bout
   await page.click("#manifestToJourney");
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(2);
   const fin = (await page.locator("#journeyCard .jstep").nth(1).innerText()).trim();
-  await page.fill("#origin", "Rod's Fuel — Pyro"); // ne part ni de la fin, ni d'une jambe planifiée
-  await expect(page.locator("#manifest .journey-hint")).toContainText("Rod's Fuel");
+  // Le terminal « étranger » est CHOISI DANS LES DONNÉES, jamais codé en dur : « Rod's Fuel » l'a
+  // été pendant un temps, jusqu'à ce qu'une régénération de l'amorce en fasse la jambe 1 du meilleur
+  // trajet — le test lisait alors « ✓ C'est déjà la jambe 1 de ton voyage » et échouait.
+  const arrets = (await page.locator("#journeyCard .jstep").allInnerTexts()).map((s) => s.trim().split(" — ")[0]);
+  const etranger = await page.locator("#originList option").evaluateAll(
+    (els, pris) => els.map((e) => e.value).find((v) => !pris.some((p) => v.includes(p))),
+    arrets,
+  );
+  expect(etranger, "l'instantané doit offrir un terminal de départ hors du parcours").toBeTruthy();
+  await page.fill("#origin", etranger);
+  await expect(page.locator("#manifest .journey-hint")).toContainText(etranger.split(" — ")[0]);
   await expect(page.locator("#manifest .journey-hint")).toContainText(memeStation(fin));
   await expect(page.locator("#manifestToJourney")).toHaveCount(0);
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(2); // aucune modification du voyage
