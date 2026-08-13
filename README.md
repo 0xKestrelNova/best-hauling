@@ -261,6 +261,14 @@ Reculer ne revend rien.
 rien** — c'est précisément le cas où elle sert. Le fret quitte la soute sans être vendu : ni perdu,
 ni encaissé, du capital immobilisé qui reste tracé.
 
+Ce fret déposé vit dans une carte **⬓ Entrepôts**, sous la soute : une section par station, le SCU
+et le prix payé par commodité, et le **capital immobilisé** en bas — de l'argent déjà sorti, que
+rien d'autre dans l'app ne rappellerait. Chaque ligne porte un **↑ reprendre** qui remet le lot en
+soute *à son prix payé* : un dépôt suivi d'une reprise rend exactement la soute d'avant. Aucun
+contrôle de position — l'app ne sait pas où ton vaisseau se trouve vraiment, et refuser au motif
+« tu n'y es pas » bloquerait le geste au moment précis où il est vrai ; la station est écrite en
+toutes lettres sur la ligne. La carte disparaît dès qu'il ne reste rien nulle part.
+
 **Où écouler ?** Le panneau classe les destinations par **ce que ça rapporte, prix d'achat déduit** —
 `min(résidu, capacité) × prix`, net des frais, moins ce que les lots consommés ont coûté. Le chiffre
 descend **sous zéro** quand une destination te ferait vendre à perte : c'est une information, pas

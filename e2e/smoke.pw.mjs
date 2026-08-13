@@ -620,6 +620,42 @@ test("Soute : déposer à la station libère la place sans vendre", async ({ pag
   expect(tout[0].paid).toBeGreaterThan(0); // ni vendu ni perdu : le capital reste tracé
 });
 
+test("Entrepôts : le fret déposé s'affiche, et « reprendre » le rend à la soute (#10)", async ({ page }) => {
+  // Le dépôt n'existait qu'en localStorage : sans panneau, il était indiscernable d'une perte, et
+  // rien ne permettait de le récupérer — alors que le toast promet « ni vendus ni perdus ».
+  await expect(page.locator("#depotsCard")).toBeHidden();
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  const avant = await lots(page);
+  const nom = avant[0].name;
+
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+  await page.locator("#holdCard .hold-sell-qty").fill("5");
+  await page.locator("#holdCard .hold-store").click();
+
+  // La carte apparaît, nomme la station et chiffre le capital immobilisé.
+  await expect(page.locator("#depotsCard")).toBeVisible();
+  await expect(page.locator("#depotsCard")).toContainText("5 SCU");
+  await expect(page.locator("#depotsCard .hold-meta")).toContainText("capital immobilisé");
+  expect(holdScuDe(await lots(page))).toBe(holdScuDe(avant) - 5);
+
+  // Reprendre : le fret revient à bord, la station vidée disparaît, la carte se masque.
+  await page.locator("#depotsCard .depot-take").first().click();
+  expect(holdScuDe(await lots(page))).toBe(holdScuDe(avant));
+  await expect(page.locator("#depotsCard")).toBeHidden();
+  const depotsApres = JSON.parse(await page.evaluate(() => localStorage.getItem("best-hauling-depots") || "{}"));
+  expect(Object.keys(depotsApres)).toEqual([]);
+
+  // Et il survit à un rechargement : c'est du fret réel, pas un état de vue.
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+  await page.locator("#holdCard .hold-sell-qty").fill("3");
+  await page.locator("#holdCard .hold-store").click();
+  await expect(page.locator("#depotsCard")).toBeVisible();
+  await page.reload();
+  await expect(page.locator("#depotsCard")).toBeVisible({ timeout: 8000 });
+  await expect(page.locator("#depotsCard")).toContainText("3 SCU");
+});
+
 test("Soute : reculer d'une étape ne revend rien", async ({ page }) => {
   // Revenir sur ses pas n'est pas une transaction : seule l'AVANCÉE vaut « j'ai fait mon affaire ».
   await jambeChargeable(page);

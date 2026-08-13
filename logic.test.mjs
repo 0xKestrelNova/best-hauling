@@ -17,7 +17,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
-  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold,
+  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
   refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
@@ -2151,6 +2151,32 @@ test("storeFromHold : déposer libère la soute SANS vendre, et garde le capital
   assert.equal(r.entrepots["Ruin Station — Pyro"][0].paid, 1000); // ni vendu ni perdu : immobilisé
   // Un dépôt qui ne consomme rien ne crée pas d'entrepôt fantôme.
   assert.deepEqual(storeFromHold(h, {}, "Inconnue", 10, "X").entrepots, {});
+});
+
+test("takeFromStore : reprendre rend le lot à la soute avec son prix payé, et vide la station", () => {
+  // Duale de storeFromHold : sans elle, déposer est un aller simple et le capital « immobilisé »
+  // est en fait perdu. Le tour complet dépôt -> reprise doit rendre la soute d'avant, à l'unité.
+  const h = loadHold([], [ligne(2200, 1000, 1400)], "Megumi", 1);
+  const depose = storeFromHold(h, {}, "Gold", 2170, "Ruin Station — Pyro");
+
+  // Reprise PARTIELLE : la station garde le reste, elle ne disparaît pas.
+  const p = takeFromStore(depose.hold, depose.entrepots, "Gold", 170, "Ruin Station — Pyro");
+  assert.equal(holdScu(p.hold), 200);                                 // 30 restés à bord + 170 repris
+  assert.equal(holdScu(p.entrepots["Ruin Station — Pyro"]), 2000);
+  assert.equal(p.hold.at(-1).paid, 1000);                             // le prix payé revient intact
+
+  // Reprise TOTALE : la soute d'avant le dépôt est rendue, et l'entrepôt vidé s'efface — une
+  // station à zéro s'afficherait comme un lieu où l'on a du fret.
+  const t = takeFromStore(depose.hold, depose.entrepots, "Gold", 2170, "Ruin Station — Pyro");
+  assert.equal(holdScu(t.hold), holdScu(h));
+  assert.deepEqual(t.entrepots, {});
+
+  // Pure : les deux appels ont lu le MÊME entrepôt, qui n'a pas bougé.
+  assert.equal(depose.entrepots["Ruin Station — Pyro"][0].units, 2170);
+
+  // Rien à reprendre : ni station inconnue, ni commodité absente ne fabriquent quoi que ce soit.
+  assert.deepEqual(takeFromStore([], depose.entrepots, "Gold", 10, "Nulle part").hold, []);
+  assert.deepEqual(takeFromStore([], depose.entrepots, "Inconnue", 10, "Ruin Station — Pyro").hold, []);
 });
 
 // ---------- Carte 2D du parcours (ADR-001) ----------

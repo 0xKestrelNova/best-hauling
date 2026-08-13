@@ -1479,6 +1479,23 @@ export function storeFromHold(hold, entrepots, name, units, station) {
   return { hold: r.hold, entrepots: { ...entrepots, [station]: deja.concat(r.lots) } };
 }
 
+// Reprend `units` SCU d'une commodité DÉPOSÉE à une station : elle repasse en soute avec son prix
+// payé intact. Duale exacte de storeFromHold — un dépôt suivi d'une reprise doit rendre la soute
+// d'avant, sinon le capital immobilisé devient un capital perdu, et déposer redevient un piège.
+// Un lot d'entrepôt a la forme d'un lot de soute : sellFromHold sait donc déjà les consommer en
+// FIFO, à recette nulle — reprendre n'est pas une vente, c'est le dépôt joué à l'envers.
+// La station vidée DISPARAÎT plutôt que de laisser un entrepôt à zéro : il s'afficherait comme un
+// lieu où l'on a du fret.
+export function takeFromStore(hold, entrepots, name, units, station) {
+  const stock = entrepots[station];
+  if (!stock || !stock.length) return { hold, entrepots };
+  const r = sellFromHold(stock, name, units, 0); // même consommation FIFO, sans recette
+  if (!r.vendu) return { hold, entrepots };
+  const suivant = { ...entrepots };
+  if (r.hold.length) suivant[station] = r.hold; else delete suivant[station];
+  return { hold: hold.concat(r.lots), entrepots: suivant };
+}
+
 // ---------- Carte 2D du parcours (cf. ADR-001) ----------
 // Projection PURE d'un parcours en coordonnées de dessin. app.js n'a plus qu'à émettre du SVG.
 // La géométrie vient de data/starmap.json : `au` (distance à l'étoile) et `lon` (degrés), relevés
