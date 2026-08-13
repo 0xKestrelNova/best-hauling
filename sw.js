@@ -1,10 +1,14 @@
 // Service worker : app installable + consultable hors-ligne.
 // Coquille (html/js/css/icône) en « stale-while-revalidate » ; données en « réseau
 // d'abord, cache en repli » pour rester fraîches en ligne mais disponibles hors-ligne.
-const CACHE = "best-hauling-v4";
+// v5 : la coquille est servie en stale-while-revalidate. Sans bump, un visiteur déjà installé
+// recevrait encore l'ANCIEN index.html — sans CSP et avec son <script> inline — pendant toute une
+// visite, tandis que rail.js, lui, serait déjà là. `activate` purge tout cache au nom différent :
+// le bump garantit que la nouvelle page et son script arrivent ENSEMBLE.
+const CACHE = "best-hauling-v5";
 // Coquille précachée. Les woff2 (mêmes-origine depuis fonts/) sont mis en cache au premier
 // rendu par le gestionnaire fetch ci-dessous (stale-while-revalidate) -> hors-ligne complet.
-const SHELL = ["./", "./index.html", "./app.js", "./logic.mjs", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
+const SHELL = ["./", "./index.html", "./app.js", "./rail.js", "./logic.mjs", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

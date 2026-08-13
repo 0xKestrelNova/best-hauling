@@ -128,9 +128,10 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 └───────────────────────────┬───────────────────────────────────┘
                             │ artefact Pages
 ┌─ Front (statique, navigateur) ────────────────────────────────┐
-│  index.html                                                   │
+│  index.html  (+ <meta> Content-Security-Policy)               │
 │    ├─ logic.mjs   ← fonctions PURES (calcul), testées         │
-│    └─ app.js      ← module ES : rendu DOM, état, interactions │
+│    ├─ app.js      ← module ES : rendu DOM, état, interactions │
+│    └─ rail.js     ← bascule du menu (script classique)        │
 │  sw.js (service worker) + manifest.webmanifest → PWA offline  │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -139,6 +140,15 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 (temps de trajet, score, `computeUnits`, **filtres partagés** par vue, corrections, remplissage glouton,
 chaîne, **graphe de marché**, **résumés de commodités**, décodage d'état…), importée à la fois par
 `app.js` (navigateur) et par les tests. `app.js` ne fait que le rendu et le câblage.
+
+**Content-Security-Policy** : l'app injecte des données **communautaires** (noms de terminaux et de
+commodités venus d'UEX) dans `innerHTML`. L'échappement (`esc`) reste la défense qui compte, mais
+elle est doublée d'une politique déclarée en `<meta>` — GitHub Pages ne laisse configurer aucun
+en-tête HTTP. `script-src 'self'` est la directive utile : aucun script inline, aucun `eval`, aucune
+origine tierce. C'est pour elle que la bascule du menu a quitté `index.html` pour
+[`rail.js`](rail.js) ; `'unsafe-inline'` n'est concédé qu'au **style**, faute de quoi les barres de
+score et le vaisseau de la carte seraient figés. Toute retouche des `<script>` de la page se
+répercute dans `SHELL` (sw.js) **et** dans la ligne `cp` de l'assemblage — un test le tient.
 
 Fichiers de données (dans [`data/`](data/)) :
 
