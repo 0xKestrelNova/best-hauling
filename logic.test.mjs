@@ -22,6 +22,7 @@ import {
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
+  cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
 } from "./logic.mjs";
 
 // ---------- Temps de trajet ----------
@@ -2608,6 +2609,55 @@ test("removeJourneyStop : retirer le dernier arrêt restant -> null (voyage effa
   const seul = removeJourneyStop(parcours(["A", "B"], 0), 1); // il ne reste que A
   assert.equal(removeJourneyStop(seul, 0), null);
   assert.equal(removeJourneyStop(startJourneyAt({ name: "A", system: "S" }), 0), null);
+});
+
+// ---------- Le rang de jambe et ses TROIS porteurs (manifeste, 🔒, étiquette de lot) ----------
+const lotDe = (leg) => ({ name: "Gold", units: 100, paid: 1000, from: "Megumi", at: 1, ...(leg ? { leg } : {}) });
+
+test("reindexerRangsJambe : une jambe qui recule emmène son manifeste, son 🔒 ET ses lots", () => {
+  // A→B→C, la jambe 1 (B→C) est chargée. On retire l'arrêt A : elle devient la jambe 0.
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0);
+  const r = reindexerRangsJambe({
+    edits: { "1|B|C": [{ name: "Gold", units: 100 }] },
+    pins: { "1|B|C": true },
+    lots: [lotDe("1|B|C")],
+  }, retrait);
+  assert.deepEqual(Object.keys(r.edits), ["0|B|C"]);
+  assert.deepEqual(Object.keys(r.pins), ["0|B|C"]);
+  assert.equal(r.lots.length, 1);
+  assert.equal(r.lots[0].leg, "0|B|C"); // avant : l'étiquette restait sur « 1|B|C », la jambe se croyait vide
+});
+
+test("reindexerRangsJambe : les lots d'une jambe DISPARUE restent à bord, sans étiquette", () => {
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0); // la jambe A→B disparaît
+  const r = reindexerRangsJambe({ edits: { "0|A|B": [] }, pins: {}, lots: [lotDe("0|A|B"), lotDe("1|B|C")] }, retrait);
+  assert.deepEqual(r.edits, {});          // le PLAN de la jambe retirée part avec elle
+  assert.equal(r.lots.length, 2);         // le FRET, lui, est réellement à bord : il ne part pas
+  assert.equal("leg" in r.lots[0], false);
+  assert.equal(r.lots[0].units, 100);
+  assert.equal(r.lots[1].leg, "0|B|C");
+});
+
+test("reindexerRangsJambe : un arrêt du MILIEU emporte deux jambes, le pont n'hérite de rien", () => {
+  // A→B→C→D, on retire B : A→B et B→C disparaissent au profit du pont A→C (rang 0).
+  const retrait = removeJourneyStop(parcours(["A", "B", "C", "D"], 0), 1, jambe("A", "C"));
+  const r = reindexerRangsJambe({ edits: {}, pins: {}, lots: [lotDe("0|A|B"), lotDe("2|C|D")] }, retrait);
+  assert.equal("leg" in r.lots[0], false); // recoller ces lots au pont le dirait chargé à tort
+  assert.equal(r.lots[1].leg, "1|C|D");
+});
+
+test("cleApresRetrait : une clé illisible traverse intacte plutôt que de devenir « NaN| »", () => {
+  const retrait = { removedFrom: 0, removedCount: 1, insertedCount: 0 };
+  assert.equal(cleApresRetrait("1|B|C", retrait), "0|B|C");
+  assert.equal(cleApresRetrait("0|A|B", retrait), null);
+  assert.equal(cleApresRetrait("sans-rang", retrait), "sans-rang");
+});
+
+test("detacherLotsDeJambe : effacer le voyage délie les lots sans les débarquer", () => {
+  const r = detacherLotsDeJambe([lotDe("0|A|B"), lotDe(null)]);
+  assert.equal(r.length, 2);
+  assert.equal("leg" in r[0], false);
+  assert.equal(r[0].units, 100); // le fret payé survit à l'effacement du parcours (ADR-002)
 });
 
 // ---------- Suggestions d'arrêts : mêmes filtres que la vue qui les affichera ----------

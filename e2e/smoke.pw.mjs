@@ -517,6 +517,33 @@ test("Soute : elle survit au rechargement, et effacer le VOYAGE ne la vide pas",
   await expect(page.locator("#holdCard")).toBeHidden();
 });
 
+test("Soute : retirer un arrêt AVANT une jambe chargée ne la rend pas rechargeable (#7)", async ({ page }) => {
+  // L'étiquette du lot portait le RANG de la jambe, et seuls DEUX des trois porteurs de ce rang
+  // étaient renumérotés. Retirer un arrêt d'avant faisait donc repasser le bouton à « ✓ chargé »
+  // alors que le fret était à bord — et le clic suivant doublait la soute en redéduisant le stock.
+  await jambeChargeable(page);
+  await expect(page.locator("#journeyCard .jstop-suggest").first()).toBeVisible({ timeout: 8000 });
+  await page.locator("#journeyCard .jstop-suggest").first().click();
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(3);
+  // Le bouton n'existe que sur une jambe qui a du fret : viser nth(1) à l'aveugle pourrait
+  // désigner la jambe 0 — celle qui va disparaître — et rendre le test faussement vert.
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveCount(2);
+
+  await page.locator("#journeyCard .jleg-load").nth(1).click(); // on charge la SECONDE jambe (rang 1)
+  await expect(page.locator("#journeyCard .jleg-load").nth(1)).toHaveText(/à bord/i);
+  const scu = holdScuDe(await lots(page));
+  expect(scu).toBeGreaterThan(0);
+
+  await page.locator("#journeyCard .jstep-del").nth(0).click(); // ✕ 1er arrêt : la jambe passe au rang 0
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(2);
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i); // avant : « ✓ chargé »
+  expect(holdScuDe(await lots(page))).toBe(scu);
+
+  // Et re-cliquer ANNULE le chargement, au lieu d'en ajouter un second exemplaire.
+  await page.locator("#journeyCard .jleg-load").first().click();
+  expect(holdScuDe(await lots(page))).toBe(0);
+});
+
 test("Soute : recharger la même commodité crée un SECOND lot, sans fondre les prix", async ({ page }) => {
   await jambeChargeable(page);
   await page.locator("#journeyCard .jleg-load").click();

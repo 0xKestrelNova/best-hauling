@@ -234,7 +234,7 @@ trouvée — un coût réellement nul.
 La soute tient un **lot par chargement** : la même commodité peut y figurer deux fois à des prix
 différents, et le panneau montre le détail. C'est plus lourd qu'une moyenne, mais c'est juste.
 
-Deux règles à connaître :
+Trois règles à connaître :
 
 - **Le prix payé ne se périme jamais.** Partout ailleurs le dépôt refuse de persister un prix — il
   ne garde que l'intention, et relit le marché. Le prix payé échappe à cette règle parce que ce
@@ -242,6 +242,11 @@ Deux règles à connaître :
 - **Effacer le voyage ne vide pas la soute.** Le parcours est un plan, la soute est du fret réel :
   reprendre le jeu une semaine plus tard avec un vaisseau rangé plein, c'est une soute exacte, pas
   une soute périmée. Elle a son propre ✕.
+- **Le lien avec la jambe suit la renumérotation, pas la disparition.** Retirer un arrêt renumérote
+  les jambes : l'étiquette de tes lots se décale avec elles, et le bouton reste `⬢ à bord`. Si la
+  jambe qui les a chargés disparaît — ou si tu effaces le voyage — le fret **reste en soute**, il
+  est réel ; il n'est simplement plus rattaché à une jambe, donc plus annulable depuis le voyage.
+  Le ✕ du lot et le panneau Soute restent les sorties.
 
 **Charger vide le rayon.** `✓ chargé` retire de la station ce que tu viens d'y prendre — c'est une
 **correction locale** comme une autre, ancrée à la date UEX du point, donc périmée dès qu'UEX
