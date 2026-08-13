@@ -13,7 +13,13 @@ test.use({ serviceWorkers: "block" });
 // Enrichit market.json en vol. `mode` décide de ce que les terminaux déclarent :
 //   "all"  : tout le monde propose l'autoload (chemin actif complet) ;
 //   "none" : personne ne le propose (le champ EXISTE et vaut false -> « pas d'autoload ») ;
-//   "raw"  : on ne touche à rien (champs absents -> « donnée UEX absente »), le cas d'aujourd'hui.
+//   "raw"  : on ne touche à rien — l'instantané tel qu'il est committé, quel qu'il soit ;
+//   "strip": on RETIRE `autoload` et `maxBox` (-> « donnée UEX absente »), le chemin dégradé.
+// "strip" existe parce que "raw" ne suffisait plus : il testait le chemin dégradé en comptant sur la
+// PÉREMPTION de l'amorce, dont les deux champs étaient absents faute de régénération récente, alors
+// que le pipeline les émet depuis la fonctionnalité d'autoload. La première régénération les a fait
+// atterrir, et le test s'est mis à mesurer des frais bien réels au lieu de leur absence. Un chemin
+// de dégradation se teste en RETIRANT la donnée, jamais en espérant qu'elle manque.
 // `fixedMaxBox` impose le même plafond à tous les terminaux, pour les tests qui comparent un
 // montant à un chiffre de la spec : celle-ci ancre ses relevés sur des caisses de 32 SCU, et un
 // plafond plus bas change le nombre de caisses donc le montant (32 SCU font 1 caisse à 32, mais 2 à
@@ -23,7 +29,9 @@ async function enrichMarket(page, mode, fixedMaxBox) {
   await page.route("**/data/market.json", async (route) => {
     const res = await route.fetch();
     const market = await res.json();
-    if (mode !== "raw") {
+    if (mode === "strip") {
+      market.terminals.forEach((t) => { delete t.autoload; delete t.maxBox; });
+    } else if (mode !== "raw") {
       market.terminals.forEach((t, i) => {
         t.autoload = mode === "all";
         t.maxBox = fixedMaxBox || [32, 24, 16][i % 3];
@@ -211,7 +219,7 @@ test("station sans autoload : le zéro est EXPLIQUÉ, jamais muet", async ({ pag
 
 test("dégradation : sans les champs UEX, les profits sont IDENTIQUES et rien ne casse", async ({ page }) => {
   const errors = watchErrors(page);
-  await enrichMarket(page, "raw"); // l'instantané réel : ni `autoload` ni `maxBox`
+  await enrichMarket(page, "strip"); // champs RETIRÉS : le chemin « donnée UEX absente »
   await page.goto("/index.html");
   await expect(page.locator("#rows tr").first()).toBeVisible();
 
