@@ -14,7 +14,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, legsToPin, journeyMap,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, sellableAt, sellAllAt,
-  offloadPlan, storeFromHold, stockApres,
+  offloadPlan, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
@@ -1302,8 +1302,53 @@ function deposerIci(nom, units, idxFige) {
   SOUTE = r.hold; DEPOTS = r.entrepots;
   saveSoute(); saveDepots();
   venteEnCours = null;
-  renderSoute(); refresh();
+  renderSoute(); renderEntrepots(); refresh();
   showToast(`⬓ ${fmt(units)} SCU de ${nom} déposés à ${t.name} — ni vendus ni perdus`);
+}
+
+// Reprendre : le fret déposé remonte à bord avec son prix payé. Aucun contrôle de position — l'app
+// ne sait pas où le vaisseau est RÉELLEMENT, et refuser au motif « tu n'y es pas » bloquerait le
+// geste au moment exact où il est vrai. La station est écrite en toutes lettres sur la ligne :
+// savoir qu'on y est relève de l'utilisateur, pas d'une donnée qu'on n'a pas.
+function reprendreIci(station, nom, units) {
+  const r = takeFromStore(SOUTE, DEPOTS, nom, units, station);
+  if (r.hold === SOUTE) return;
+  const repris = holdScu(r.hold) - holdScu(SOUTE); // ce qui est VRAIMENT revenu, pas ce qu'on demandait
+  SOUTE = r.hold; DEPOTS = r.entrepots;
+  saveSoute(); saveDepots();
+  renderSoute(); renderEntrepots(); refresh();
+  showToast(`◈ ${fmt(repris)} SCU de ${nom} repris à ${parseStationLabel(station).name} — de retour en soute`);
+}
+
+// Les entrepôts : le fret déposé, station par station. Masquée tant que rien n'y dort, comme la
+// soute. Elle ne peut PAS vivre dans renderSoute : celle-ci sort dès que la soute est vide, ce qui
+// est justement le cas le plus fréquent quand on vient de tout déposer.
+// Le capital immobilisé est le chiffre qui compte : de l'argent déjà sorti, que plus rien dans
+// l'app ne rappelait — c'était tout le sujet.
+// Les clés de DEPOTS viennent du localStorage : elles sont échappées comme n'importe quelle donnée
+// tierce (cf. e2e/injection.pw.mjs).
+function renderEntrepots() {
+  const box = $("depotsCard");
+  if (!box) return;
+  const stations = Object.entries(DEPOTS).filter(([, lots]) => Array.isArray(lots) && lots.length);
+  if (!stations.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const tous = stations.flatMap(([, lots]) => lots);
+  const invest = holdByCommodity(tous).reduce((s, g) => s + g.invest, 0);
+  const blocs = stations.map(([label, lots]) => {
+    const { name, system } = parseStationLabel(label);
+    const lignes = holdByCommodity(lots).map((g) => `<div class="hold-line">
+        <span class="hold-name">${esc(g.name)}</span>
+        <span class="hold-scu"><b>${fmt(g.units)}</b> SCU</span>
+        <span class="hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}">@ ${fmt(Math.round(g.paidMoyen))}</span>
+        <button class="depot-take" data-station="${esc(label)}" data-name="${esc(g.name)}" data-units="${g.units}" title="Remettre ces ${fmt(g.units)} SCU en soute, à leur prix payé">↑ reprendre</button>
+      </div>`).join("");
+    return `<div class="depot-station"><div class="depot-lieu">${esc(name)}${sysBadge(system)} <span class="muted">${fmt(holdScu(lots))} SCU</span></div>${lignes}</div>`;
+  }).join("");
+  box.innerHTML =
+    `<div class="hold-head"><span class="hold-title">⬓ Entrepôts</span></div>
+     <div class="depot-stations">${blocs}</div>
+     <div class="hold-meta"><b>${fmt(holdScu(tous))}</b> SCU déposés · capital immobilisé <b>${fmt(invest)}</b> aUEC</div>`;
 }
 
 // « Où écouler ce qui reste ? » — le détour manuel par la vue Commodités, en un panneau.
@@ -1881,6 +1926,7 @@ function renderJourney() {
     const row0 = $("shipJourneyRow"); if (row0) row0.classList.remove("stacked");
     renderJourneyMap();
     renderSoute();
+    renderEntrepots();
     card.innerHTML =
       `<div class="journey-head"><span class="journey-title">◈ Nouveau voyage</span></div>
        <p class="journey-hint">Choisis un trajet (▶) dans une vue, ou démarre de zéro :</p>
@@ -1972,6 +2018,7 @@ function renderJourney() {
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
   renderJourneyMap();
   renderSoute();
+  renderEntrepots();
   ajusterRangeeVoyage(); // après la carte ET la soute : les deux pèsent sur l'équilibre des colonnes
 }
 
@@ -2029,14 +2076,14 @@ function refresh() {
   // le marché et sur les filtres (cf. README). Le coût est celui d'un manifeste par jambe, sur un
   // parcours qui en compte une poignée ; les champs à saisie libre passent déjà par un debounce.
   if (JOURNEY) renderJourney();
-  // Effacer le parcours NE VIDE PAS la soute (c'est le contrat, cf. README) : hors du cycle de
-  // rendu, son « X libres », son « où écouler » et le prix de son bouton de vente restaient figés
-  // pendant que les tableaux d'à côté suivaient les filtres. On appelle renderSoute() DIRECTEMENT
-  // plutôt que renderJourney() : la branche « sans voyage » de celui-ci réécrit l'invite
-  // « Nouveau voyage », donc détruirait le champ #journeyStart en cours de saisie (texte et focus)
-  // à chaque frappe faite ailleurs dans l'app. Le coût est nul soute vide : renderSoute sort tout
-  // de suite en masquant sa carte.
-  else renderSoute();
+  // Effacer le parcours NE VIDE PAS la soute (c'est le contrat, cf. README), et le fret DÉPOSÉ y
+  // survit de même : hors du cycle de rendu, la place libre, « où écouler », le prix du bouton de
+  // vente et les entrepôts restaient figés pendant que les tableaux d'à côté suivaient les filtres.
+  // On appelle les deux rendus DIRECTEMENT plutôt que renderJourney() : la branche « sans voyage »
+  // de celui-ci réécrit l'invite « Nouveau voyage », donc détruirait le champ #journeyStart en
+  // cours de saisie (texte et focus) à chaque frappe faite ailleurs dans l'app. Le coût est nul
+  // quand il n'y a rien : les deux sortent tout de suite en masquant leur carte.
+  else { renderSoute(); renderEntrepots(); }
   saveState();
 }
 const refreshDebounced = debounce(refresh);
@@ -2888,6 +2935,13 @@ async function init() {
     // Entrée doit encaisser à la même station que le bouton ✓ : même index figé, lu sur le conteneur.
     if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value), Number(e.target.closest(".hold-sell")?.dataset.idx)); }
     else if (e.key === "Escape") { e.preventDefault(); venteEnCours = null; renderSoute(); }
+  });
+  // Entrepôts : « reprendre » remet le lot en soute. Un seul geste, pas de champ de quantité — on
+  // reprend ce qu'on a laissé ; une reprise partielle se ferait en redéposant. La fonction pure,
+  // elle, accepte déjà des SCU : l'UI pourra suivre sans la toucher.
+  $("depotsCard").addEventListener("click", (e) => {
+    const b = e.target.closest(".depot-take");
+    if (b) reprendreIci(b.dataset.station, b.dataset.name, Number(b.dataset.units));
   });
   $("journeyMap").addEventListener("click", (e) => {
     const a = e.target.closest(".jm-arret");

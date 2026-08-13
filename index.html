@@ -169,6 +169,12 @@
             <!-- La soute : ce qui est à bord et ce qu'on l'a payé (ADR-002). Affichée en permanence
                  tant qu'elle n'est pas vide — c'est ce rappel qui remplace une date de péremption. -->
             <aside id="holdCard" class="hold-card" hidden></aside>
+
+            <!-- Les entrepôts : le fret DÉPOSÉ à une station. Sous la soute et dans la même
+                 colonne, pour la même raison qu'elle : ce n'est pas un plan, c'est du fret réel
+                 déjà payé. Masquée tant qu'aucun dépôt n'existe — sinon elle occuperait la colonne
+                 pour rien, et pèserait sur l'équilibre calculé par ajusterRangeeVoyage. -->
+            <aside id="depotsCard" class="hold-card depots-card" hidden></aside>
           </div>
 
           <aside id="journeyCard" class="journey-card" hidden></aside>
