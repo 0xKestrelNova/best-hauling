@@ -520,7 +520,7 @@ function multiRowHTML(t, i) {
   return `
       <tr data-row="${i}">
         <td class="loc">
-          <div class="commodity-cell"><button class="route-toggle" data-row="${i}" title="Voir le chargement" aria-label="Voir le chargement">🗺</button><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button><span class="multi-icons" title="${esc(names)}">${icons}${more}</span><span class="cname">${n} commodité${n > 1 ? "s" : ""}</span></div>
+          <div class="commodity-cell"><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button><button class="route-toggle" data-row="${i}" title="Voir le chargement" aria-label="Voir le chargement">📦</button><span class="multi-icons" title="${esc(names)}">${icons}${more}</span><span class="cname">${n} commodité${n > 1 ? "s" : ""}</span></div>
           <div class="loc-badges">${t.lines.some((l) => l.illegal) ? illegalTag(true) : ""}${cross}</div>
         </td>
         <td class="loc">
@@ -544,11 +544,13 @@ function multiRowHTML(t, i) {
       </tr>`;
 }
 
-// Détail déplié d'un trajet multi-commodité : schéma départ→arrivée + chargement ligne par ligne.
-function multiSchemaHTML(t) {
-  const info = `${t.cross ? "⚡ saut inter-système" : "même système"} · ~${Math.round(t.minutes)} min`;
-  const end = (x) => ({ system: x.system, planet: x.planet, terminal: x.name, outpost: x.outpost });
-  const schema = `<div class="schema">${schemaLeg("Départ", end(t.origin))}<div class="schema-arrow"><span class="al">⟶</span><span class="ai">${info}</span></div>${schemaLeg("Arrivée", end(t.dest))}</div>`;
+// Détail déplié d'un trajet multi-commodité : le CHARGEMENT, ligne par ligne — et rien d'autre.
+// Il portait aussi un schéma « système › planète › terminal », retiré avec les autres dépliants
+// (#30) : la carte 2D du parcours montre la même géographie. Ce dépliant-ci survit parce que la
+// carte, elle, n'affiche aucun chiffre — c'est le seul endroit qui dit ce que contient une ligne
+// « 3 commodités ». La durée du trajet, qui vivait dans le schéma, reste lisible dans l'infobulle
+// de la colonne « Profit/heure ».
+function multiCargoHTML(t) {
   const lines = t.lines.map((l) =>
     `<div class="sline">${commodityIcon(l.kind)}` +
     `<span class="mname">${esc(l.name)}${illegalTag(l.illegal)}</span>` +
@@ -557,27 +559,7 @@ function multiSchemaHTML(t) {
     `<span class="mprofit profit">${lineProfitText(l.units, l, t.fee)}</span>` +
     `<span class="mboxes" title="Caisses SCU standard à charger">📦 ${fmt(l.units)} SCU · ${scuBoxesLabel(l.units, t.origin.maxBox)}</span></div>`
   ).join("");
-  return `${schema}<div class="multi-cargo"><div class="suggest-head">Chargement — ${t.lines.length} commodité${t.lines.length > 1 ? "s" : ""}, ${fmt(t.units)}/${fmt(t.cargo)} SCU</div>${lines}</div>`;
-}
-
-// Un « nœud » du schéma (système › planète › terminal), réutilisé départ/arrivée.
-function schemaLeg(label, end) {
-  const nodes = [`<span class="sys ${esc(end.system.toLowerCase())}">${esc(end.system)}</span>`];
-  if (end.planet) nodes.push(`<span class="snode">${esc(end.planet)}</span>`);
-  nodes.push(`<span class="snode term">${esc(end.terminal)}</span>${end.outpost ? outpostTag(true) : ""}`);
-  return `<div class="schema-leg"><span class="schema-label">${label}</span><div class="schema-path">${nodes.join('<span class="sep">›</span>')}</div></div>`;
-}
-
-// Schéma d'un trajet simple : Départ (sys›planète›terminal) ⟶ Arrivée.
-function routeSchemaHTML(r) {
-  const info = `${r.same_system ? "même système" : "⚡ saut inter-système"} · ~${Math.round(r.minutes)} min${r.distance ? ` · ${fmt(r.distance)} u` : ""}`;
-  return `<div class="schema">${schemaLeg("Départ", r.buy)}<div class="schema-arrow"><span class="al">⟶</span><span class="ai">${info}</span></div>${schemaLeg("Arrivée", r.sell)}</div>`;
-}
-
-// Schéma d'une boucle : A ⇄ B.
-function loopSchemaHTML(l) {
-  const info = `${l.cross ? "⚡ inter-système" : "même système"} · ~${Math.round(l.minutes)} min (A/R)`;
-  return `<div class="schema">${schemaLeg("A", l.a)}<div class="schema-arrow"><span class="al">⇄</span><span class="ai">${info}</span></div>${schemaLeg("B", l.b)}</div>`;
+  return `<div class="multi-cargo"><div class="suggest-head">Chargement — ${t.lines.length} commodité${t.lines.length > 1 ? "s" : ""}, ${fmt(t.units)}/${fmt(t.cargo)} SCU</div>${lines}</div>`;
 }
 
 // Ligne de tableau pour une route évaluée (partagée par « Trajets simples » et « En route »).
@@ -592,7 +574,7 @@ function routeRowHTML(r, i) {
   return `
       <tr data-row="${i}">
         <td class="loc">
-          <div class="commodity-cell"><button class="route-toggle" data-row="${i}" title="Voir le trajet" aria-label="Voir le trajet">🗺</button><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button>${commodityIcon(r.kind)}<span class="cname">${esc(r.commodity)}</span></div>
+          <div class="commodity-cell"><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button>${commodityIcon(r.kind)}<span class="cname">${esc(r.commodity)}</span></div>
           <div class="loc-badges">${illegalTag(r.illegal)}${suspectTag(r)}${cross}</div>
         </td>
         <td class="loc">
@@ -661,7 +643,6 @@ function renderLoops() {
       return `
       <tr data-row="${i}"${l._fromHere ? ' class="from-here"' : ""}>
         <td class="loc loop-cell">
-          <button class="route-toggle" data-row="${i}" title="Voir le trajet" aria-label="Voir le trajet">🗺</button>
           <button class="journey-pick" data-row="${i}" title="Ajouter cette boucle au voyage" aria-label="Ajouter au voyage">▶</button>
           <div class="loop-ends">
             <div class="loop-end"><span class="term-name">${esc(l.a.terminal)}</span>${sysBadge(l.a.system)}${outpostTag(l.a.outpost)}</div>
@@ -2897,20 +2878,22 @@ async function init() {
   $("manifest").addEventListener("keydown", (e) => {
     if (e.target.id === "manifestAddInput" && e.key === "Enter") { e.preventDefault(); addManifestCommodity(e.target.value); }
   });
-  // Schéma de trajet : déplie/replie une ligne détaillée sous la ligne cliquée.
+  // Chargement d'un trajet multi-commodité : déplie/replie le manifeste sous la ligne cliquée.
+  // Seule table à porter encore un dépliant (#30) — ailleurs la carte 2D du parcours montre la
+  // géographie que le schéma répétait.
   document.addEventListener("click", (e) => {
     const btn = e.target.closest(".route-toggle");
     if (!btn) return;
     const tr = btn.closest("tr");
     const next = tr.nextElementSibling;
     if (next && next.classList.contains("schema-row")) { next.remove(); btn.classList.remove("open"); return; }
-    const tableId = btn.closest("table").id;
-    const multi = tableId === "routes" && isMultiRoutes();
-    const arr = tableId === "loops" ? shownLoops : tableId === "enroute" ? shownEnroute : multi ? shownMulti : shownRoutes;
-    const item = arr[Number(btn.dataset.row)];
+    // Le bouton n'est émis que par les lignes multi. Si la vue n'y est plus au moment du clic
+    // (marché encore en chargement, cf. #25), on ne déplie rien plutôt que d'indexer `shownMulti`
+    // avec le numéro de ligne d'un autre tableau.
+    if (!isMultiRoutes()) return;
+    const item = shownMulti[Number(btn.dataset.row)];
     if (!item) return;
-    const html = tableId === "loops" ? loopSchemaHTML(item) : multi ? multiSchemaHTML(item) : routeSchemaHTML(item);
-    tr.insertAdjacentHTML("afterend", `<tr class="schema-row"><td colspan="${tr.children.length}">${html}</td></tr>`);
+    tr.insertAdjacentHTML("afterend", `<tr class="schema-row"><td colspan="${tr.children.length}">${multiCargoHTML(item)}</td></tr>`);
     btn.classList.add("open");
   });
   // Carte du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.

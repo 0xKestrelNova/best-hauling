@@ -27,7 +27,7 @@ Six vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût,
 
 | Vue | Ce qu'elle fait |
 |-----|-----------------|
-| **Trajets simples** | Meilleures routes A→B, triables, avec un **score de fiabilité** composite (rentabilité × fraîcheur × disponibilité) par défaut. Coche **Multi commodité** : liste plutôt les **chargements combinés** (plusieurs commodités d'un même A vers un même B), dépliables (🗺) pour voir le détail par commodité |
+| **Trajets simples** | Meilleures routes A→B, triables, avec un **score de fiabilité** composite (rentabilité × fraîcheur × disponibilité) par défaut. Coche **Multi commodité** : liste plutôt les **chargements combinés** (plusieurs commodités d'un même A vers un même B), dépliables (📦) pour voir le détail par commodité |
 | **Boucles ⇄** | Meilleures boucles A⇄B (une commodité à l'aller, une autre au retour) pour ne jamais repartir à vide |
 | **En route 🧭** | Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut retient la commodité qui **rapporte** le plus une fois plafonnée par le stock et la demande, pas celle à la plus forte marge affichée |
@@ -45,7 +45,7 @@ signe et **en rouge**, jamais dans le vert des gains.
 - **Mode Butin** (vue Commodités) : quand le coût d'acquisition est nul, la marge n'a plus de sens — seul compte le **prix de revente**. Ce mode liste **tout ce qui se vend** chez UEX, y compris les ~36 commodités sans aucun point d'achat, et n'affiche que **où l'écouler**. Sa heatmap se calcule **par rang** et non par ratio : les prix de revente s'étalent sur cinq ordres de grandeur (34 M aUEC/SCU pour le Saldynium contre 1 000 pour l'Iron Ore), une échelle linéaire écraserait tout le board.
 - **Décomposition SCU en caisses** (32/24/16/8/4/2/1) sur le manifeste et en infobulle.
 - **Manifeste ajustable** : chaque ligne se modifie à la main — tu peux **dépasser le stock UEX** (vol de fret, relevé périmé…) ; le champ passe en ambre pour le signaler.
-- **Schéma de trajet** dépliable (🗺) : système › planète › terminal, type de saut, temps estimé.
+- **Détail du chargement** dépliable (📦), sur les lignes **multi commodité** : ce que contient le chargement, commodité par commodité (stock, demande, prix, marge, profit, caisses). Les autres tables n'ont pas de dépliant — la **carte du parcours** y montre la géographie, et le temps estimé se lit en infobulle de « Profit/heure ».
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
@@ -409,7 +409,7 @@ Les relevés bruts et le raisonnement complet sont dans
   strictement inchangés). Runner intégré `node --test`, **zéro dépendance**.
 - **E2E de fumée** ([`e2e/smoke.pw.mjs`](e2e/smoke.pw.mjs), Playwright) : non-régression des bugs vécus
   (carte vaisseau au reload, demande corrigée à 0, contrôles qui ne fuient plus, persistance des corrections,
-  navigation, schéma) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
+  navigation, cible tactile du ▶, dépliant de chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
   « même système » contraint la Chaîne). Playwright est une dépendance **de dev uniquement** — le site livré reste sans dépendance.
 - **CI** ([`ci.yml`](.github/workflows/ci.yml)) : unitaires + E2E sur chaque push/PR.
 
