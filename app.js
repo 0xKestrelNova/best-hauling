@@ -1225,8 +1225,12 @@ function stationCourante() {
 
 // Vend `units` SCU ici. Si le comptoir n'a pas tout pris, le reste est marqué REFUSÉ à cette
 // station : il traversera la vente implicite du départ sans être effacé.
-function vendreIci(nom, units) {
-  const idx = stationCourante();
+// `idxFige` : l'index porté par `.hold-sell[data-idx]`, résolu AU RENDU. On vend là où l'utilisateur
+// a lu le prix, pas là où il se trouve à la milliseconde du clic — sinon l'infobulle annonce une
+// station et la vente en encaisse une autre. Repli sur `stationCourante()` pour tout appel qui n'a
+// pas d'affichage derrière lui (venteImplicite, notamment).
+function vendreIci(nom, units, idxFige) {
+  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
   if (idx == null || !MARKET) return;
   const pt = sellableAt(MARKET, idx, nom, effVals);
   if (!pt) return;
@@ -1265,8 +1269,9 @@ function loadDepots() {
 }
 function saveDepots() { try { localStorage.setItem(DEPOTS_KEY, JSON.stringify(DEPOTS)); } catch {} }
 
-function deposerIci(nom, units) {
-  const idx = stationCourante();
+// Même règle que `vendreIci` : on dépose à la station résolue au rendu, celle que le panneau nomme.
+function deposerIci(nom, units, idxFige) {
+  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
   if (idx == null || !MARKET) return;
   const t = MARKET.terminals[idx];
   const r = storeFromHold(SOUTE, DEPOTS, nom, units, stationLabel(t.name, t.system));
@@ -1337,8 +1342,11 @@ function renderSoute() {
     const pt = ici != null && MARKET ? sellableAt(MARKET, ici, g.name, effVals) : null;
     // Vendre suppose que le comptoir reprenne la commodité ; DÉPOSER, non — c'est justement la
     // sortie quand il n'en veut pas. Les deux ouvrent le même champ de quantité.
+    // `data-idx` fige la station telle qu'elle a été résolue POUR CE RENDU : c'est elle qui a fixé
+    // le prix annoncé juste à côté. Sans lui, `vendreIci` relisait `stationCourante()` au clic et
+    // pouvait encaisser ailleurs qu'à l'endroit dont l'utilisateur venait de lire le chiffre.
     const vente = venteEnCours === g.name
-      ? `<span class="hold-sell open"><input class="hold-sell-qty" type="number" min="0" max="${g.units}" value="${g.units}" aria-label="SCU de ${esc(g.name)}" />
+      ? `<span class="hold-sell open" data-idx="${ici}"><input class="hold-sell-qty" type="number" min="0" max="${g.units}" value="${g.units}" aria-label="SCU de ${esc(g.name)}" />
            ${pt ? `<button class="hold-sell-ok" data-name="${esc(g.name)}" title="Vendre ici à ${fmt(pt.price)} aUEC/SCU">✓ vendre</button>` : ""}
            <button class="hold-store" data-name="${esc(g.name)}" title="Déposer à la station : ni vendu, ni perdu">⬓ déposer</button>
            <button class="hold-sell-no" title="Annuler">✕</button></span>`
@@ -1993,6 +2001,14 @@ function refresh() {
   // le marché et sur les filtres (cf. README). Le coût est celui d'un manifeste par jambe, sur un
   // parcours qui en compte une poignée ; les champs à saisie libre passent déjà par un debounce.
   if (JOURNEY) renderJourney();
+  // Effacer le parcours NE VIDE PAS la soute (c'est le contrat, cf. README) : hors du cycle de
+  // rendu, son « X libres », son « où écouler » et le prix de son bouton de vente restaient figés
+  // pendant que les tableaux d'à côté suivaient les filtres. On appelle renderSoute() DIRECTEMENT
+  // plutôt que renderJourney() : la branche « sans voyage » de celui-ci réécrit l'invite
+  // « Nouveau voyage », donc détruirait le champ #journeyStart en cours de saisie (texte et focus)
+  // à chaque frappe faite ailleurs dans l'app. Le coût est nul soute vide : renderSoute sort tout
+  // de suite en masquant sa carte.
+  else renderSoute();
   saveState();
 }
 const refreshDebounced = debounce(refresh);
@@ -2826,20 +2842,23 @@ async function init() {
   $("holdCard").addEventListener("click", (e) => {
     if (e.target.closest("#holdClear")) { viderSoute(); return; }
     if (e.target.closest("#holdOffload")) { ecoulerOuvert = !ecoulerOuvert; renderSoute(); return; }
+    // La quantité ET la station se lisent sur le MÊME conteneur : celui que le rendu a produit.
+    // `dataset.idx` absent -> undefined -> NaN -> repli sur stationCourante() ; jamais 0.
     const deposer = e.target.closest(".hold-store");
-    if (deposer) { deposerIci(deposer.dataset.name, Number(deposer.closest(".hold-sell").querySelector(".hold-sell-qty").value)); return; }
+    if (deposer) { const b = deposer.closest(".hold-sell"); deposerIci(deposer.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const ouvrir = e.target.closest(".hold-sell-btn");
     if (ouvrir) { venteEnCours = ouvrir.dataset.name; renderSoute(); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
     if (e.target.closest(".hold-sell-no")) { venteEnCours = null; renderSoute(); return; }
     const ok = e.target.closest(".hold-sell-ok");
-    if (ok) { vendreIci(ok.dataset.name, Number(ok.closest(".hold-sell").querySelector(".hold-sell-qty").value)); return; }
+    if (ok) { const b = ok.closest(".hold-sell"); vendreIci(ok.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const del = e.target.closest(".hold-del");
     if (del) retirerLot(Number(del.dataset.i));
   });
   // Entrée valide la vente, Échap l'annule — même patron que les corrections inline.
   $("holdCard").addEventListener("keydown", (e) => {
     if (!e.target.classList.contains("hold-sell-qty")) return;
-    if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value)); }
+    // Entrée doit encaisser à la même station que le bouton ✓ : même index figé, lu sur le conteneur.
+    if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value), Number(e.target.closest(".hold-sell")?.dataset.idx)); }
     else if (e.key === "Escape") { e.preventDefault(); venteEnCours = null; renderSoute(); }
   });
   $("journeyMap").addEventListener("click", (e) => {
