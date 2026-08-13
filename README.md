@@ -234,7 +234,7 @@ trouvée — un coût réellement nul.
 La soute tient un **lot par chargement** : la même commodité peut y figurer deux fois à des prix
 différents, et le panneau montre le détail. C'est plus lourd qu'une moyenne, mais c'est juste.
 
-Deux règles à connaître :
+Trois règles à connaître :
 
 - **Le prix payé ne se périme jamais.** Partout ailleurs le dépôt refuse de persister un prix — il
   ne garde que l'intention, et relit le marché. Le prix payé échappe à cette règle parce que ce
@@ -244,6 +244,11 @@ Deux règles à connaître :
   une soute périmée. Elle a son propre ✕. Sans voyage, la carte continue de **suivre tes filtres** :
   la place libre, « où écouler » et le prix de vente se recalculent au **terminal de départ
   d'« En route »**.
+- **Le lien avec la jambe suit la renumérotation, pas la disparition.** Retirer un arrêt renumérote
+  les jambes : l'étiquette de tes lots se décale avec elles, et le bouton reste `⬢ à bord`. Si la
+  jambe qui les a chargés disparaît — ou si tu effaces le voyage — le fret **reste en soute**, il
+  est réel ; il n'est simplement plus rattaché à une jambe, donc plus annulable depuis le voyage.
+  Le ✕ du lot et le panneau Soute restent les sorties.
 
 **Charger vide le rayon.** `✓ chargé` retire de la station ce que tu viens d'y prendre — c'est une
 **correction locale** comme une autre, ancrée à la date UEX du point, donc périmée dès qu'UEX
@@ -307,7 +312,31 @@ jamais partagé ni mis dans l'URL) et **intelligent** :
 
 - Une correction est **ancrée** à la date UEX du point au moment où tu la fais.
 - Elle est **périmée automatiquement** dès qu'UEX republie ce point avec un relevé plus récent (retour à la valeur UEX, petit flash de notification).
+- Un **volume** (stock, demande, et la déduction d'un `✓ chargé`) périme **aussi au bout de 3 h**, même si UEX n'a rien republié. Un **prix**, non : les deux ne vieillissent pas pareil, [voir plus bas](#pourquoi-un-volume-périme-en-3-h-et-pas-un-prix).
 - Sémantique respectée : un **stock d'achat à 0 = terminal vide** (plafonne à 0), et une **demande que _tu_ corriges fait autorité** — y compris un 0, qui vaut « pas de demande » et plafonne à 0 même là où UEX ne renseignait rien. Les valeurs UEX brutes, elles, gardent leur sémantique propre (`null` = capacité inconnue, `0` = terminal saturé) : [voir le piège des volumes UEX](#sémantique-des-volumes-uex-piège).
+
+### Pourquoi un volume périme en 3 h, et pas un prix
+
+Un volume est une quantité qui **repousse**. Le jeu réapprovisionne un comptoir par paliers de l'ordre
+de 5 à 15 min, alors qu'**UEX ne republie un point que tous les 3,1 jours en médiane** — mesuré sur les
+2 592 relevés de `commodities_prices_all` ; seuls **29,9 %** des points ont un relevé de moins de 24 h.
+Attendre UEX, c'est donc annoncer un stock à zéro pendant des jours alors qu'il est revenu en moins
+d'une heure : un facteur ~70 entre les deux horizons. Un prix faux, lui, ne se régénère pas — rien ne
+justifie de l'oublier au bout de trois heures.
+
+**Les 3 h ne sont pas une mesure**, et aucune ne peut les fonder : depuis le patch **3.20** les
+inventaires de boutique ont quitté les fichiers du jeu, plus aucun outil ne peut les dataminer, et
+aucun site ne publie de débit de recharge par terminal. Les deux seuls chiffres qui circulent ne
+survivent pas à la confrontation avec UEX — les 15 points de vente de Quantainium y rapportent tous
+`scu_sell = 0`, et les 50 000 SCU annoncés à TDD Area 18 dépassent le 99ᵉ centile des capacités
+publiées (médiane 539 SCU). C'est pourquoi l'app ne tente **aucune** remontée progressive du stock :
+elle se contente de dire qu'au-delà de trois heures, ta valeur ne vaut plus rien. La durée vit dans
+`DUREE_VOL` (`logic.mjs`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
+
+Contrepartie assumée : sur trois heures un comptoir vidé a très probablement déjà tout récupéré, donc
+l'app reste trop pessimiste pendant une partie du délai. En échange, une correction survit à une
+session de jeu entière. Le raisonnement complet est dans
+[la spec](docs/superpowers/specs/2026-08-12-peremption-des-volumes-et-corrections-groupees-design.md).
 
 ## Frais d'autoload
 
