@@ -237,8 +237,10 @@ input:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
 /* --muted plutôt qu'un gris plus sombre : ~6,3:1 sur le fond du champ, au-dessus du 4,5:1 exigé (AA). */
 input::placeholder { color: var(--muted); }
 
-/* ---------- Autocomplétion vaisseau ---------- */
-.ship-field { position: relative; }
+/* ---------- Autocomplétion (vaisseau, station) ---------- */
+/* Contexte d'ancrage de la liste déroulante. Posé sur ces deux classes et NON sur `.field` : celle-ci
+   est partagée par tous les panneaux de contrôle, `.field.sub-field` et `.field.checks` comprises. */
+.ship-field, .picker-field { position: relative; }
 .autocomplete {
   position: absolute; top: 100%; left: 0; right: 0; z-index: 40; margin: 4px 0 0; padding: 4px 0;
   list-style: none; background: var(--panel-solid); border: 1px solid var(--line2);
@@ -248,6 +250,54 @@ input::placeholder { color: var(--muted); }
 .autocomplete li .scu { color: var(--muted); font-size: 12px; white-space: nowrap; font-family: var(--mono); }
 .autocomplete li.active { background: rgba(255, 176, 32, 0.14); color: #fff; }
 .autocomplete li.active .scu { color: var(--acc); }
+
+/* ---------- Sélecteur de station groupé (ADR-003) ---------- */
+/* LE point du lot : la liste s'affranchit de la largeur du champ. C'est ce que le <datalist> natif
+   ne savait pas faire, et c'est pourquoi « Terra Gateway (Stanton) — Stanton » (33 caractères) y
+   était tronqué. `max-content` la dimensionne sur son plus long nom, borné pour ne pas déborder. */
+.stn-pick { right: auto; min-width: max-content; max-width: min(440px, 90vw); }
+.stn-pick li { align-items: center; justify-content: flex-start; gap: 10px; padding: 6px 12px; }
+/* En-tête de groupe : collant, pour savoir dans quel système on défile. Non sélectionnable — il ne
+   porte pas de data-i, ni au clavier ni à la souris. */
+.stn-pick li.opt-grp {
+  position: sticky; top: 0; z-index: 1; cursor: default; padding: 7px 12px 5px;
+  background: var(--panel-solid); border-bottom: 1px solid var(--line);
+  font-family: var(--display); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted);
+}
+.stn-pick li.opt-grp + li { padding-top: 8px; }
+/* Surtout PAS de text-overflow ici : la troncature est précisément ce qu'on répare. */
+.stn-pick .stn-opt-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+.stn-pick .stn-opt-code { flex: 0 0 auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.stn-pick li.active .stn-opt-code { color: var(--acc); }
+/* Le glyphe ne suffit pas : le mot reste écrit, comme partout ailleurs dans ce dépôt. */
+.stn-pick .stn-opt-post { flex: 0 0 auto; font-size: 10px; color: var(--warn); white-space: nowrap; }
+
+/* Vignette de station — primitive PARTAGÉE avec la bande de la vue Corrections (LOT 3) : une seule
+   définition, sinon deux dégradés divergents pour la même chose. La photo se superpose au carré
+   généré, qui reste dessous en repli : 17 terminaux sur 114 n'en ont pas, et une URL peut tomber
+   (`.no-shot`, posé par l'écouteur `error` délégué). */
+/* Conteneur positionné : la photo se pose EN ABSOLU par-dessus le repli, donc exactement dans la
+   même case. Les superposer par marge négative les décalait de la valeur du `gap` flex, et le code
+   du repli débordait derrière la photo. */
+.stn-vign {
+  position: relative; flex: 0 0 auto; width: 34px; height: 24px; border-radius: 2px;
+  border: 1px solid var(--line); overflow: hidden;
+  background: linear-gradient(140deg, rgba(130, 150, 210, 0.16), rgba(11, 15, 28, 0.9));
+}
+.stn-vign.sys-stanton { background: linear-gradient(140deg, rgba(56, 189, 248, 0.28), rgba(11, 15, 28, 0.9)); }
+.stn-vign.sys-pyro { background: linear-gradient(140deg, rgba(255, 106, 61, 0.28), rgba(11, 15, 28, 0.9)); }
+.stn-vign.sys-nyx { background: linear-gradient(140deg, rgba(169, 112, 255, 0.28), rgba(11, 15, 28, 0.9)); }
+.stn-shot-gen {
+  position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden;
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.5px; color: var(--muted);
+}
+.sys-stanton .stn-shot-gen { color: var(--stanton); }
+.sys-pyro .stn-shot-gen { color: var(--pyro); }
+.sys-nyx .stn-shot-gen { color: var(--nyx); }
+/* La photo couvre tout le conteneur. `.no-shot` (posé par l'écouteur `error` délégué) la retire et
+   laisse réapparaître le repli, sans laisser d'image cassée. */
+.stn-shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.no-shot .stn-shot { display: none; }
 
 /* ---------- Carte vaisseau ---------- */
 .ship-card {
