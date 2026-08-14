@@ -1340,6 +1340,24 @@ export function sameIntent(a, b) {
   return a.length === b.length && a.every((l, i) => l.name === b[i].name && l.units === b[i].units);
 }
 
+// La composition en cours de la carte Manifeste vaut-elle encore pour la carte qu'on s'apprête à
+// peindre ? Elle porte sur un COUPLE de terminaux — c'est de LEURS prix, stocks et demandes que ses
+// lignes sont relues — donc elle survit à tout ce qui ne change pas ce couple : un prix corrigé, une
+// frappe dans la recherche, un vaisseau plus grand. La soute ne la borne pas : des SCU ajustés à la
+// main restent la décision de l'utilisateur, et le total « 120/32 SCU » la lui redit à l'écran.
+// Elle n'est ABANDONNÉE que lorsqu'une AUTRE route est demandée, parce que là c'est un geste.
+// `vue` décrit la carte demandée : `from` = { name, system } du terminal de départ affiché,
+// `dest` = { name, system } de l'arrivée forcée au champ (null s'il est vide), `destSystem` = le
+// filtre de système d'arrivée ("" s'il est vide).
+// Une composition SANS ligne en est une : vider le manifeste pour le recomposer à soi est un geste,
+// et lui rendre l'optimal au prochain rendu serait exactement le défaut qu'on corrige.
+export function manifestIntentSurvives(edit, vue) {
+  if (!edit || !Array.isArray(edit.lines)) return false;
+  if (edit.from !== vue.from.name || edit.fromSystem !== vue.from.system) return false;
+  if (vue.dest && (vue.dest.name !== edit.to || vue.dest.system !== edit.toSystem)) return false;
+  return !vue.destSystem || vue.destSystem === edit.toSystem;
+}
+
 // Retire un ARRÊT du parcours (stopIndex indexe les STATIONS, pas les jambes).
 // `bridge` = jambe de remplacement pour un arrêt du MILIEU, calculée par l'appelant depuis le
 // marché (elle reconnecte stations[stopIndex-1] à stations[stopIndex+1]) ; ignorée aux extrémités.
