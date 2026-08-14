@@ -86,6 +86,12 @@ npm run serve        # sert le dossier sur http://127.0.0.1:4173 (serveur maison
 # puis ouvre http://127.0.0.1:4173/index.html — l'écoute est volontairement limitée à la boucle locale
 ```
 
+> **Plusieurs copies de travail sur la même machine ?** Le serveur de `npm run serve` reste sur 4173,
+> mais celui des tests Playwright prend un port **dérivé du chemin de la copie**
+> (`scripts/port.mjs`, plage 30000-39999). Sans quoi, `reuseExistingServer` étant actif hors CI, une
+> suite lancée depuis un worktree testait le code d'un autre — verte, et sans rien vérifier. Rien à
+> configurer : `npx playwright test` trouve son port tout seul.
+
 Les `data/*.json` versionnés servent d'**amorce** pour le dev local. Pour les régénérer depuis UEX :
 
 ```bash

@@ -1,8 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
+import { portDuDepot } from "./scripts/port.mjs";
 
 // Tests E2E de fumée (non-régression des bugs passés). Le site est servi par le
 // serveur statique maison (aucune dépendance runtime). Fichiers : e2e/*.pw.mjs
 // (le suffixe .pw évite que `node --test` ne les ramasse — ils passent par Playwright).
+
+// Le port est DÉRIVÉ de la copie de travail, jamais écrit ici (#70). Avec un port fixe et
+// `reuseExistingServer`, une suite lancée depuis un second worktree testait le code du premier :
+// verte, et sans rien vérifier. Un seul littéral suffisait à ramener le défaut, d'où l'unique
+// source ci-dessous — et un test de lecture de source qui interdit d'en réécrire un
+// (scripts/port.test.mjs).
+const PORT = portDuDepot(process.cwd());
+const ORIGINE = `http://127.0.0.1:${PORT}`;
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.pw.mjs",
@@ -15,13 +25,13 @@ export default defineConfig({
   // un runner n'a pas de navigateur à ouvrir, et le serveur du rapport bloquerait le job).
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "line",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: ORIGINE,
     trace: "on-first-retry",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "node scripts/serve.mjs 4173",
-    url: "http://127.0.0.1:4173/index.html",
+    command: `node scripts/serve.mjs ${PORT}`,
+    url: `${ORIGINE}/index.html`,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
