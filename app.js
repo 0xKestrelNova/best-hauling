@@ -488,7 +488,17 @@ function renderMulti(f) {
     empty.textContent = "Active la soute (SCU) pour calculer des trajets multi-commodité.";
     return;
   }
-  if (!MARKET) { withMarket(refresh); return; } // graphe requis
+  // Graphe requis. On vide comme le fait la branche « soute inactive » juste au-dessus : laisser les
+  // trajets à UNE commodité sous un mode qui promet des chargements combinés, c'est un tableau qui
+  // ne correspond plus à `shownMulti` — ▶ et 📦 y lisaient un index vide et ne faisaient RIEN.
+  // #empty reste masqué : le tableau n'est pas vide à cause des filtres, le marché n'est pas là.
+  if (!MARKET) {
+    shownMulti = [];
+    $("rows").innerHTML = "";
+    empty.hidden = true;
+    withMarket(refresh);
+    return;
+  }
   // Le contexte de frais descend DANS multiTrips (et non après coup) : c'est lui qui trie puis
   // TRONQUE à 300 trajets, un trajet meilleur en net serait donc coupé avant d'atteindre le tableau.
   const trips = multiTrips(MARKET, f, effVals, 300, f.multiAll ? 1 : 2, feeResolver(f))
@@ -1111,7 +1121,12 @@ function renderManifest(origin, destSystem, f, destTerminal) {
 }
 
 function renderEnRoute() {
-  if (!MARKET) { withMarket(refresh); return; }
+  // #empty est PARTAGÉ avec Trajets / Boucles, et cette vue n'a encore rien de VRAI à y écrire :
+  // ce n'est pas un filtre qui vide le tableau, c'est le marché qui manque. Symétrie du
+  // EMPTY_DEFAULT posé en tête de render() / renderLoops() (#55), qui manquait ici parce que le
+  // retour anticipé précède toute écriture — et withMarket ne re-rend PAS en cas d'échec, donc le
+  // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
+  if (!MARKET) { $("empty").hidden = true; withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
   resolveOrigin(); // re-résout depuis le champ (peut avoir été posé par le parcours, sans événement input)
   resolveDest();
@@ -1628,7 +1643,11 @@ function clearJourney() {
   SOUTE = detacherLotsDeJambe(SOUTE); saveSoute();
   journeyExpandedLeg = -1;
   renderJourney();
-  saveState();
+  // Comme tous les autres mutateurs du parcours : la carte Voyage n'est pas la seule à lire JOURNEY.
+  // Les Boucles hissent en tête celles qui partent de la fin du parcours (.from-here) et le board
+  // Commodités marque d'un ◆ ce qu'on transporte — sans ce rendu, les deux gardaient l'état d'AVANT
+  // l'effacement jusqu'au geste suivant. `refresh` finit par `saveState`, inutile de le doubler.
+  refresh();
 }
 // Ensemble des commodités transportées au moins une fois sur le parcours (union des manifestes).
 function journeyCarriedCommodities() {

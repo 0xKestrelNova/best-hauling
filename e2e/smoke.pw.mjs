@@ -349,6 +349,23 @@ test("Compagnon de voyage : pré-remplit Chaîne + remonte les boucles depuis l'
   await expect(page.locator("#loopRows tr").first()).toHaveClass(/from-here/); // pertinentes en tête
 });
 
+test("Compagnon de voyage : effacer le parcours repeint la vue courante (#23)", async ({ page }) => {
+  // clearJourney rendait la carte Voyage et sauvegardait, mais ne rappelait pas refresh() comme le
+  // font tous les autres mutateurs du parcours. Les vues qui lisent JOURNEY à leur rendu gardaient
+  // donc l'état d'avant : boucles hissées en tête avec le fond `.from-here`, tuiles « transportée »
+  // encore ◆. L'état SAUVÉ, lui, était déjà correct — d'où l'invisibilité à tout test de persistance.
+  await page.click("#viewLoops");
+  await expect(page.locator("#loopRows tr").first()).toBeVisible();
+  // Une boucle est un cycle A→B→A : la prendre place la fin du parcours sur SON propre terminal A,
+  // elle se marque donc « from-here » sans dépendre d'une intersection dans le jeu de données.
+  await page.locator("#loopRows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#loopRows tr.from-here").first()).toBeVisible();
+
+  await page.locator("#journeyClear").click();
+  await expect(page.locator("#journeyStartBtn")).toBeVisible(); // le parcours est bien effacé…
+  await expect(page.locator("#loopRows tr.from-here")).toHaveCount(0); // …et la vue le sait
+});
+
 test("Compagnon de voyage : cliquer une étape recale En route (position interactive)", async ({ page }) => {
   const row = page.locator("#rows tr").first();
   const buyTerminal = (await row.locator(".term-name").nth(0).innerText()).trim();
@@ -1336,6 +1353,50 @@ test.describe("chargement du marché", () => {
     await expect(page.locator("#empty")).toBeHidden(); // et non « Choisis un terminal de départ… »
     await expect(page.locator("#manifest")).toBeHidden();
     await expect(page.locator("#routes")).toBeVisible();
+  });
+
+  test("marché lent : « En route » n'affiche pas le message vide d'une autre vue (#26)", async ({ page }) => {
+    // Symétrie exacte de #55, laissée dans un seul sens : render() et renderLoops() remettent
+    // #empty à sa valeur d'index.html en tête de rendu, mais renderEnRoute sortait AVANT toute
+    // écriture quand le marché manquait. Le message de la vue qu'on quitte restait donc sous un
+    // tableau « En route » vide — et si le fetch échoue, withMarket ne re-rend pas : il y reste.
+    // 2,5 s : le test observe un état TRANSITOIRE, il faut que la fenêtre survive à un runner chargé.
+    await page.route("**/data/market.json", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500)); // le marché arrive bien après le changement de vue
+      return route.continue();
+    });
+
+    // On ATTEND que le filtre ait vidé le tableau : le rendu est débouncé, et changer de vue avant
+    // qu'il ne parte laisserait #empty masqué — le test passerait alors sans rien prouver.
+    await page.fill("#search", "zzz"); // aucune route -> #empty affiche le message des Trajets
+    await expect(page.locator("#rows tr")).toHaveCount(0);
+    await expect(page.locator("#empty")).toBeVisible();
+    await expect(page.locator("#empty")).toHaveText("Aucune route ne correspond aux filtres.");
+
+    await page.click("#viewEnroute");
+    await expect(page.locator("#enroute")).toBeVisible();
+    await expect(page.locator("#empty")).toBeHidden(); // sans marché, cette vue n'a rien de vrai à dire
+    // À l'arrivée du marché seulement, elle dit ce qui lui manque VRAIMENT.
+    await expect(page.locator("#empty")).toHaveText(
+      "Choisis un terminal de départ pour voir le fret à emporter.", { timeout: 15000 });
+  });
+
+  test("marché lent : le mode multi n'affiche pas les lignes des trajets simples (#25)", async ({ page }) => {
+    // renderMulti sortait le temps du fetch sans toucher à #rows : l'écran gardait les trajets à UNE
+    // commodité sous un mode qui promet des chargements combinés, et ▶ comme 📦 indexaient alors
+    // `shownMulti`, resté vide — clic mort, sans le moindre message.
+    // 2,5 s : idem, l'état observé est transitoire (il dure le temps du fetch et pas plus).
+    await page.route("**/data/market.json", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      return route.continue();
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible(); // trajets à une commodité
+    await page.check("#multiCommodity");
+    await expect(page.locator("#rows tr")).toHaveCount(0);  // le tableau suit son tableau de données
+    await expect(page.locator("#empty")).toBeHidden();      // et ne prétend pas que c'est un filtre
+    // Le mode finit par se remplir de VRAIS chargements combinés (plusieurs icônes par ligne).
+    await expect(page.locator("#rows .multi-icons").first()).toBeVisible({ timeout: 15000 });
   });
 });
 
