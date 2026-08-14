@@ -286,10 +286,10 @@
                   <th data-sort="score" class="sorted-desc" tabindex="0" aria-sort="descending" title="Score de fiabilité : rentabilité × fraîcheur × disponibilité. 100 = meilleur de la liste.">Score</th>
                   <th data-sort="margin" class="num" tabindex="0" aria-sort="none">Marge/SCU</th>
                   <th data-sort="roi" class="num" tabindex="0" aria-sort="none">ROI</th>
-                  <th data-sort="units" class="num" tabindex="0" aria-sort="none">Unités à acheter</th>
-                  <th data-sort="investment" class="num" tabindex="0" aria-sort="none">Coût total</th>
-                  <th data-sort="profit" class="num" tabindex="0" aria-sort="none">Profit/voyage</th>
-                  <th data-sort="profitHour" class="num" tabindex="0" aria-sort="none">Profit/heure</th>
+                  <th data-sort="units" class="num" tabindex="0" aria-sort="none" title="Unités à acheter — plafonnées par le stock, la demande et le budget">Unités</th>
+                  <th data-sort="investment" class="num" tabindex="0" aria-sort="none" title="Coût total de l'achat">Coût</th>
+                  <th data-sort="profit" class="num" tabindex="0" aria-sort="none" title="Profit par voyage">Profit</th>
+                  <th data-sort="profitHour" class="num" tabindex="0" aria-sort="none" title="Profit par heure — le temps estimé se lit en infobulle de chaque cellule">Profit/h</th>
                 </tr>
               </thead>
               <tbody id="rows"></tbody>
@@ -302,10 +302,10 @@
                   <th>Aller</th>
                   <th>Retour</th>
                   <th data-sort-loop="score" class="sorted-desc" tabindex="0" aria-sort="descending" title="Score de fiabilité : rentabilité × fraîcheur × disponibilité. 100 = meilleure de la liste.">Score</th>
-                  <th data-sort-loop="loopMargin" class="num" tabindex="0" aria-sort="none">Marge boucle/SCU</th>
+                  <th data-sort-loop="loopMargin" class="num" tabindex="0" aria-sort="none" title="Marge de la boucle entière, par SCU">Marge/SCU</th>
                   <th data-sort-loop="units" class="num" tabindex="0" aria-sort="none">Unités (A+R)</th>
-                  <th data-sort-loop="profit" class="num" tabindex="0" aria-sort="none">Profit boucle</th>
-                  <th data-sort-loop="profitHour" class="num" tabindex="0" aria-sort="none">Profit/heure</th>
+                  <th data-sort-loop="profit" class="num" tabindex="0" aria-sort="none" title="Profit de la boucle entière">Profit</th>
+                  <th data-sort-loop="profitHour" class="num" tabindex="0" aria-sort="none" title="Profit par heure — le temps estimé se lit en infobulle de chaque cellule">Profit/h</th>
                 </tr>
               </thead>
               <tbody id="loopRows"></tbody>
@@ -320,10 +320,10 @@
                   <th>Score</th>
                   <th class="num">Marge/SCU</th>
                   <th class="num">ROI</th>
-                  <th class="num">Unités à acheter</th>
-                  <th class="num">Coût total</th>
-                  <th class="num">Profit/voyage</th>
-                  <th class="num">Profit/heure</th>
+                  <th class="num" title="Unités à acheter — plafonnées par le stock, la demande et le budget">Unités</th>
+                  <th class="num" title="Coût total de l'achat">Coût</th>
+                  <th class="num" title="Profit par voyage">Profit</th>
+                  <th class="num" title="Profit par heure — le temps estimé se lit en infobulle de chaque cellule">Profit/h</th>
                 </tr>
               </thead>
               <tbody id="enrouteRows"></tbody>

@@ -613,8 +613,12 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
 .table-shell::after { bottom: -1px; right: -1px; border-bottom: 2px solid; border-right: 2px solid; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; table-layout: fixed; }
-#routes, #enroute { min-width: 1000px; }
-#loops { min-width: 900px; }
+/* Ce plancher est ce qui décidait du débordement en 1280 : le cadre n'offre alors que 982 px, la
+   table était forcée à 1010, et la barre horizontale qui en résultait se retrouvait sous 316 lignes
+   — 33 écrans à descendre pour l'atteindre (#54). Descendu à 960, la table tient dans le cadre dès
+   1280 ; en dessous, le défilement redevient le repli assumé du mode étroit. */
+#routes, #enroute { min-width: 960px; }
+#loops { min-width: 880px; }
 
 thead th {
   position: sticky; top: 0; text-align: left; padding: 13px 14px;
@@ -627,30 +631,45 @@ thead th:hover { color: #fff; background: #0d1420; }
 thead th[data-sort]:focus-visible, thead th[data-sort-loop]:focus-visible {
   outline: none; color: #fff; background: #0d1420; box-shadow: inset 0 0 0 1px var(--acc);
 }
+/* Les colonnes de chiffres se serrent la ceinture. Elles sont en `nowrap` (td.num plus bas) : un
+   `6 315 398` ne se coupe pas, et c'est LUI qui forçait la table à rester plus large que son cadre
+   une fois les intitulés raccourcis (#54). Quatre pixels de moins de chaque côté sur sept colonnes
+   rendent 56 px — assez, et sans toucher aux colonnes de texte qui, elles, enveloppent. */
+th.num, td.num { padding-left: 10px; padding-right: 10px; }
 th.num { text-align: right; }
 th.sorted-desc::after { content: " ▾"; color: var(--acc); }
 th.sorted-asc::after { content: " ▴"; color: var(--acc); }
 
-/* Largeurs de colonnes (Trajets & En route : 10 colonnes) */
+/* Largeurs de colonnes (Trajets & En route : 10 colonnes)
+   Rééquilibrage de #54, mesuré au plancher de 960 px — le seul cas où ça se joue, puisque au-delà
+   tout le monde est à l'aise. Les quatre colonnes de droite étaient contraintes par leur INTITULÉ
+   et non par leurs chiffres (« Unités à acheter » : 142 px de titre pour 44 px de données), pendant
+   qu'« Acheter » et « Vendre » se partageaient 40 % de la table. Les titres ont été raccourcis et
+   leur sens mis en `title=` (index.html) ; ces pourcentages rendent le reste aux chiffres.
+   À 960 px, chaque colonne couvre désormais son intitulé : Marge/SCU 86 pour 84 exigés,
+   Profit/h 72 pour 67, Unités 62 pour 60, Coût 53 pour 51, Profit 58 pour 55, ROI 48 pour 45. */
 #routes th:nth-child(1), #enroute th:nth-child(1) { width: 15%; }
 #routes th:nth-child(2), #enroute th:nth-child(2) { width: 20%; }
-#routes th:nth-child(3), #enroute th:nth-child(3) { width: 20%; }
+#routes th:nth-child(3), #enroute th:nth-child(3) { width: 17.5%; }
 #routes th:nth-child(4), #enroute th:nth-child(4) { width: 8%; text-align: center; }
-#routes th:nth-child(5), #enroute th:nth-child(5) { width: 8%; }
+#routes th:nth-child(5), #enroute th:nth-child(5) { width: 9%; }
 #routes th:nth-child(6), #enroute th:nth-child(6) { width: 5%; }
-#routes th:nth-child(7), #enroute th:nth-child(7) { width: 7%; }
-#routes th:nth-child(8), #enroute th:nth-child(8) { width: 6%; }
+#routes th:nth-child(7), #enroute th:nth-child(7) { width: 6.5%; }
+#routes th:nth-child(8), #enroute th:nth-child(8) { width: 5.5%; }
 #routes th:nth-child(9), #enroute th:nth-child(9) { width: 6%; }
-#routes th:nth-child(10), #enroute th:nth-child(10) { width: 5%; }
-/* Boucles : 8 colonnes */
-#loops th:nth-child(1) { width: 22%; }
-#loops th:nth-child(2) { width: 17%; }
-#loops th:nth-child(3) { width: 17%; }
+#routes th:nth-child(10), #enroute th:nth-child(10) { width: 7.5%; }
+/* Boucles : 8 colonnes. Même maladie que Trajets, en plus petit et pour une autre raison : ici
+   c'est le CHIFFRE qui déborde, pas l'intitulé — « Profit/h » recevait 61 px pour un `6 315 398`
+   qui en réclame 91, et `td.num` est en `nowrap`. Les quatre premières colonnes enveloppent, elles
+   rendent donc les quatre points qui manquaient (#54). */
+#loops th:nth-child(1) { width: 20%; }
+#loops th:nth-child(2) { width: 16%; }
+#loops th:nth-child(3) { width: 16%; }
 #loops th:nth-child(4) { width: 9%; text-align: center; }
 #loops th:nth-child(5) { width: 10%; }
 #loops th:nth-child(6) { width: 10%; }
 #loops th:nth-child(7) { width: 9%; }
-#loops th:nth-child(8) { width: 6%; }
+#loops th:nth-child(8) { width: 10%; }
 
 td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
 td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
