@@ -13,7 +13,7 @@ import {
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
-  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, sellableAt, sellAllAt,
+  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
@@ -1347,6 +1347,11 @@ let SOUTE = [];
 function loadSoute() {
   try { SOUTE = JSON.parse(localStorage.getItem(HOLD_KEY)) || []; } catch { SOUTE = []; }
   if (!Array.isArray(SOUTE)) SOUTE = [];
+  // Marqueurs de refus hérités d'avant #20 : sans date, ils seraient tenus pour périmés d'un coup
+  // et un résidu volontairement gardé pourrait partir à la première étape franchie. On leur donne
+  // une fenêtre pleine à partir de maintenant. N'écrit que s'il y avait vraiment à migrer.
+  const m = migrerRefus(SOUTE);
+  if (m.migres) { SOUTE = m.hold; saveSoute(); }
 }
 function saveSoute() { try { localStorage.setItem(HOLD_KEY, JSON.stringify(SOUTE)); } catch {} }
 
@@ -1476,7 +1481,7 @@ function vendreIci(nom, units, idxFige) {
   renderSoute(); refresh();
   const reste = avant - r.vendu;
   showToast(`✓ ${fmt(r.vendu)} SCU de ${nom} vendus — ${fmtSigne(r.profit)} aUEC` +
-    (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord (refusés ici)` : ""));
+    (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord — le comptoir n'en a pas repris plus` : ""));
 }
 
 // Quitter une escale sous-entend qu'on y a fait son affaire : ce qu'elle reprend est vendu.

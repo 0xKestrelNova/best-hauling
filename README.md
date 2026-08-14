@@ -292,6 +292,13 @@ affaire à l'escale que je quitte »** et solde ce qui s'y vendait encore. Sans 
 disparaîtrait au moment exact où il devient le sujet. Un geste explicite, lui, passe outre.
 Reculer ne revend rien.
 
+Ce marqueur **périme en 3 h**, sur la même horloge qu'un volume corrigé — et pour la même raison.
+Un comptoir n'est plein que sur **son shard et à cet instant** : en changeant de shard, ou
+simplement dix minutes plus tard, le même terminal en reprend. Une saturation observée est donc
+périssable, exactement comme un stock. Sans date, le refus était éternel, alors que la même
+information saisie à la main dans la vue Corrections périmait déjà : deux durées de vie pour un
+seul fait, dont l'une n'avait jamais été décidée.
+
 **⬓ Déposer** est la troisième sortie du fret, et elle marche **même là où le comptoir ne reprend
 rien** — c'est précisément le cas où elle sert. Le fret quitte la soute sans être vendu : ni perdu,
 ni encaissé, du capital immobilisé qui reste tracé.
