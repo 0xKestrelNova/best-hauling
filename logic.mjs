@@ -69,6 +69,17 @@ export function normalizeScores(rows) {
   return rows;
 }
 
+// Largeur de la mini-barre d'un score, en pourcentage. On borne le DESSIN, jamais la MESURE :
+// un score négatif (route dont les frais d'autoload dépassent la marge) est une information vraie
+// dont le tri se sert pour classer « perd un peu » avant « perd beaucoup ». Seul son rendu était
+// faux — et spectaculairement : `width:-1441%` est une déclaration CSS invalide, donc ignorée,
+// donc l'élément retombait en `width:auto`, qui remplit son parent. La pire ligne du tableau
+// portait ainsi la plus grosse barre. Un score absent vaut 0 plutôt qu'un `width:NaN%`, qui
+// serait invalide de la même façon.
+export function scoreBarWidth(score) {
+  return Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 0;
+}
+
 // ---------- Tri (valeurs nulles en bas ; chaînes sensibles à la locale) ----------
 export function bySort(key, dir) {
   return (a, b) => {

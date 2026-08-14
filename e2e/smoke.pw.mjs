@@ -1910,3 +1910,38 @@ test("corrections : un relevé d'autoload en cours de saisie survit à un re-ren
   await page.waitForTimeout(500); // le debounce du filtre est retombé
   await expect(montant).toHaveValue("1159"); // la saisie n'a pas été effacée
 });
+
+test("score : une barre de score négatif est vide, jamais pleine (#39)", async ({ page }) => {
+  // Cause racine de #39 : `.scorebar i` n'avait aucune `width` par défaut. Une largeur négative
+  // (`width:-1441%`, ce que scoreCell écrivait pour une route qui perd de l'argent) est une
+  // déclaration CSS INVALIDE, donc ignorée — l'élément retombait en `width:auto`, et un bloc en
+  // auto remplit son parent. La pire ligne du tableau portait donc la plus grosse barre.
+  // On mesure la règle CSS elle-même : aucune donnée de l'amorce ne garantit qu'une route soit
+  // déficitaire aujourd'hui, et ce test ne doit pas dépendre du relevé du jour.
+  const largeurs = await page.evaluate(() => {
+    const hote = document.createElement("div");
+    // Le gabarit exact de scoreCell, pour les trois largeurs qui ont pu s'écrire dans le style.
+    hote.innerHTML = `
+      <span class="scorebar s-low" id="t-neg"><i style="width:-1441%"></i></span>
+      <span class="scorebar s-low" id="t-vide"><i></i></span>
+      <span class="scorebar s-good" id="t-plein"><i style="width:100%"></i></span>`;
+    document.body.append(hote);
+    const large = (id) => document.querySelector(`#${id} i`).getBoundingClientRect().width;
+    const mesures = { negatif: large("t-neg"), sansLargeur: large("t-vide"), plein: large("t-plein") };
+    hote.remove();
+    return mesures;
+  });
+
+  expect(largeurs.plein).toBeGreaterThan(40);   // une barre pleine occupe bien les 46 px du parent
+  expect(largeurs.negatif).toBe(0);             // 46 px avant le correctif : le bug
+  expect(largeurs.sansLargeur).toBe(0);         // la ceinture : plus aucun repli sur `auto`
+});
+
+test("score : le tableau n'écrit jamais une largeur hors [0, 100] (#39)", async ({ page }) => {
+  // Le correctif porte sur le RENDU : scoreCell borne la largeur, le chiffre garde son signe.
+  const styles = await page.locator("#rows .scorebar i").evaluateAll((els) =>
+    els.map((e) => e.getAttribute("style") || ""));
+  expect(styles.length).toBeGreaterThan(50);
+  const horsBornes = styles.filter((s) => !/^width:\s*(100|\d{1,2})%;?$/.test(s.trim()));
+  expect(horsBornes).toEqual([]);
+});
