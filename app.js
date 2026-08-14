@@ -19,6 +19,7 @@ import {
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
   reindexerRangsJambe, detacherLotsDeJambe,
+  soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   encodeJourney, decodeJourney,
 } from "./logic.mjs";
 
@@ -1225,6 +1226,23 @@ function loadSoute() {
 }
 function saveSoute() { try { localStorage.setItem(HOLD_KEY, JSON.stringify(SOUTE)); } catch {} }
 
+// Le REGISTRE des chargements (logic.mjs) : quelle jambe est engagée, et ce qu'elle a pris à quel
+// rayon. Store à part de la soute, et c'est tout le point : la soute se vide par son ✕, par une
+// vente, par la vente implicite du départ — aucun de ces chemins ne rend rien à la station, donc
+// aucun ne décharge la jambe. Le fret peut partir, ce qu'on doit au rayon reste dû.
+const CHARGES_KEY = "best-hauling-jambes-chargees";
+let CHARGEMENTS = {};
+// À appeler APRÈS loadSoute : la migration lit les lots pour reconstruire le registre d'une soute
+// écrite avant lui (l'état vivait alors dans la présence des lots, et le stock d'avant dans `avant`).
+function loadChargements() {
+  try { CHARGEMENTS = JSON.parse(localStorage.getItem(CHARGES_KEY)) || {}; } catch { CHARGEMENTS = {}; }
+  if (!CHARGEMENTS || typeof CHARGEMENTS !== "object" || Array.isArray(CHARGEMENTS)) CHARGEMENTS = {};
+  const m = migrerChargements(CHARGEMENTS, SOUTE);
+  CHARGEMENTS = m.chargements;
+  if (m.change) { SOUTE = m.lots; saveSoute(); saveChargements(); }
+}
+function saveChargements() { try { localStorage.setItem(CHARGES_KEY, JSON.stringify(CHARGEMENTS)); } catch {} }
+
 // Charge le manifeste d'une jambe dans la soute, au prix que l'app venait d'afficher. Les lots
 // portent la clé de la jambe : c'est ce qui permet d'annuler un chargement sans deviner.
 // Le point d'achat d'une commodité à un terminal, avec son stock EFFECTIF (corrections comprises)
@@ -1239,18 +1257,32 @@ function pointAchat(nomCommodite, nomTerminal) {
   return { commodite: c.name, stock: e.vol, base: b[3] };
 }
 
+// Réécrit la correction de stock d'un point d'achat DEPUIS LE REGISTRE : sa référence, moins tout ce
+// que les jambes encore chargées y prennent. Chargement et annulation posent la même question, et
+// une seule réponse les empêche de diverger — c'est ce qui manquait quand deux jambes achetaient au
+// même point. `prise.ref` sert de repli quand plus aucune jambe ne tient le rayon : on lui rend
+// alors exactement ce qu'il annonçait avant qu'on y touche.
+// Renvoie le solde appliqué, ou null si le point a disparu d'UEX (rien à corriger).
+function ecrireStockDuPoint(prise) {
+  const p = pointAchat(prise.name, prise.terminal);
+  if (!p) return null;
+  const s = soldeDuPoint(CHARGEMENTS, prise.name, prise.terminal);
+  const ref = s.ref != null ? s.ref : prise.ref;
+  setOverride(prise.name, prise.terminal, "buy", "vol", stockApres(ref, s.pris), p.base);
+  return { ref, pris: s.pris };
+}
+
 function chargerJambe(i) {
   const leg = JOURNEY && JOURNEY.legs[i];
   if (!leg || !MARKET) return;
   const k = legKey(leg, i);
-  if (SOUTE.some((l) => l.leg === k)) {
-    // Annulation : on rend à la station ce qu'on lui avait retiré. La valeur d'AVANT est portée par
-    // le lot, donc on restaure exactement — et non « stock + units », qui gonflerait un rayon qu'on
-    // avait vidé au-delà de ce qu'il annonçait.
-    for (const l of SOUTE.filter((x) => x.leg === k && x.avant != null)) {
-      const p = pointAchat(l.name, l.from);
-      if (p) setOverride(l.name, l.from, "buy", "vol", l.avant, p.base);
-    }
+  if (CHARGEMENTS[k]) {
+    // Annulation : on rend au rayon ce que CETTE jambe y a pris, et rien de plus. Les lots peuvent
+    // avoir quitté la soute entre-temps (vendus, déposés, débarqués) : c'est le registre, pas eux,
+    // qui sait ce qu'on doit.
+    const prises = CHARGEMENTS[k];
+    CHARGEMENTS = retirerChargement(CHARGEMENTS, k);
+    for (const pr of prises) ecrireStockDuPoint(pr);
     SOUTE = SOUTE.filter((l) => l.leg !== k);
     updateOvBadge();
   } else {
@@ -1259,27 +1291,36 @@ function chargerJambe(i) {
     const lots = loadHold([], lignes, leg.from, nowSec()).map((l) => ({ ...l, leg: k }));
     // Charger, c'est vider le rayon d'autant. On fige d'abord les jambes qui achetaient ce point
     // (même règle qu'une correction de volume saisie à la main), puis on écrit la déduction.
-    const vides = [];
+    const prises = [];
     for (const l of lots) {
       const p = pointAchat(l.name, l.from);
-      if (!p || p.stock == null) continue;
-      l.avant = p.stock;
+      if (!p || p.stock == null) continue; // stock inconnu : rien à déduire, la jambe reste chargée
+      // La référence est celle qu'une AUTRE jambe a déjà retenue pour ce rayon. Relire le stock
+      // effectif ici, ce serait relire notre propre déduction et la compter une seconde fois.
+      const s = soldeDuPoint(CHARGEMENTS, l.name, l.from);
+      prises.push({ name: l.name, terminal: l.from, ref: s.ref != null ? s.ref : p.stock, units: l.units });
       pinLegsForVolume(l.name, l.from, "buy");
-      const reste = stockApres(p.stock, l.units);
-      setOverride(l.name, l.from, "buy", "vol", reste, p.base);
-      if (p.stock < l.units) vides.push(l.name); // le relevé annonçait moins que ce qu'on a pris
+    }
+    CHARGEMENTS = poserChargement(CHARGEMENTS, k, prises);
+    const vides = [];
+    for (const pr of prises) {
+      const s = ecrireStockDuPoint(pr);
+      if (s && s.pris > s.ref) vides.push(pr.name); // la station en annonçait moins qu'on n'en a pris
     }
     SOUTE = SOUTE.concat(lots);
     updateOvBadge();
     if (vides.length) {
-      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : le relevé UEX en annonçait moins que ce que tu as pris`);
+      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : la station en annonçait moins que ce que tu as pris`);
     }
   }
-  saveSoute();
+  saveSoute(); saveChargements();
   renderJourney();
   refresh();
 }
-const jambeChargee = (leg, i) => SOUTE.some((l) => l.leg === legKey(leg, i));
+// L'état « chargée » est PORTÉ par le registre, jamais déduit des lots : la soute se vide par
+// d'autres chemins que « annuler », et aucun ne défait le chargement — le fret est parti, il n'est
+// pas revenu au rayon.
+const jambeChargee = (leg, i) => !!CHARGEMENTS[legKey(leg, i)];
 
 // « Où suis-je ? » — l'étape courante du voyage, ou à défaut le terminal de départ d'« En route ».
 // C'est ce terminal qui fixe le prix d'une vente et qui porte le marqueur « refusé ici ».
@@ -1426,6 +1467,9 @@ function ecoulerHTML() {
   return `<div class="hold-ecouler"><div class="ec-head">Où écouler — classé par ce que ça rapporte, prix d'achat déduit</div>${lignes}</div>`;
 }
 
+// Débarquer le fret n'est pas le remettre en rayon : le registre des chargements n'est pas touché,
+// donc les jambes restent chargées (🔒 « ⬢ à bord ») et leur déduction reste posée. C'est ce qui
+// garde le chemin « annuler » atteignable — le seul qui rende vraiment son stock à la station.
 function viderSoute() { SOUTE = []; saveSoute(); renderSoute(); refresh(); }
 function retirerLot(i) { SOUTE = SOUTE.filter((_, j) => j !== i); saveSoute(); renderSoute(); refresh(); }
 
@@ -1626,6 +1670,10 @@ function clearJourney() {
   // ultérieur dont la jambe 0 relie les deux mêmes terminaux s'affichait « ⬢ à bord », et le clic
   // déchargeait les lots de l'ancien voyage en restaurant leurs stocks.
   SOUTE = detacherLotsDeJambe(SOUTE); saveSoute();
+  // Quatrième porteur du rang : le registre des chargements. Plus aucune jambe n'existe, donc plus
+  // rien à décharger — les déductions déjà posées sur les rayons, elles, restent : le fret est bien
+  // parti avec. Comme pour les lots qu'on vient de délier, elles ne sont simplement plus annulables.
+  CHARGEMENTS = {}; saveChargements();
   journeyExpandedLeg = -1;
   renderJourney();
   saveState();
@@ -1926,14 +1974,15 @@ function beginJourney(label) {
 }
 
 // Réindexe tout ce qui est indexé par le RANG des jambes après une modification du parcours. Les
-// TROIS porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute — passent par le même
-// appel pur : les décaler séparément les ferait diverger, et c'est d'en avoir oublié un que venait
-// le double chargement (la jambe renumérotée se croyait vide alors que son fret était à bord).
+// QUATRE porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute, entrée du registre
+// des chargements — passent par le même appel pur : les décaler séparément les ferait diverger, et
+// c'est d'en avoir oublié un que venait le double chargement (la jambe renumérotée se croyait vide
+// alors que son fret était à bord).
 function reindexerApresRetrait(retrait) {
-  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE }, retrait);
-  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots;
+  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE, chargements: CHARGEMENTS }, retrait);
+  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots; CHARGEMENTS = r.chargements;
   if (journeyExpandedLeg >= retrait.removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
-  saveJourneyEdits(); saveJourneyPins(); saveSoute();
+  saveJourneyEdits(); saveJourneyPins(); saveSoute(); saveChargements();
 }
 
 // Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
@@ -3240,6 +3289,7 @@ async function init() {
   loadJourneyEdits();
   loadJourneyPins();
   loadSoute();
+  loadChargements(); // après loadSoute : la migration reconstruit le registre depuis les lots
   loadDepots();
   updateOvBadge();
   syncToggles();
