@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
-  normalizeScores, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  normalizeScores, scoreBarWidth, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
@@ -137,6 +137,72 @@ test("normalizeScores : tout à 0 si aucun score positif", () => {
   const rows = [{ rawScore: 0 }, {}];
   normalizeScores(rows);
   assert.deepEqual(rows.map((r) => r.score), [0, 0]);
+});
+
+// Prémisse du bug de la barre pleine : un score négatif n'est pas une hypothèse d'école, il sort
+// du calcul dès que les frais d'autoload mangent la marge. On l'établit sur les fonctions pures
+// avant de parler de rendu, sinon on borne une largeur pour un cas qui n'arrive jamais.
+test("rawScore négatif : une marge trop mince pour les frais d'autoload", () => {
+  const f = { cargo: 96, budget: 0, capStock: true, useCargo: true, useBudget: false };
+  const m = {
+    buyPrice: 250, buyStock: 400, sellDemand: 400, margin: 12,
+    distance: 30, sameSystem: true, buyUpdated: 1, sellUpdated: 1,
+  };
+  const station = { maxBox: 32, k: 1 };
+
+  // Sans frais la route est rentable : 96 SCU × 12 aUEC = 1152 aUEC de marge.
+  const brut = routeMetrics(m, f, null);
+  assert.equal(brut.profit, 1152);
+  assert.ok(brut.rawScore > 0);
+
+  // Les mêmes 96 SCU coûtent 4320 aUEC de manutention aux deux bouts : le trajet fait perdre
+  // de l'argent, donc profit/heure négatif, donc rawScore négatif (les deux facteurs sont positifs).
+  const net = routeMetrics(m, f, { buy: station, sell: station });
+  assert.equal(net.fees, 4320);
+  assert.equal(net.profit, -3168);
+  assert.ok(net.profitHour < 0, "profit/heure négatif");
+  assert.ok(net.rawScore < 0, "rawScore négatif");
+});
+
+// On borne le DESSIN, pas la MESURE : le score garde son signe pour tous ses consommateurs —
+// dont le tri, qui doit pouvoir classer « perd un peu » avant « perd beaucoup ».
+test("normalizeScores : un rawScore négatif garde son signe, et descend sous -100", () => {
+  const rows = [{ rawScore: 400 }, { rawScore: -80 }, { rawScore: -5763 }];
+  normalizeScores(rows);
+  assert.deepEqual(rows.map((r) => r.score), [100, -20, -1441]);
+  // Le tri décroissant range bien la pire route en dernier.
+  assert.deepEqual([...rows].sort(bySort("score", -1)).map((r) => r.score), [100, -20, -1441]);
+});
+
+test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
+  // Le cœur du bug : `width:-1441%` est une déclaration CSS invalide, donc ignorée, donc
+  // l'élément retombe en `width:auto` — et un bloc en auto remplit son parent. Une largeur
+  // négative ne dessinait pas une barre vide, elle dessinait la barre la plus PLEINE du tableau.
+  assert.equal(scoreBarWidth(-1441), 0);
+  assert.equal(scoreBarWidth(-20), 0);
+  assert.equal(scoreBarWidth(0), 0);
+  assert.equal(scoreBarWidth(42), 42);
+  assert.equal(scoreBarWidth(100), 100);
+  assert.equal(scoreBarWidth(160), 100);
+  // Un score absent ne doit pas écrire `width:NaN%`, qui retomberait dans le même piège.
+  assert.equal(scoreBarWidth(null), 0);
+  assert.equal(scoreBarWidth(undefined), 0);
+  assert.equal(scoreBarWidth(NaN), 0);
+});
+
+// Lecture de SOURCE, sur le modèle des tests de coquille (scripts/csp.test.mjs) : ce que ce test
+// épingle est invisible à tout test de rendu. La règle `.scorebar i { width: 0 }` corrige déjà le
+// symptôme à elle seule — une largeur invalide est écartée et la cascade retombe sur le 0 — donc
+// retirer l'appel à scoreBarWidth laisserait la suite entièrement VERTE, pendant que l'app se
+// remettrait à émettre du CSS invalide. Vérifié en remettant app.js à sa version d'avant : les deux
+// e2e du score passaient encore. Ceinture ET bretelles : la feuille de style rattrape, l'appel
+// empêche. On teste donc l'appel lui-même, faute de pouvoir l'observer.
+test("scoreCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
+  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const cellule = app.match(/function scoreCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
+  assert.ok(cellule, "ancre : scoreCell existe toujours sous ce nom");
+  assert.match(cellule[0], /width:\$\{scoreBarWidth\(/,
+    "la largeur de .scorebar i doit passer par scoreBarWidth, jamais par le score brut");
 });
 
 // ---------- Tri ----------

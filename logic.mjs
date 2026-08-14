@@ -62,11 +62,25 @@ export function rawScoreOf(profitHour, fallbackMargin, age, stock, demand) {
 }
 
 // ---------- Score ----------
-// Normalise les scores bruts d'une liste sur 0-100 (100 = meilleur de la liste).
+// Rapporte les scores bruts d'une liste au meilleur d'entre eux : 100 = le meilleur. Le haut est
+// donc borné, le BAS ne l'est pas — une ligne dont le profit/heure est négatif (les frais mangent
+// la marge) reçoit un score négatif, et c'est voulu : le signe est une information, on ne l'écrase
+// pas ici. C'est le DESSIN qui se borne, dans scoreBarWidth juste en dessous.
 export function normalizeScores(rows) {
   const max = rows.reduce((m, r) => Math.max(m, r.rawScore || 0), 0);
   rows.forEach((r) => (r.score = max > 0 ? Math.round((r.rawScore / max) * 100) : 0));
   return rows;
+}
+
+// Largeur de la mini-barre d'un score, en pourcentage. On borne le DESSIN, jamais la MESURE :
+// un score négatif (route dont les frais d'autoload dépassent la marge) est une information vraie
+// dont le tri se sert pour classer « perd un peu » avant « perd beaucoup ». Seul son rendu était
+// faux — et spectaculairement : `width:-1441%` est une déclaration CSS invalide, donc ignorée,
+// donc l'élément retombait en `width:auto`, qui remplit son parent. La pire ligne du tableau
+// portait ainsi la plus grosse barre. Un score absent vaut 0 plutôt qu'un `width:NaN%`, qui
+// serait invalide de la même façon.
+export function scoreBarWidth(score) {
+  return Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 0;
 }
 
 // ---------- Tri (valeurs nulles en bas ; chaînes sensibles à la locale) ----------

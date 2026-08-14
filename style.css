@@ -757,7 +757,10 @@ input.editv-input { width: 80px; min-width: 0; padding: 2px 5px; font-size: 12px
 .score-cell { display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
 .score-cell b { font-family: var(--mono); font-variant-numeric: tabular-nums; min-width: 22px; text-align: right; }
 .scorebar { display: inline-block; width: 46px; height: 6px; flex-shrink: 0; background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line); overflow: hidden; }
-.scorebar i { display: block; height: 100%; }
+/* `width: 0` par défaut : sans elle, une largeur invalide (négative, NaN) est ignorée et l'élément
+   retombe en `width: auto`, qui REMPLIT le parent — une barre hors bornes se lisait « meilleure du
+   tableau ». La borne vit dans scoreBarWidth ; ceci est la ceinture qui la double. */
+.scorebar i { display: block; height: 100%; width: 0; }
 .scorebar.s-good i { background: linear-gradient(90deg, rgba(70,229,160,.5), var(--good)); }
 .score-cell.has b, .scorebar.s-good + b { color: var(--good); }
 .scorebar.s-good ~ b { color: var(--good); }

@@ -3,7 +3,7 @@
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
   tripMinutes, ageDays, pairAge,
-  normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  normalizeScores, scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible,
   ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
@@ -398,10 +398,11 @@ function evaluate(r, f) {
   return { ...r, buy, sell, buyPrice: buy.price, sellPrice: sell.price, feeInfo, ...metrics, ...net };
 }
 
-// Cellule visuelle du score : mini-barre + valeur.
+// Cellule visuelle du score : mini-barre + valeur. La barre est bornée à [0, 100] (scoreBarWidth),
+// le nombre affiché reste le score réel — y compris négatif, qui dit « cette route perd de l'argent ».
 function scoreCell(score) {
   const tier = score >= 70 ? "s-good" : score >= 40 ? "s-ok" : "s-low";
-  return `<div class="score-cell"><span class="scorebar ${tier}"><i style="width:${score}%"></i></span><b>${score}</b></div>`;
+  return `<div class="score-cell"><span class="scorebar ${tier}"><i style="width:${scoreBarWidth(score)}%"></i></span><b>${score}</b></div>`;
 }
 
 // Valeur éditable (clic pour corriger localement). side = "buy"|"sell", field = "price"|"vol".
