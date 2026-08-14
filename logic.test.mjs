@@ -4,12 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
-  normalizeScores, scoreBarWidth, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, tighterVolume,
+  scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
-  profitPerHour, rawScoreOf, routePasses, loopPasses,
+  profitPerHour, routePasses, loopPasses,
   routeMetrics, loopMetrics, netMarginRoi, dealFrom, enRouteDeals, bestManifest, buildChainAdjacency,
   pairEligible, suggestionsFrom,
   manifestsFrom, multiTrips, tripMetrics, legFromTrip,
@@ -71,28 +71,6 @@ test("freshnessFactor : décroît avec l'âge, plancher 0.2, 0.5 si inconnu", ()
 });
 
 const close = (a, b) => Math.abs(a - b) < 1e-9;
-test("availabilityFactor : sature avec le volume, 0.65 si inconnu", () => {
-  assert.equal(availabilityFactor(0, 0), 0.65);
-  assert.ok(close(availabilityFactor(120, 120), 0.65));  // 0.3 + 0.7*0.5
-  assert.ok(availabilityFactor(1000, 1000) > availabilityFactor(100, 100));
-  // prend le min(stock, demande)
-  assert.ok(availabilityFactor(500, 10) < availabilityFactor(500, 500));
-});
-
-test("availabilityFactor : demande inconnue (null) ≠ demande nulle (saturé)", () => {
-  // UEX ne renseigne `scu_sell` que sur une minorité de points -> demande null = capacité
-  // inconnue. La noter comme un terminal saturé pénalisait 4 routes sur 5 sans raison.
-  assert.ok(availabilityFactor(128, null) > availabilityFactor(128, 0));
-  // Demande inconnue -> on ne juge que le stock, exactement comme si la demande ne bornait pas.
-  assert.ok(close(availabilityFactor(128, null), availabilityFactor(128, Infinity)));
-  // Un stock plus fourni reste mieux noté, même sans demande connue…
-  assert.ok(availabilityFactor(500, null) > availabilityFactor(128, null));
-  // …et un terminal d'achat bien approvisionné ne doit pas scorer sous un terminal vide.
-  assert.ok(availabilityFactor(128, null) > availabilityFactor(0, null));
-  // 0 CONNU reste une saturation : pénalité maximale.
-  assert.equal(availabilityFactor(500, 0), 0.3);
-});
-
 test("tighterVolume : ignore les capacités inconnues au lieu de les compter pour 0", () => {
   assert.equal(tighterVolume(160, 7), 7);
   assert.equal(tighterVolume(null, 7), 7);       // Math.min(null, 7) vaudrait 0
@@ -107,72 +85,6 @@ test("profitPerHour : null si profit non borné, sinon profit ramené à l'heure
   assert.equal(profitPerHour(0, 30), 0);
   assert.equal(profitPerHour(60, 60), 60);   // 60 aUEC en 60 min -> 60/h
   assert.equal(profitPerHour(100, 30), 200); // 100 en 30 min -> 200/h
-});
-
-test("rawScoreOf : borné -> profit/h × fiabilité", () => {
-  // profitHour=200, fraîcheur(0)=1, dispo(1000,1000)>0.65
-  const s = rawScoreOf(200, 999, 0, 1000, 1000);
-  assert.ok(close(s, 200 * 1 * availabilityFactor(1000, 1000)));
-});
-
-test("rawScoreOf : non borné (profitHour null) -> retombe sur la marge", () => {
-  // base = fallbackMargin (50) car profitHour == null
-  const s = rawScoreOf(null, 50, 0, 1000, 1000);
-  assert.ok(close(s, 50 * 1 * availabilityFactor(1000, 1000)));
-});
-
-test("rawScoreOf : la fraîcheur pénalise un relevé plus vieux", () => {
-  const fresh = rawScoreOf(200, 50, 0, 1000, 1000);
-  const old = rawScoreOf(200, 50, 10, 1000, 1000);
-  assert.ok(old < fresh);
-});
-
-// ---------- Score ----------
-test("normalizeScores : 0-100, 100 pour le meilleur", () => {
-  const rows = [{ rawScore: 50 }, { rawScore: 100 }, { rawScore: 0 }];
-  normalizeScores(rows);
-  assert.deepEqual(rows.map((r) => r.score), [50, 100, 0]);
-});
-
-test("normalizeScores : tout à 0 si aucun score positif", () => {
-  const rows = [{ rawScore: 0 }, {}];
-  normalizeScores(rows);
-  assert.deepEqual(rows.map((r) => r.score), [0, 0]);
-});
-
-// Prémisse du bug de la barre pleine : un score négatif n'est pas une hypothèse d'école, il sort
-// du calcul dès que les frais d'autoload mangent la marge. On l'établit sur les fonctions pures
-// avant de parler de rendu, sinon on borne une largeur pour un cas qui n'arrive jamais.
-test("rawScore négatif : une marge trop mince pour les frais d'autoload", () => {
-  const f = { cargo: 96, budget: 0, capStock: true, useCargo: true, useBudget: false };
-  const m = {
-    buyPrice: 250, buyStock: 400, sellDemand: 400, margin: 12,
-    distance: 30, sameSystem: true, buyUpdated: 1, sellUpdated: 1,
-  };
-  const station = { maxBox: 32, k: 1 };
-
-  // Sans frais la route est rentable : 96 SCU × 12 aUEC = 1152 aUEC de marge.
-  const brut = routeMetrics(m, f, null);
-  assert.equal(brut.profit, 1152);
-  assert.ok(brut.rawScore > 0);
-
-  // Les mêmes 96 SCU coûtent 4320 aUEC de manutention aux deux bouts : le trajet fait perdre
-  // de l'argent, donc profit/heure négatif, donc rawScore négatif (les deux facteurs sont positifs).
-  const net = routeMetrics(m, f, { buy: station, sell: station });
-  assert.equal(net.fees, 4320);
-  assert.equal(net.profit, -3168);
-  assert.ok(net.profitHour < 0, "profit/heure négatif");
-  assert.ok(net.rawScore < 0, "rawScore négatif");
-});
-
-// On borne le DESSIN, pas la MESURE : le score garde son signe pour tous ses consommateurs —
-// dont le tri, qui doit pouvoir classer « perd un peu » avant « perd beaucoup ».
-test("normalizeScores : un rawScore négatif garde son signe, et descend sous -100", () => {
-  const rows = [{ rawScore: 400 }, { rawScore: -80 }, { rawScore: -5763 }];
-  normalizeScores(rows);
-  assert.deepEqual(rows.map((r) => r.score), [100, -20, -1441]);
-  // Le tri décroissant range bien la pire route en dernier.
-  assert.deepEqual([...rows].sort(bySort("score", -1)).map((r) => r.score), [100, -20, -1441]);
 });
 
 test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
@@ -198,10 +110,10 @@ test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
 // remettrait à émettre du CSS invalide. Vérifié en remettant app.js à sa version d'avant : les deux
 // e2e du score passaient encore. Ceinture ET bretelles : la feuille de style rattrape, l'appel
 // empêche. On teste donc l'appel lui-même, faute de pouvoir l'observer.
-test("scoreCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
+test("fiabiliteCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
   const app = readFileSync(new URL("./app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const cellule = app.match(/function scoreCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
-  assert.ok(cellule, "ancre : scoreCell existe toujours sous ce nom");
+  const cellule = app.match(/function fiabiliteCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
+  assert.ok(cellule, "ancre : fiabiliteCell existe toujours sous ce nom");
   assert.match(cellule[0], /width:\$\{scoreBarWidth\(/,
     "la largeur de .scorebar i doit passer par scoreBarWidth, jamais par le score brut");
 });
@@ -938,7 +850,7 @@ test("routeMetrics : borné par la soute -> units/profit/investment/temps", () =
   assert.equal(r.profit, 96 * 50);
   assert.equal(r.minutes, 6);              // tripMinutes(0, false)
   assert.equal(r.profitHour, (96 * 50 * 60) / 6);
-  assert.ok(r.rawScore > 0);
+  assert.ok(r.fiabilite > 0 && r.fiabilite <= 100); // la note reste une note, pas un classement
 });
 
 test("routeMetrics : non borné (aucune contrainte) -> units/profit/investment null", () => {
@@ -948,7 +860,9 @@ test("routeMetrics : non borné (aucune contrainte) -> units/profit/investment n
   assert.equal(r.profit, null);
   assert.equal(r.investment, null);
   assert.equal(r.profitHour, null);
-  assert.ok(r.rawScore > 0); // score sur la marge quand non borné
+  // Non bornée : plus aucun repli sur la marge (ADR-005), mais la fiabilité reste calculable —
+  // elle ne parle que de la donnée, pas du gain.
+  assert.ok(r.fiabilite > 0 && r.fiabilite <= 100);
 });
 
 test("routeMetrics : saut inter-système ajoute du temps de trajet", () => {
@@ -3231,14 +3145,15 @@ test("routeMetrics : sans contexte le profit reste brut, avec contexte il paie d
   assert.equal(net.units, brut.units);                 // seul le profit bouge
   assert.equal(net.investment, brut.investment);       // les frais ne sont pas du capital immobilisé
   assert.equal(net.profitHour, (net.profit * 60) / 6); // le profit/heure suit le net, donc le tri aussi
-  assert.ok(net.rawScore < brut.rawScore);             // et le score avec lui
+  // La fiabilité, elle, ne bouge PAS avec les frais : elle ne parle que de la donnée (ADR-005).
+  assert.equal(net.fiabilite, brut.fiabilite);
 });
 
 test("routeMetrics : route non bornée -> aucun frais calculable (pas de volume connu)", () => {
   const r = routeMetrics(M_ROUTE, F(), { buy: PT_A, sell: PT_B });
   assert.equal(r.profit, null);
   assert.equal(r.fees, 0);
-  assert.ok(r.rawScore > 0);   // le score reste assis sur la marge brute par SCU, comme avant
+  assert.ok(r.fiabilite > 0);  // la fiabilité ne dépend ni du bornage ni des frais
 });
 
 // --- Boucles (loopMetrics) ---
@@ -3941,4 +3856,75 @@ test("migrerRefus : rien à faire rend le MÊME tableau, pour n'écrire nulle pa
   const r = migrerRefus(deja, 7777);
   assert.equal(r.migres, 0);
   assert.equal(r.hold, deja);
+});
+
+// ---------- ADR-005 : la fiabilité mesure ce qu'on sait, le profit classe ----------
+
+test("certitudeVolume : du plancher quand rien n'est publié, à 1 quand tout l'est", () => {
+  // Le plancher n'est pas une timidité : une demande non publiée est une donnée MANQUANTE, pas
+  // nulle — le stock d'achat, lui, est connu à 100 %. Sans lui, 81 % des routes afficheraient 0.
+  assert.equal(certitudeVolume(0, 96), CERTITUDE_PLANCHER);
+  assert.equal(certitudeVolume(96, 96), 1);
+  assert.equal(certitudeVolume(48, 96), 0.75);
+  assert.equal(certitudeVolume(0, 0), CERTITUDE_PLANCHER); // rien chargé : on ne sait rien de plus
+});
+
+test("fiabiliteDe : un entier de 10 à 100, jamais négatif", () => {
+  // La borne haute et la borne basse tiennent par construction, contrairement à l'ancien score.
+  assert.equal(fiabiliteDe(0, 96, 96), 100);          // tout frais, tout publié
+  assert.equal(fiabiliteDe(999, 0, 96), 10);          // très vieux, rien publié -> 0,2 × 0,5
+  assert.ok(fiabiliteDe(null, 0, 96) > 0);            // date inconnue : 0,5 × 0,5 = 25
+  for (const [a, c, t] of [[0, 0, 0], [999, 0, 0], [7, 3, 96]]) {
+    const f = fiabiliteDe(a, c, t);
+    assert.ok(f >= 0 && f <= 100, `${a}/${c}/${t} -> ${f}`);
+  }
+});
+
+test("fiabilité : une ligne de bouchage ne divise plus la note (contre-exemple 3 de l'ADR-005)", () => {
+  // Rat's Nest -> CBD Lorville, mesuré sur l'instantané : 93 SCU pour 202 082 aUEC, dont une ligne
+  // Fluorine de 2 SCU (stock 2) qui apporte 426 aUEC — 0,2 % du profit. L'ancien availabilityFactor
+  // prenait le MINIMUM des stocks et tombait de 0,602 à 0,311 : la note était divisée par 1,93 par
+  // une ligne qui ne pesait rien. Son stock est pourtant CONNU ; elle ne doit rien dégrader.
+  const trip = {
+    lines: [
+      { name: "Diamond", units: 91, stock: 91, demand: 400, margin: 2216, buyPrice: 100, sellPrice: 2316, buyUpdated: 1000, sellUpdated: 1000 },
+      { name: "Fluorine", units: 2, stock: 2, demand: 400, margin: 213, buyPrice: 100, sellPrice: 313, buyUpdated: 1000, sellUpdated: 1000 },
+    ],
+    fee: null, cross: false,
+  };
+  const avec = tripMetrics(trip);
+  const sans = tripMetrics({ ...trip, lines: [trip.lines[0]] });
+  assert.equal(avec.fiabilite, sans.fiabilite,
+    "ajouter une ligne de bouchage au volume connu ne change pas la fiabilité");
+  assert.ok(avec.profit > sans.profit, "et elle rapporte tout de même un peu plus");
+});
+
+test("fiabilité : c'est la part de volume PUBLIÉE qui compte, pas la taille du volume", () => {
+  const base = { units: 48, stock: 5000, margin: 100, buyPrice: 10, sellPrice: 110, buyUpdated: 1000, sellUpdated: 1000 };
+  const tout = tripMetrics({ lines: [{ ...base, name: "A", demand: 999 }, { ...base, name: "B", demand: 999 }], fee: null, cross: false });
+  const moitie = tripMetrics({ lines: [{ ...base, name: "A", demand: 999 }, { ...base, name: "B", demand: null }], fee: null, cross: false });
+  const rien = tripMetrics({ lines: [{ ...base, name: "A", demand: null }, { ...base, name: "B", demand: null }], fee: null, cross: false });
+  assert.ok(tout.fiabilite > moitie.fiabilite && moitie.fiabilite > rien.fiabilite);
+  assert.equal(tout.partVolume, 1);
+  assert.equal(moitie.partVolume, 0.5);
+  assert.equal(rien.partVolume, 0);
+});
+
+test("classement : la route la plus rentable passe DEVANT (contre-exemple 1 de l'ADR-005)", () => {
+  // Le test qui échoue avec l'ancienne formule. Chiffres de l'instantané : Osoian Hides rapporte
+  // 1 759 500 aUEC et tombait au 8e rang, derrière Dymantium et ses 651 040 — 2,7 fois moins —
+  // parce que sa fraîcheur et sa disponibilité la multipliaient par moins que sa rivale.
+  const f = { cargo: 96, budget: 1e9, capStock: true, useCargo: true, useBudget: true };
+  const vieux = 1786000000 - 8 * 86400, frais = 1786000000 - 1 * 86400;
+  const grosse = routeMetrics({ buyPrice: 100, buyStock: 5000, sellDemand: null, margin: 18328,
+    distance: 0, sameSystem: true, buyUpdated: vieux, sellUpdated: vieux, demandKnown: false }, f);
+  const petite = routeMetrics({ buyPrice: 100, buyStock: 5000, sellDemand: 900, margin: 6782,
+    distance: 0, sameSystem: true, buyUpdated: frais, sellUpdated: frais, demandKnown: true }, f);
+
+  assert.ok(grosse.profit > petite.profit, "la grosse rapporte bien davantage");
+  // Le tri par défaut est le profit : c'est elle qui sort en tête.
+  const classe = [petite, grosse].sort(bySort("profit", -1));
+  assert.equal(classe[0], grosse);
+  // Et la fiabilité dit toujours la vérité sur la donnée, sans commander le classement.
+  assert.ok(petite.fiabilite > grosse.fiabilite, "la fraîche et publiée reste la mieux notée");
 });
