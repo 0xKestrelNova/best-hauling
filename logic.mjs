@@ -417,6 +417,30 @@ export function autoloadFee(scu, maxBox, k) {
   return Math.round(k * (AUTOLOAD.base + AUTOLOAD.perBox * boxes + AUTOLOAD.perScu * units));
 }
 
+// ---------- Relevé de station : du montant payé au coefficient ----------
+// Déduit `k` d'un montant observé en jeu : personne ne lit un coefficient à l'écran, on lit une
+// facture. k = montant payé / montant que la formule prédirait à l'ancrage (k = 1), au plafond de
+// caisse du terminal. null quand la mesure ne dit rien : sans quantité il n'y a pas de référence à
+// diviser, sans montant il n'y a rien de mesuré (un champ vide donne Number("") = 0, un texte NaN).
+export function kFromReading(amount, scu, maxBox) {
+  const ref = autoloadFee(scu, maxBox, 1);
+  if (!(ref > 0) || !(amount > 0)) return null;
+  return Math.round((amount / ref) * 1000) / 1000;
+}
+
+// Ce k est-il celui d'une station, ou d'une faute de frappe ? Ces bornes ne prétendent PAS connaître
+// le tarif des 159 terminaux jamais mesurés — elles écartent le DÉCALAGE DE VIRGULE, seule erreur de
+// saisie qui produise un coefficient d'apparence honnête : un zéro de trop (1 159 000 pour 1 159)
+// multiplie k par dix, un dernier chiffre oublié le divise par dix. Depuis la plage mesurée (1,0 à
+// Endgame, 1,4 à Ruin), le plus petit décalage possible donne 10 d'un côté, 0,14 de l'autre ; toute
+// borne entre ces deux valeurs les attrape. On prend ×4 et ÷4 autour de l'ancrage : dix fois l'écart
+// réellement observé entre les deux stations, et il reste plus du double de marge avant le premier
+// décalage. Hors bornes, l'appelant fait CONFIRMER, il ne refuse pas — une borne qui perdrait un
+// relevé véritablement surprenant serait pire que le tarif faux qu'elle corrige, et c'est justement
+// parce qu'elle ne coûte qu'un clic qu'on peut la serrer autant.
+export const K_PLAUSIBLE = { min: 0.25, max: 4 };
+export const kPlausible = (k) => k >= K_PLAUSIBLE.min && k <= K_PLAUSIBLE.max;
+
 // ---------- Contexte de frais : un point par terminal, une paire par chargement ----------
 // Tout le moteur reçoit ce contexte en PARAMÈTRE OPTIONNEL, et son absence (null) est le chemin
 // par défaut : sans lui, chaque fonction rend exactement les valeurs brutes qu'elle rendait avant
@@ -794,15 +818,66 @@ export function manifestsFrom(market, origin, destSystem, f, resolve, destTermin
     // un chiffre qui n'est pas celui qui classe le manifeste : les frais grossissent avec le volume,
     // donc le remplissage le plus chargé n'est pas toujours le plus rentable une fois déduits.
     // Une ligne dont les frais dépassent la marge fait perdre de l'argent : la charger quand même
-    // classerait ce manifeste sous un autre qui, lui, l'aurait laissée au sol. La place libérée ne
-    // se recycle pas — les candidates suivantes sont moins rentables, par construction du tri.
-    const evalue = (rempli) => {
-      const kept = fee ? rempli.lines.filter((l) => l.units * l.margin > lineHaulFee(l.units, l, fee)) : rempli.lines;
-      return { lines: kept, profit: fee ? manifestTotals(kept, fee).profit : rempli.profit };
+    // classerait ce manifeste sous un autre qui, lui, l'aurait laissée au sol. Mais une ligne ne se
+    // juge PAS seule, et c'est ce que faisait le filtre `units * margin > lineHaulFee` appliqué
+    // après coup (#41) : il ratait les deux moitiés de la question.
+    //   - La place de la ligne écartée n'était rendue à personne. Le tri classe sur la marge au SCU,
+    //     le filtre coupait sur la marge TOTALE, et les deux ne sont pas monotones l'un dans
+    //     l'autre : une petite ligne à très forte marge préempte de la place en tête de tri, puis se
+    //     fait écarter faute de couvrir la base de frais — 1 SCU de soute restait vide devant
+    //     1 337 SCU à quai.
+    //   - Une ligne rentable SEULE peut coûter au manifeste plus qu'elle ne rapporte : 1 SCU de
+    //     Methane gagne 667 net, mais prend sa place aux 739 du Nitrogen et paie une base de frais
+    //     de plus. Rentable, et pourtant à laisser au sol.
+    // D'où le seul critère juste : une ligne reste si le manifeste vaut plus AVEC elle que sans, ce
+    // qui suppose de rebâtir le chargement à chaque retrait — la place libérée retourne alors
+    // d'elle-même aux candidates suivantes. Le tour qui n'améliore rien s'arrête, et une candidate
+    // retirée ne revient jamais : la boucle est bornée par le nombre de candidates.
+    // Ça ne rend pas `fillCargo` optimal — le sac à dos à deux contraintes reste hors de portée.
+    // Ce qui est acquis : soute seule contrainte, un manifeste ne rapporte jamais moins que sa
+    // meilleure commodité seule (0 contre-exemple sur les 167 434 arcs de l'instantané). Sous
+    // budget bornant, c'est le budget qui joue la seconde contrainte et il en reste 16 sur 499 772.
+
+    // Remplit, puis retire les lignes qui ne couvrent même pas leurs propres frais (lineNet <= 0) —
+    // et recommence, parce que le retrait rend de la place et que les suivantes chargent davantage,
+    // ce qui peut à son tour rendre déficitaire une ligne qui tenait à plus petit volume.
+    // Ce verdict-là ne vaut QUE pour le chargement qui vient d'être bâti : il dépend du volume
+    // attribué, donc de qui d'autre est à bord. 126 SCU de Human Food Bars perdent 60 aUEC là où
+    // 128 en gagnent 200 — deux SCU de moins et la cargaison ne tient plus en caisses de 32. Le
+    // rejet reste donc LOCAL à cet appel, et `evalue` repart toujours des candidates au complet.
+    const remplir = (liste) => {
+      let restantes = liste;
+      for (;;) {
+        const rempli = fillCargo(restantes, f.cargo, budget);
+        const jetees = new Set();
+        const lines = rempli.lines.filter((l) => {
+          if (lineNet(l.units, l, fee) > 0) return true;
+          jetees.add(l.name);
+          return false;
+        });
+        if (!jetees.size) return { lines, profit: manifestTotals(lines, fee).profit };
+        restantes = restantes.filter((c) => !jetees.has(c.name));
+      }
     };
-    let meilleur = evalue(fillCargo([...items].sort(parMarge), f.cargo, budget));
+    const evalue = (ordre) => {
+      const candidates = [...items].sort(ordre);
+      if (!fee) return fillCargo(candidates, f.cargo, budget);
+      const laissees = new Set();                       // écartées pour de bon : une par tour, jamais reprises
+      let retenu = remplir(candidates);
+      for (;;) {
+        let mieux = null, sacrifiee = null;
+        for (const l of retenu.lines) {
+          const essai = remplir(candidates.filter((c) => c.name !== l.name && !laissees.has(c.name)));
+          if (!mieux || essai.profit > mieux.profit) { mieux = essai; sacrifiee = l.name; }
+        }
+        if (!mieux || mieux.profit <= retenu.profit) return retenu;
+        laissees.add(sacrifiee);
+        retenu = mieux;
+      }
+    };
+    let meilleur = evalue(parMarge);
     if (isFinite(budget)) {
-      const alt = evalue(fillCargo([...items].sort(parRendement), f.cargo, budget));
+      const alt = evalue(parRendement);
       if (alt.profit > meilleur.profit) meilleur = alt;
     }
     if (!meilleur.lines.length) continue;
@@ -1316,6 +1391,24 @@ export function sameIntent(a, b) {
   return a.length === b.length && a.every((l, i) => l.name === b[i].name && l.units === b[i].units);
 }
 
+// La composition en cours de la carte Manifeste vaut-elle encore pour la carte qu'on s'apprête à
+// peindre ? Elle porte sur un COUPLE de terminaux — c'est de LEURS prix, stocks et demandes que ses
+// lignes sont relues — donc elle survit à tout ce qui ne change pas ce couple : un prix corrigé, une
+// frappe dans la recherche, un vaisseau plus grand. La soute ne la borne pas : des SCU ajustés à la
+// main restent la décision de l'utilisateur, et le total « 120/32 SCU » la lui redit à l'écran.
+// Elle n'est ABANDONNÉE que lorsqu'une AUTRE route est demandée, parce que là c'est un geste.
+// `vue` décrit la carte demandée : `from` = { name, system } du terminal de départ affiché,
+// `dest` = { name, system } de l'arrivée forcée au champ (null s'il est vide), `destSystem` = le
+// filtre de système d'arrivée ("" s'il est vide).
+// Une composition SANS ligne en est une : vider le manifeste pour le recomposer à soi est un geste,
+// et lui rendre l'optimal au prochain rendu serait exactement le défaut qu'on corrige.
+export function manifestIntentSurvives(edit, vue) {
+  if (!edit || !Array.isArray(edit.lines)) return false;
+  if (edit.from !== vue.from.name || edit.fromSystem !== vue.from.system) return false;
+  if (vue.dest && (vue.dest.name !== edit.to || vue.dest.system !== edit.toSystem)) return false;
+  return !vue.destSystem || vue.destSystem === edit.toSystem;
+}
+
 // Retire un ARRÊT du parcours (stopIndex indexe les STATIONS, pas les jambes).
 // `bridge` = jambe de remplacement pour un arrêt du MILIEU, calculée par l'appelant depuis le
 // marché (elle reconnecte stations[stopIndex-1] à stations[stopIndex+1]) ; ignorée aux extrémités.
@@ -1358,11 +1451,12 @@ export function removeJourneyStop(journey, stopIndex, bridge) {
   };
 }
 
-// ---------- Le RANG d'une jambe, et ses TROIS porteurs ----------
-// Trois choses sont indexées par le rang d'une jambe : le manifeste ÉDITÉ, le 🔒 qui dit pourquoi
-// il l'est, et l'étiquette `leg` que le chargement pose sur les lots de la soute. Retirer un arrêt
-// renumérote les jambes : n'en décaler que deux les fait diverger. C'est le troisième, oublié, qui
-// rendait « ✓ chargé » une jambe dont le fret était déjà à bord — et un second clic la doublait.
+// ---------- Le RANG d'une jambe, et ses QUATRE porteurs ----------
+// Quatre choses sont indexées par le rang d'une jambe : le manifeste ÉDITÉ, le 🔒 qui dit pourquoi
+// il l'est, l'étiquette `leg` que le chargement pose sur les lots de la soute, et l'entrée du
+// REGISTRE des chargements (plus bas). Retirer un arrêt renumérote les jambes : n'en décaler que
+// trois les fait diverger. C'est d'en avoir oublié un que venait le double chargement — la jambe
+// renumérotée se croyait vide alors que son fret était à bord.
 
 // Nouvelle clé d'une jambe après un retrait d'arrêt : la même, renumérotée — ou `null` si la jambe
 // a disparu du parcours. Une clé illisible ressort INTACTE : on ne renumérote pas ce qu'on n'a pas
@@ -1379,13 +1473,16 @@ export function cleApresRetrait(cle, { removedFrom, removedCount, insertedCount 
 
 const sansEtiquette = (lot) => { const { leg, ...reste } = lot; return reste; };
 
-// Réindexe LES TROIS PORTEURS d'un seul appel — c'est tout l'intérêt : ils ne peuvent plus
+// Réindexe LES QUATRE PORTEURS d'un seul appel — c'est tout l'intérêt : ils ne peuvent plus
 // diverger, et un appelant ne peut plus en oublier un. Les STORES perdent l'entrée d'une jambe
 // disparue (le plan qu'elle portait n'existe plus) ; les LOTS, jamais : le fret est réellement à
 // bord. On leur retire seulement leur étiquette — ils restent en soute, visibles, vendables, mais
 // rattachés à aucune jambe. Les recoller au pont A→C serait pire : sa cargaison est RECALCULÉE, le
 // voyage prétendrait l'avoir chargée, et son vrai chargement deviendrait impossible.
-export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrait) {
+// Le registre suit la même règle que les stores : la déduction d'une jambe disparue reste posée sur
+// le rayon — le fret est parti avec, il n'est pas revenu — mais plus rien ne peut l'annuler, comme
+// pour les lots qu'on vient de délier.
+export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [], chargements = {} }, retrait) {
   const decale = (store) => {
     const suivant = {};
     for (const [k, v] of Object.entries(store)) {
@@ -1397,6 +1494,7 @@ export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrai
   return {
     edits: decale(edits),
     pins: decale(pins),
+    chargements: decale(chargements),
     lots: lots.map((l) => {
       if (l.leg == null) return l;
       const n = cleApresRetrait(l.leg, retrait);
@@ -1411,6 +1509,83 @@ export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrai
 // corrigée pour les manifestes édités, à laquelle les étiquettes avaient échappé.
 export function detacherLotsDeJambe(lots) {
   return lots.map((l) => (l.leg == null ? l : sansEtiquette(l)));
+}
+
+// ---------- Le REGISTRE des chargements : quelle jambe a pris quoi, et où ----------
+// « Cette jambe est chargée » se DÉDUISAIT de la présence de ses lots en soute. Or la soute se vide
+// par bien d'autres chemins que « annuler » — son ✕, une vente, la vente implicite du départ — et
+// aucun ne rend quoi que ce soit au rayon. La jambe repassait donc à « ✓ chargé », le clic suivant
+// redéduisait, et la valeur d'origine du rayon partait avec les lots qui la portaient (100 → 40 → 0).
+// Le registre porte l'état EXPLICITEMENT, et il survit au fret : le fret peut quitter la soute, ce
+// qu'on doit au rayon reste dû.
+//
+//   { "<rang>|<from>|<to>": [ { name, terminal, ref, units }, … ] }
+//
+// Une entrée = une jambe chargée, même avec zéro prise (rayon au stock inconnu : rien à déduire,
+// mais la jambe est bel et bien engagée).
+//
+// `ref` est le stock du rayon AVANT toute déduction de jambe. C'est la TROISIÈME forme, la seule qui
+// tienne avec DEUX chargements au même point :
+//   - l'instantané absolu (« annuler rend les 100 d'avant ») efface la prise de l'autre jambe, et la
+//     station reproprose un stock fantôme qui est toujours à bord ;
+//   - le relatif (« stock effectif + units ») repart d'un chiffre que stockApres a pu écrêter à 0,
+//     et rend alors au rayon plus qu'il n'a jamais annoncé ;
+//   - la référence MOINS la somme des prises encore en cours tient dans les deux cas.
+
+// Ce qu'un point d'achat doit annoncer : sa `ref` (null si plus aucune jambe n'y prend rien) et le
+// total `pris` par les jambes encore chargées. `sauf` exclut une jambe — celle qu'on annule.
+// La `ref` retenue est la PLUS GRANDE : deux prises au même point la partagent par construction,
+// sauf après migration d'une soute ancienne où chaque lot portait le stock déjà amputé qu'il avait
+// lu. La plus grande est alors la plus ancienne, donc ce que la station annonçait vraiment.
+export function soldeDuPoint(chargements, name, terminal, sauf = null) {
+  let ref = null, pris = 0;
+  for (const [cle, prises] of Object.entries(chargements || {})) {
+    if (cle === sauf || !Array.isArray(prises)) continue;
+    for (const p of prises) {
+      if (p.name !== name || p.terminal !== terminal || p.ref == null) continue;
+      if (ref == null || p.ref > ref) ref = p.ref;
+      pris += Math.max(0, Math.floor(p.units || 0));
+    }
+  }
+  return { ref, pris };
+}
+
+export function poserChargement(chargements, cle, prises) {
+  return {
+    ...chargements,
+    [cle]: (prises || []).map((p) => ({ name: p.name, terminal: p.terminal, ref: p.ref, units: p.units })),
+  };
+}
+
+export function retirerChargement(chargements, cle) {
+  const { [cle]: _parti, ...reste } = chargements || {};
+  return reste;
+}
+
+// Une soute écrite AVANT le registre : l'état vivait dans la présence des lots, et le stock d'avant
+// dans leur champ `avant`. On reconstruit le registre à partir d'eux — sans quoi une jambe déjà
+// chargée repasserait à « ✓ chargé » au premier rechargement de page, chez un utilisateur qui n'a
+// rien touché. Aucune correction n'est écrite : on ne fait que retrouver qui a pris quoi.
+// `avant` est ensuite retiré des lots — le registre le porte, et deux sources divergeraient.
+// Renvoie { chargements, lots, change } ; `change` faux = rien à persister.
+export function migrerChargements(chargements, lots) {
+  const connus = chargements || {};
+  const source = lots || [];
+  const ajout = {};
+  let vieux = false;
+  for (const l of source) {
+    if ("avant" in l) vieux = true;
+    if (l.leg == null || connus[l.leg]) continue; // le registre existant fait foi sur ses jambes
+    const prises = ajout[l.leg] || (ajout[l.leg] = []);
+    if (l.avant == null) continue;                // rien de déductible : la jambe est chargée, sans prise
+    prises.push({ name: l.name, terminal: l.from, ref: l.avant, units: l.units || 0 });
+  }
+  const suivant = Object.keys(ajout).length ? { ...connus, ...ajout } : connus;
+  return {
+    chargements: suivant,
+    lots: vieux ? source.map((l) => { const { avant: _a, ...reste } = l; return reste; }) : source,
+    change: vieux || suivant !== connus,
+  };
 }
 
 // Déplace la position courante (bornée à 0..legs.length).
