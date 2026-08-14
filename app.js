@@ -3,7 +3,7 @@
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
   tripMinutes, ageDays, pairAge,
-  normalizeScores, scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible,
   ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
@@ -41,9 +41,12 @@ const cargoBoxesLabel = (lines, maxBox) => boxesLabel(cargoBoxes(lines, maxBox))
 let ROUTES = [];
 let LOOPS = [];
 let view = "routes"; // "routes" | "loops"
-let sortKey = "score";
+// Tri par défaut : le PROFIT NET par voyage (ADR-005). Le score composite classait mal — la route
+// la plus rentable de l'instantané tombait au 8e rang — et le profit horaire repose sur une durée
+// fictive pour 49 % des routes, faute de distance. Un montant, lui, ne ment pas.
+let sortKey = "profit";
 let sortDir = -1; // -1 = décroissant, 1 = croissant
-let loopSortKey = "score";
+let loopSortKey = "profit";
 let loopSortDir = -1;
 // Lignes actuellement affichées (dans l'ordre du DOM) pour déplier le schéma de trajet.
 let shownRoutes = [], shownEnroute = [], shownLoops = [], shownMulti = [];
@@ -154,10 +157,6 @@ function suspectTag(r) {
   const why = stale ? "relevé de plus de 10 jours" : "prix très éloigné de la moyenne UEX";
   return ` <span class="suspect" title="À vérifier en jeu : ${why}">⚠ à vérifier</span>`;
 }
-
-// Score composite (tri « intelligent ») : combine la valeur (profit/heure si borné,
-// sinon marge) avec la fiabilité — fraîcheur × disponibilité. Le calcul vit dans
-// rawScoreOf (logic.mjs) ; normalizeScores normalise ensuite la liste sur 0-100.
 
 // ---------- Corrections locales (prix & stock) ----------
 // L'utilisateur peut corriger un prix ou un volume (stock à l'achat / demande à la vente)
@@ -398,11 +397,15 @@ function evaluate(r, f) {
   return { ...r, buy, sell, buyPrice: buy.price, sellPrice: sell.price, feeInfo, ...metrics, ...net };
 }
 
-// Cellule visuelle du score : mini-barre + valeur. La barre est bornée à [0, 100] (scoreBarWidth),
-// le nombre affiché reste le score réel — y compris négatif, qui dit « cette route perd de l'argent ».
-function scoreCell(score) {
-  const tier = score >= 70 ? "s-good" : score >= 40 ? "s-ok" : "s-low";
-  return `<div class="score-cell"><span class="scorebar ${tier}"><i style="width:${scoreBarWidth(score)}%"></i></span><b>${score}</b></div>`;
+// Cellule de FIABILITÉ : mini-barre + valeur, de 10 à 100 (ADR-005). Ce n'est plus un classement
+// mais ce qu'on sait de la donnée — fraîcheur du relevé × part de volume publiée. Elle ne trie plus
+// par défaut : c'est le profit net qui le fait. `scoreBarWidth` borne le dessin par ceinture (#39),
+// même si la fiabilité ne peut plus sortir de [0, 100] par construction.
+function fiabiliteCell(f, age, part) {
+  const tier = f >= 70 ? "s-good" : f >= 40 ? "s-ok" : "s-low";
+  const quoi = age == null ? "date du relevé inconnue" : `relevé vieux de ${Math.round(age)} j`;
+  const titre = `Fiabilité ${f}/100 — ${quoi}, ${Math.round(part * 100)} % du volume publié par UEX. N'entre pas dans le tri.`;
+  return `<div class="score-cell" title="${esc(titre)}"><span class="scorebar ${tier}"><i style="width:${scoreBarWidth(f)}%"></i></span><b>${f}</b></div>`;
 }
 
 // Valeur éditable (clic pour corriger localement). side = "buy"|"sell", field = "price"|"vol".
@@ -460,7 +463,6 @@ function render() {
 
   let rows = ROUTES.filter((r) => routePasses(r, f)).map((r) => evaluate(r, f));
 
-  normalizeScores(rows);
   rows.sort(bySort(sortKey, sortDir));
 
   shownRoutes = rows;
@@ -497,7 +499,6 @@ function renderMulti(f) {
   // TRONQUE à 300 trajets, un trajet meilleur en net serait donc coupé avant d'atteindre le tableau.
   const trips = multiTrips(MARKET, f, effVals, 300, f.multiAll ? 1 : 2, feeResolver(f))
     .map((t) => ({ ...t, feeInfo: feeCtx(f, t.origin.name, t.dest.name, t.origin, t.dest), ...tripMetrics(t) }));
-  normalizeScores(trips);
   trips.sort(bySort(sortKey, sortDir));
   shownMulti = trips;
   $("rows").innerHTML = trips.map(multiRowHTML).join("");
@@ -538,7 +539,7 @@ function multiRowHTML(t, i) {
           <div class="loc-badges">${sysBadge(t.dest.system)}${outpostTag(t.dest.outpost)}</div>
           <div class="loc-sub">${esc(t.dest.planet)}</div>
         </td>
-        <td>${scoreCell(t.score)}</td>
+        <td>${fiabiliteCell(t.fiabilite, t.age, t.partVolume)}</td>
         <td class="num" title="${withFeeText("Marge moyenne pondérée par SCU chargé", fc)}">${fmtFee(t.margin, t.fees)}</td>
         <td class="num roi-badge"${fc.attr}>${t.fees > 0 ? "≈ " : ""}${t.roi}%</td>
         <td class="num"${t.units ? ` title="Caisses : ${cargoBoxesLabel(t.lines, t.origin.maxBox)}"` : ""}>${fmt(t.units)}</td>
@@ -593,7 +594,7 @@ function routeRowHTML(r, i) {
           <div class="loc-sub">${esc(r.sell.planet)} · ${editv(r.commodity, r.sell.terminal, "sell", "price", r.sell.price, r.sell.ovPrice, r.sell.updated)} aUEC · ${statusDot(r.sell.status, "sell")}<span class="stock" title="Demande à la vente = capacité restante du terminal (relevé UEX)">demande ${editv(r.commodity, r.sell.terminal, "sell", "vol", r.sell.demand, r.sell.ovVol, r.sell.updated)} SCU</span></div>
           <div class="loc-fresh">${freshChip(r.sell.updated)}</div>
         </td>
-        <td>${scoreCell(r.score)}</td>
+        <td>${fiabiliteCell(r.fiabilite, r.age, r.partVolume)}</td>
         <td class="num"${fc.attr}>${fmtFee(r.margin, r.fees)}</td>
         <td class="num roi-badge"${fc.attr}>${r.fees > 0 ? "≈ " : ""}${r.roi}%</td>
         <td class="num"${r.units ? ` title="Caisses : ${scuBoxesLabel(r.units, maxBox)}"` : ""}>${fmt(r.units)}</td>
@@ -629,7 +630,6 @@ function renderLoops() {
 
   let rows = LOOPS.filter((l) => loopPasses(l, f)).map((l) => evaluateLoop(l, f));
 
-  normalizeScores(rows);
   rows.sort(bySort(loopSortKey, loopSortDir));
   // Compagnon : remonte en tête (sans filtrer) les boucles qui partent de la FIN du parcours —
   // c'est le point d'extension (une boucle depuis là s'enchaîne au parcours). Cohérent avec addToJourney.
@@ -663,7 +663,7 @@ function renderLoops() {
           <div class="commodity-cell">${commodityIcon(l.back.kind)}<span>${esc(l.back.commodity)}${illegalTag(l.back.illegal)}</span></div>
           <div class="loc-sub">${fmt(l.back.buyPrice)} → ${fmt(l.back.sellPrice)} · marge ${fmt(l.back.margin)}</div>
         </td>
-        <td>${scoreCell(l.score)}</td>
+        <td>${fiabiliteCell(l.fiabilite, l.age, l.partVolume)}</td>
         <td class="num">${fmt(l.loopMargin)}</td>
         <td class="num">${l.units == null ? "—" : fmt(l.unitsOut) + " + " + fmt(l.unitsBack)}</td>
         <td class="num profit"${fc.attr}>${fmtFee(l.profit, l.fees)}${fc.mark}</td>
@@ -1262,7 +1262,6 @@ function renderEnRoute() {
     .filter((r) => routePasses(r, ef))
     .map((r) => evaluate(r, f));
 
-  normalizeScores(deals);
   deals.sort(bySort(sortKey, sortDir));
   shownEnroute = deals;
   $("enrouteRows").innerHTML = deals.map(routeRowHTML).join("");

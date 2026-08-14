@@ -437,17 +437,33 @@ test("Compagnon de voyage : les commodités transportées sont surlignées dans 
   await expect(page.locator("#commGrid .comm-tile.carried .tile-carried").first()).toBeVisible();
 });
 
+// Démarre un voyage depuis la première ligne QUI PROPOSE UNE SUGGESTION D'ARRÊT. Ces tests visaient
+// la première ligne du tableau, donc une route précise — et le tri par défaut ayant changé pour le
+// profit net (ADR-005), cette route n'a plus de suite rentable dans les filtres par défaut. Ils
+// testaient l'ordre du classement en croyant tester le compagnon de voyage. On balaie donc les
+// premières lignes jusqu'à en trouver une qui a des suggestions, et on échoue franchement si aucune
+// n'en a — ce qui reste une vraie régression du dispositif.
+async function voyageAvecSuggestion(page, essais = 8) {
+  for (let i = 0; i < essais; i++) {
+    await page.locator("#rows tr").nth(i).locator(".journey-pick").click();
+    const sug = page.locator("#journeyCard .jstop-suggest").first();
+    if (await sug.isVisible().catch(() => false)) return;
+    await sug.waitFor({ state: "visible", timeout: 1500 }).catch(() => {});
+    if (await sug.isVisible().catch(() => false)) return;
+    await page.locator("#journeyClear").click().catch(() => {});
+  }
+  throw new Error(`aucune des ${essais} premières lignes ne propose d'arrêt suivant`);
+}
+
 test("Compagnon de voyage : ajouter un arrêt (suggestion) étend le parcours", async ({ page }) => {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jstop-suggest").first()).toBeVisible({ timeout: 8000 });
+  await voyageAvecSuggestion(page);
   const stopsBefore = await page.locator("#journeyCard .jstep").count();
   await page.locator("#journeyCard .jstop-suggest").first().click();
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(stopsBefore + 1);
 });
 
 test("Compagnon de voyage : retirer un arrêt du milieu reconnecte le parcours", async ({ page }) => {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jstop-suggest").first()).toBeVisible({ timeout: 8000 });
+  await voyageAvecSuggestion(page);
   await page.locator("#journeyCard .jstop-suggest").first().click();
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(3); // 3 arrêts
   const first = (await page.locator("#journeyCard .jstep").nth(0).innerText()).trim();
@@ -1779,7 +1795,9 @@ test("permalien : une ancre quelconque n'est pas un état — les défauts du HT
 // ---------- Accessibilité : tri au clavier, activation des jambes, aria, noms accessibles (#9, #57, #58, #59) ----------
 
 test("tri : Entrée puis Espace sur un en-tête trient la table, et aria-sort suit (#58)", async ({ page }) => {
-  const score = page.locator('#routes th[data-sort="score"]');
+  // Le tri par défaut est le PROFIT NET depuis l'ADR-005 — plus le score composite, qui classait
+  // la route la plus rentable de l'instantané au 8e rang.
+  const score = page.locator('#routes th[data-sort="profit"]');
   const commodite = page.locator('#routes th[data-sort="commodity"]');
   await expect(score).toHaveAttribute("aria-sort", "descending"); // tri par défaut, annoncé
   await expect(commodite).toHaveAttribute("aria-sort", "none");
@@ -1801,13 +1819,15 @@ test("tri : Entrée puis Espace sur un en-tête trient la table, et aria-sort su
 
 test("tri : les en-têtes de Boucles sont eux aussi actionnables au clavier (#58)", async ({ page }) => {
   await page.click("#viewLoops");
-  const score = page.locator('#loops th[data-sort-loop="score"]');
+  // Le tri par défaut est le profit depuis l'ADR-005 ; on vérifie qu'il se DÉPLACE sur une autre
+  // colonne, donc il en faut bien deux distinctes.
   const profit = page.locator('#loops th[data-sort-loop="profit"]');
-  await expect(score).toHaveAttribute("aria-sort", "descending");
-  await profit.press("Enter");
+  const fiabilite = page.locator('#loops th[data-sort-loop="fiabilite"]');
   await expect(profit).toHaveAttribute("aria-sort", "descending");
-  await expect(score).toHaveAttribute("aria-sort", "none");
-  await expect(profit).toHaveClass(/sorted-desc/); // l'indicateur ▾ visuel suit la même colonne
+  await fiabilite.press("Enter");
+  await expect(fiabilite).toHaveAttribute("aria-sort", "descending");
+  await expect(profit).toHaveAttribute("aria-sort", "none");
+  await expect(fiabilite).toHaveClass(/sorted-desc/); // l'indicateur ▾ visuel suit la même colonne
 });
 
 test("jambe : Entrée puis Espace sur l'en-tête déplient et replient l'éditeur, aria-expanded suit (#9)", async ({ page }) => {

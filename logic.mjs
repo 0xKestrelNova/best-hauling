@@ -27,19 +27,27 @@ export function freshnessFactor(age) {
   if (age == null) return 0.5;
   return Math.max(0.2, 1 - age / 14);
 }
-// Facteur de disponibilité (saturation sur min(stock, demande)).
-// `demand` null = capacité inconnue chez UEX (`scu_sell` n'est renseigné que sur une minorité
-// de points de vente) : on ne juge alors que le stock, comme le fait déjà `computeUnits` qui
-// n'applique aucun plafond dans ce cas. Un 0 CONNU reste une saturation -> pénalité maximale.
-export function availabilityFactor(stock, demand) {
-  const s = stock || 0;
-  if (demand == null) return s ? volumeFactor(s) : 0.65;
-  if (!s && !demand) return 0.65;
-  return volumeFactor(Math.min(s, demand));
-}
-// Saturation douce d'un volume : 0.3 à vide -> 1.0 asymptotique (0.65 à 120 SCU).
-function volumeFactor(m) {
-  return 0.3 + 0.7 * (m / (m + 120));
+// Certitude du volume : quelle PART du chargement repose sur une capacité réellement publiée.
+//
+// Remplace l'ancien `availabilityFactor`, qui punissait les PETITS volumes (ADR-005). Deux raisons
+// de l'abandonner, mesurées : `computeUnits` plafonne déjà les unités par le stock, donc le profit
+// est déjà amputé — le remultiplier comptait la même contrainte deux fois ; et en multi-commodité,
+// une ligne de bouchage de 2 SCU sur 93 faisait tomber le facteur de 0,602 à 0,311, divisant la
+// note par 1,93 pour 0,2 % du profit.
+//
+// Ce qu'on ignore vraiment n'est pas la petitesse, c'est l'ABSENCE de donnée : 494 points d'achat
+// sur 494 publient leur stock (100 %), contre 307 points de vente sur 1 879 (16 %) pour la demande.
+// Une demande inconnue, c'est un pari sur ce que le comptoir reprendra.
+//
+// PLANCHER À 0,5, et il est délibéré : une demande non publiée n'est pas une donnée nulle, c'est une
+// donnée manquante — le stock d'achat, lui, reste connu, donc le chargement est à moitié vérifié.
+// Sans ce plancher, 81 % des routes afficheraient une fiabilité de 0, ce qui ne distinguerait plus
+// rien.
+export const CERTITUDE_PLANCHER = 0.5;
+export function certitudeVolume(scuConnus, scuTotal) {
+  if (!(scuTotal > 0)) return CERTITUDE_PLANCHER;
+  const part = Math.max(0, Math.min(1, scuConnus / scuTotal));
+  return CERTITUDE_PLANCHER + (1 - CERTITUDE_PLANCHER) * part;
 }
 // Volume le plus contraignant de deux segments, en ignorant les capacités inconnues
 // (`Math.min(null, x)` vaudrait 0 et ferait passer un segment inconnu pour saturé).
@@ -54,31 +62,23 @@ export function tighterVolume(a, b) {
 export function profitPerHour(profit, minutes) {
   return profit == null ? null : (profit * 60) / minutes;
 }
-// Score brut = valeur × fiabilité. Valeur = profit/heure si la route est bornée
-// (profitHour connu), sinon la marge brute (fallbackMargin). Fiabilité = fraîcheur × disponibilité.
-export function rawScoreOf(profitHour, fallbackMargin, age, stock, demand) {
-  const base = profitHour == null ? fallbackMargin : profitHour;
-  return base * freshnessFactor(age) * availabilityFactor(stock, demand);
+// FIABILITÉ d'une ligne, de 10 à 100. Ce n'est plus un classement : c'est ce qu'on sait de la
+// donnée sur laquelle le chiffre repose (ADR-005). Le tri, lui, se fait sur le profit net.
+//
+// L'ancien score multipliait le profit par ces mêmes facteurs, avec un correctif allant jusqu'à
+// 16,7× appliqué à un montant qui s'étale sur plusieurs ordres de grandeur : la route la plus
+// rentable de l'instantané (1 759 500 aUEC) tombait ainsi au 8e rang, derrière une route qui
+// rapporte 2,7 fois moins. On sépare donc les deux questions au lieu de les mélanger.
+export function fiabiliteDe(age, scuConnus, scuTotal) {
+  return Math.round(100 * freshnessFactor(age) * certitudeVolume(scuConnus, scuTotal));
 }
 
-// ---------- Score ----------
-// Rapporte les scores bruts d'une liste au meilleur d'entre eux : 100 = le meilleur. Le haut est
-// donc borné, le BAS ne l'est pas — une ligne dont le profit/heure est négatif (les frais mangent
-// la marge) reçoit un score négatif, et c'est voulu : le signe est une information, on ne l'écrase
-// pas ici. C'est le DESSIN qui se borne, dans scoreBarWidth juste en dessous.
-export function normalizeScores(rows) {
-  const max = rows.reduce((m, r) => Math.max(m, r.rawScore || 0), 0);
-  rows.forEach((r) => (r.score = max > 0 ? Math.round((r.rawScore / max) * 100) : 0));
-  return rows;
-}
-
-// Largeur de la mini-barre d'un score, en pourcentage. On borne le DESSIN, jamais la MESURE :
-// un score négatif (route dont les frais d'autoload dépassent la marge) est une information vraie
-// dont le tri se sert pour classer « perd un peu » avant « perd beaucoup ». Seul son rendu était
-// faux — et spectaculairement : `width:-1441%` est une déclaration CSS invalide, donc ignorée,
-// donc l'élément retombait en `width:auto`, qui remplit son parent. La pire ligne du tableau
-// portait ainsi la plus grosse barre. Un score absent vaut 0 plutôt qu'un `width:NaN%`, qui
-// serait invalide de la même façon.
+// Largeur de la mini-barre de fiabilité, en pourcentage. On borne le DESSIN, jamais la MESURE.
+// Le garde date de #39, quand le score composite pouvait devenir négatif : `width:-1441%` est une
+// déclaration CSS invalide, donc ignorée, donc l'élément retombait en `width:auto`, qui remplit son
+// parent — la pire ligne du tableau portait ainsi la plus grosse barre. La fiabilité, elle, ne peut
+// plus sortir de [0, 100] par construction (ADR-005) ; ce garde reste en CEINTURE, et parce qu'un
+// score absent doit valoir 0 plutôt qu'un `width:NaN%` qui retomberait dans le même piège.
 export function scoreBarWidth(score) {
   return Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 0;
 }
@@ -146,7 +146,7 @@ export function computeUnits(price, stock, demand, f, demandKnown = false) {
 // Cœur de calcul PUR d'une route dont les prix/volumes sont déjà résolus (corrections appliquées
 // en amont). m = { buyPrice, buyStock, sellDemand, margin, distance, sameSystem, buyUpdated,
 // sellUpdated, demandKnown }. Renvoie units/investment (null si non bornés) + profit/minutes/
-// profitHour/rawScore. `evaluate` (app.js) applique d'abord les corrections puis délègue ici.
+// profitHour/fiabilite. `evaluate` (app.js) applique d'abord les corrections puis délègue ici.
 // `autoload` = { buy, sell } (points de frais résolus par l'appelant, qui seul connaît les
 // terminaux) ; null = interrupteur inactif -> `fees` à 0 et profit BRUT, comme avant.
 // Une route non bornée n'a pas de volume : aucun frais n'y est calculable (son profit est déjà
@@ -158,11 +158,17 @@ export function routeMetrics(m, f, autoload = null) {
   const profit = bounded ? units * m.margin - fees : null;
   const minutes = tripMinutes(m.distance, !m.sameSystem);
   const profitHour = profitPerHour(profit, minutes);
-  const rawScore = rawScoreOf(profitHour, m.margin, pairAge(m.buyUpdated, m.sellUpdated), m.buyStock, m.sellDemand);
+  // Une route ne porte qu'une commodité : sa demande est publiée, ou elle ne l'est pas. La certitude
+  // vaut donc 1 ou son plancher, sans nuance possible.
+  const scu = bounded ? units : 0;
+  const age = pairAge(m.buyUpdated, m.sellUpdated);
+  const partVolume = m.sellDemand == null ? 0 : 1;
+  const fiabilite = fiabiliteDe(age, partVolume * scu, scu);
   return {
+    age, partVolume,
     units: bounded ? units : null,
     investment: bounded ? units * m.buyPrice : null,
-    profit, minutes, profitHour, rawScore, fees,
+    profit, minutes, profitHour, fiabilite, fees,
   };
 }
 
@@ -184,17 +190,22 @@ export function loopMetrics(out, back, distance, cross, f, autoload = null) {
     : 0;
   const profit = bounded ? uOut * out.margin + uBack * back.margin - fees : null;
   const profitHour = profitPerHour(profit, minutes);
-  const rawScore = rawScoreOf(
-    profitHour, loopMargin, pairAge(out.updated, back.updated),
-    Math.min(out.stock, back.stock), tighterVolume(out.demand, back.demand)
-  );
+  // Une boucle a DEUX segments, donc deux demandes qui peuvent être publiées indépendamment : la
+  // certitude se pondère par les SCU de chaque jambe plutôt que de retenir la plus contrainte —
+  // c'est précisément la logique du minimum que l'ADR-005 abandonne.
+  const scuOut = bounded ? uOut : 0, scuBack = bounded ? uBack : 0;
+  const connus = (out.demand == null ? 0 : scuOut) + (back.demand == null ? 0 : scuBack);
+  const age = pairAge(out.updated, back.updated);
+  const total = scuOut + scuBack;
+  const partVolume = total > 0 ? connus / total : 0;
+  const fiabilite = fiabiliteDe(age, connus, total);
   return {
-    loopMargin,
+    loopMargin, age, partVolume,
     unitsOut: bounded ? uOut : null,
     unitsBack: bounded ? uBack : null,
     units: bounded ? uOut + uBack : null,
     investment: bounded ? Math.max(uOut * out.buyPrice, uBack * back.buyPrice) : null,
-    profit, minutes, profitHour, rawScore, fees,
+    profit, minutes, profitHour, fiabilite, fees,
   };
 }
 
@@ -909,7 +920,7 @@ export function bestManifest(market, origin, destSystem, f, resolve, destTermina
 }
 
 // ---------- Trajets MULTI-COMMODITÉ (vue « Trajets », coche « Multi commodité ») ----------
-// Champs dérivés d'un trajet multi-commodité, à la forme attendue par bySort/normalizeScores et
+// Champs dérivés d'un trajet multi-commodité, à la forme attendue par bySort et
 // les colonnes du tableau. La marge est la marge MOYENNE pondérée par SCU (profit / SCU chargés).
 // Distance exacte indisponible hors routes.json -> tripMinutes(0, cross), comme « En route ».
 // Les frais viennent du trajet lui-même (`trip.fee`, posé par manifestsFrom) : tripMetrics est la
@@ -929,21 +940,23 @@ export function tripMetrics(trip) {
   const marginGross = scu > 0 ? brut / scu : 0;
   const margin = scu > 0 ? profit / scu : 0;
   const roi = invest > 0 ? Math.round((profit / invest) * 1000) / 10 : 0;
-  // Fiabilité : le relevé le PLUS VIEUX du chargement et les volumes les plus contraints.
-  let age = null, stock = Infinity, demand = Infinity;
+  // Fiabilité : le relevé le PLUS VIEUX du chargement, et la part des SCU dont la demande est
+  // publiée. C'est ici que l'ADR-005 change le plus : on ne retient plus le MINIMUM des stocks, qui
+  // laissait une ligne de bouchage de 2 SCU sur 93 diviser la note par 1,93 pour 0,2 % du profit.
+  let age = null, scuConnus = 0;
   for (const l of trip.lines) {
     const a = pairAge(l.buyUpdated, l.sellUpdated);
     if (a != null && (age == null || a > age)) age = a;
-    stock = Math.min(stock, l.stock == null ? Infinity : l.stock);
-    demand = Math.min(demand, l.demand == null ? Infinity : l.demand);
+    if (l.demand != null) scuConnus += l.units || 0;
   }
-  // demand resté à Infinity = aucune ligne n'a de capacité connue -> null (inconnu), pas 0 (saturé).
-  const rawScore = rawScoreOf(profitHour, margin, age, Number.isFinite(stock) ? stock : 0, Number.isFinite(demand) ? demand : null);
+  const partVolume = scu > 0 ? scuConnus / scu : 0;
+  const fiabilite = fiabiliteDe(age, scuConnus, scu);
   // commodity/buyPrice/sellPrice : valeurs représentatives pour que le tri par colonne du tableau
   // « Trajets » reste utilisable en mode multi (ligne de tête = plus grosse marge, prix moyens/SCU).
   const buyPrice = scu > 0 ? invest / scu : 0;
   return {
-    units: scu, investment: invest, profit, margin, marginGross, roi, minutes, profitHour, rawScore, fees,
+    age, partVolume,
+    units: scu, investment: invest, profit, margin, marginGross, roi, minutes, profitHour, fiabilite, fees,
     nLines: trip.lines.length, commodity: trip.lines[0] ? trip.lines[0].name : "",
     buyPrice, sellPrice: buyPrice + margin,
   };

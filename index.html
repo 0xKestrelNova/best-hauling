@@ -288,12 +288,12 @@
                   <th data-sort="commodity" tabindex="0" aria-sort="none">Commodité</th>
                   <th data-sort="buyPrice" tabindex="0" aria-sort="none">Acheter</th>
                   <th data-sort="sellPrice" tabindex="0" aria-sort="none">Vendre</th>
-                  <th data-sort="score" class="sorted-desc" tabindex="0" aria-sort="descending" title="Score de fiabilité : rentabilité × fraîcheur × disponibilité. 100 = meilleur de la liste.">Score</th>
+                  <th data-sort="fiabilite" tabindex="0" aria-sort="none" title="Fiabilité de la donnée : fraîcheur du relevé × part du volume publiée par UEX. 100 = donnée sûre. N'entre pas dans le tri — le classement se fait sur le profit net.">Fiabilité</th>
                   <th data-sort="margin" class="num" tabindex="0" aria-sort="none">Marge/SCU</th>
                   <th data-sort="roi" class="num" tabindex="0" aria-sort="none">ROI</th>
                   <th data-sort="units" class="num" tabindex="0" aria-sort="none" title="Unités à acheter — plafonnées par le stock, la demande et le budget">Unités</th>
                   <th data-sort="investment" class="num" tabindex="0" aria-sort="none" title="Coût total de l'achat">Coût</th>
-                  <th data-sort="profit" class="num" tabindex="0" aria-sort="none" title="Profit par voyage">Profit</th>
+                  <th data-sort="profit" class="num sorted-desc" tabindex="0" aria-sort="descending" title="Profit par voyage, net des frais. C'est le tri par défaut (ADR-005).">Profit</th>
                   <th data-sort="profitHour" class="num" tabindex="0" aria-sort="none" title="Profit par heure — le temps estimé se lit en infobulle de chaque cellule">Profit/h</th>
                 </tr>
               </thead>
@@ -306,10 +306,10 @@
                   <th>Boucle&nbsp;⇄</th>
                   <th>Aller</th>
                   <th>Retour</th>
-                  <th data-sort-loop="score" class="sorted-desc" tabindex="0" aria-sort="descending" title="Score de fiabilité : rentabilité × fraîcheur × disponibilité. 100 = meilleure de la liste.">Score</th>
+                  <th data-sort-loop="fiabilite" tabindex="0" aria-sort="none" title="Fiabilité de la donnée : fraîcheur du relevé × part du volume publiée par UEX. 100 = donnée sûre. N'entre pas dans le tri — le classement se fait sur le profit net.">Fiabilité</th>
                   <th data-sort-loop="loopMargin" class="num" tabindex="0" aria-sort="none" title="Marge de la boucle entière, par SCU">Marge/SCU</th>
                   <th data-sort-loop="units" class="num" tabindex="0" aria-sort="none">Unités (A+R)</th>
-                  <th data-sort-loop="profit" class="num" tabindex="0" aria-sort="none" title="Profit de la boucle entière">Profit</th>
+                  <th data-sort-loop="profit" class="num sorted-desc" tabindex="0" aria-sort="descending" title="Profit de la boucle entière, net des frais. C'est le tri par défaut (ADR-005).">Profit</th>
                   <th data-sort-loop="profitHour" class="num" tabindex="0" aria-sort="none" title="Profit par heure — le temps estimé se lit en infobulle de chaque cellule">Profit/h</th>
                 </tr>
               </thead>
@@ -322,7 +322,7 @@
                   <th>Commodité</th>
                   <th>Acheter (départ)</th>
                   <th>Vendre</th>
-                  <th>Score</th>
+                  <th title="Fiabilité de la donnée : fraîcheur du relevé × part du volume publiée par UEX. 100 = donnée sûre. N'entre pas dans le tri — le classement se fait sur le profit net.">Fiabilité</th>
                   <th class="num">Marge/SCU</th>
                   <th class="num">ROI</th>
                   <th class="num" title="Unités à acheter — plafonnées par le stock, la demande et le budget">Unités</th>
