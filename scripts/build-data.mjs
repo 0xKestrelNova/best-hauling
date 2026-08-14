@@ -8,6 +8,7 @@
 import { writeFile, mkdir, appendFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { VERSION, commitCourt } from "./version.mjs";
 
 const API = "https://api.uexcorp.uk/2.0";
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "data");
@@ -483,6 +484,12 @@ async function main() {
     loops: topLoops.length,
     systems,
     data_signature: signature, // pour le rebuild conditionnel du prochain run
+    // Estampille de déploiement. La version vient de package.json via la source unique
+    // (scripts/version.mjs) ; le commit vient du runner et reste VIDE en local, parce qu'une
+    // copie de travail n'a pas de commit « déployé ». C'est ce couple qui rend un rapport de
+    // bug rattachable à un état du code — l'app n'affichait jusqu'ici aucune version.
+    app_version: VERSION,
+    commit: commitCourt(),
   };
 
   // Vaisseaux avec soute (>= 1 SCU), hors véhicules terrestres. Pour le filtre "vaisseau".
