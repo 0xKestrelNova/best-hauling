@@ -330,9 +330,11 @@ test("relevé de station : k déduit d'un montant observé, persistant, hors du 
   await expect(page.locator("#correctionsControls")).toBeVisible();
 
   // On sélectionne une station par son libellé exact (la datalist n'est peuplée qu'après market.json).
+  // UN SEUL événement `input` : `fill` en émet déjà un, et le second qu'on envoyait ici arrivait
+  // parfois après le debounce de 150 ms du champ — il valait alors un rendu différé de plus, dont
+  // l'instabilité de ce test était le symptôme (#28).
   const label = await page.locator("#stationList option").first().getAttribute("value");
   await page.fill("#station", label);
-  await page.locator("#station").dispatchEvent("input");
   await expect(page.locator("#alAmount")).toBeVisible();
 
   // 1 159 aUEC observés pour 32 SCU -> autoloadFee(32, 32, 1) = 820 -> k ≈ 1,413 (le relevé de Ruin).
@@ -353,6 +355,35 @@ test("relevé de station : k déduit d'un montant observé, persistant, hors du 
   await expect(page.locator("#correctionsControls")).toBeVisible();
   await expect(page.locator("#stationList option").first()).toBeAttached(); // marché rechargé
   await page.fill("#station", label);
-  await page.locator("#station").dispatchEvent("input");
   await expect(page.locator(".corr-item.autoload")).toContainText("1,41"); // survit au rechargement
+});
+
+// #28 : le test ci-dessus échouait une fois sur N, toujours vert à la relance, et le rapport ne
+// désignait que sa ligne de déclaration — de quoi le faire passer pour un caprice de la machine.
+// C'était #24, armé par le test lui-même : son second `input` sur #station, quand la latence du
+// protocole dépassait le debounce de 150 ms, comptait pour une frappe de plus. Un SECOND rendu
+// différé partait, tombait entre la saisie du montant et le clic sur « Enregistrer », et réécrivait
+// le panneau — `saveStationReading` lisait alors un champ vide, ne persistait rien, et la liste des
+// relevés restait introuvable. Ici on ne subit plus l'aléa, on le PROVOQUE : deux `input` séparés
+// par plus que le debounce, puis on laisse le rendu différé passer avant d'enregistrer.
+test("relevé de station : un rendu différé n'efface pas le montant déjà saisi (#28, #24)", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alAmount")).toBeVisible();
+  await page.waitForTimeout(300); // le premier rendu est fait, le debounce retombé
+  await page.locator("#station").dispatchEvent("input"); // en arme un SECOND, gratuit
+
+  await page.fill("#alAmount", "1159");
+  await page.fill("#alScu", "32");
+  await page.waitForTimeout(300); // largement plus que le debounce : le rendu différé est passé
+  await expect(page.locator("#alAmount")).toHaveValue("1159"); // il n'a pas emporté la saisie
+
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toContainText("1,41");
 });
