@@ -587,6 +587,44 @@ export function setInStore(store, key, field, value, baseUpdated, nowSec = Date.
   return store;
 }
 
+// Range les corrections locales PAR STATION, pour la bande de vignettes de la vue Corrections
+// (ADR-003). Renvoie [{ terminal, corrections, actif }], la station affichée épinglée en tête —
+// même à zéro correction, pour que la bande dise toujours quelque chose quand on ouvre une station
+// jamais corrigée. Les autres suivent, par nombre de corrections décroissant puis par nom.
+//
+// N'accepte que les clés à TROIS segments. La frontière n'est pas cosmétique : les relevés de tarif
+// d'autoload vivent dans un store séparé sous une clé à DEUX segments (`autoload|<terminal>`)
+// précisément pour qu'aucun lecteur de OVERRIDES ne les compte, et un test E2E exige que le badge
+// « ✎ Corrections » reste sans compteur quand seul un relevé existe.
+//
+// PURGE au passage, et c'est le point délicat. Un volume corrigé meurt au bout de `dureeVol` ; cette
+// péremption est un effet de bord d'effFromStore, déclenché par le RENDU de la seule station
+// affichée. Les corrections des autres stations ne sont donc jamais interrogées, donc jamais
+// purgées : sans cette passe, leur compteur annoncerait des corrections déjà mortes jusqu'à ce qu'on
+// clique dessus. La bande promet un décompte juste ; c'est ici qu'elle le tient.
+export function groupOverridesByTerminal(store, actif, nowSec = Date.now() / 1000, dureeVol = DUREE_VOL) {
+  const parTerminal = new Map();
+  for (const cle of Object.keys(store || {})) {
+    const seg = cle.split("|");
+    if (seg.length !== 3) continue;
+    const o = store[cle];
+    if (o && o.vol != null && o.pris != null && nowSec - o.pris > dureeVol) {
+      delete o.vol;
+      delete o.pris;
+      if (o.price == null) { delete store[cle]; continue; }
+    }
+    const terminal = seg[1];
+    parTerminal.set(terminal, (parTerminal.get(terminal) || 0) + 1);
+  }
+  if (actif) parTerminal.set(actif, parTerminal.get(actif) || 0);
+
+  return [...parTerminal.entries()]
+    .map(([terminal, corrections]) => ({ terminal, corrections, actif: terminal === actif }))
+    .sort((a, b) => (b.actif ? 1 : 0) - (a.actif ? 1 : 0)
+      || b.corrections - a.corrections
+      || a.terminal.localeCompare(b.terminal, "fr"));
+}
+
 // ---------- État partageable (URL / localStorage) ----------
 export const safeKey = (k) => typeof k === "string" && /^[a-zA-Z]+$/.test(k); // anti-injection de sélecteur
 

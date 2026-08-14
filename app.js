@@ -5,7 +5,7 @@ import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
-  ovKey, effFromStore, setInStore, DUREE_VOL, safeKey, encodeState, decodeState,
+  ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
@@ -683,6 +683,9 @@ let stationMap = new Map();   // libellé -> index, TOUS les terminaux (pour la 
 let termByName = new Map();
 let enrouteOrigin = null;     // index du terminal de départ sélectionné
 let stationSel = null;        // index de la station sélectionnée (vue Corrections)
+// Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
+// une saisie en cours y survit (#24).
+let feesRendus = null;
 
 // Charge le graphe de marché à la demande. Deux règles, apprises à la dure :
 //   - on mémorise la PROMESSE en vol, pas seulement son résultat : sinon chaque frappe pendant le
@@ -2613,9 +2616,15 @@ function stationTableHTML(S, q) {
     if (!b && !s) return;
     const cote = (p, side, libelle, unite) => {
       const e = effVals(c.name, t.name, side, p[1], p[2], p[3]);
+      // Les boutons de retour vivent sur LEUR PROPRE ligne, sous les valeurs. Glissés parmi
+      // elles, ils comprimaient le texte de l'étiquette dans une tuile large de 236 px : « aUEC ·
+      // stock » se coupait en deux.
+      const retours = retourUEX(c.name, t.name, side, "price", p[1], e.oprice)
+        + retourUEX(c.name, t.name, side, "vol", p[2], e.ovol);
       return `<div class="scomm-side"><span class="scomm-lbl">${libelle}</span>` +
         `${editv(c.name, t.name, side, "price", e.price, e.oprice, p[3])} aUEC · ${unite} ` +
-        `${editv(c.name, t.name, side, "vol", e.vol, e.ovol, p[3])}</div>`;
+        `${editv(c.name, t.name, side, "vol", e.vol, e.ovol, p[3])}</div>` +
+        (retours ? `<div class="scomm-undos">${retours}</div>` : "");
     };
     // Une seule ligne par côté RÉEL : plus de « achat — » à afficher sous chaque vente.
     const corps = (b ? cote(b, "buy", "achat", "stock") : "") + (s ? cote(s, "sell", "vente", "dem.") : "");
@@ -2629,17 +2638,85 @@ function stationTableHTML(S, q) {
     (b ? achats : ventes).push(tuile);
   });
 
-  const fee = stationFeeHTML(S);
+  // Le panneau de frais N'EST PLUS rendu ici : il part dans #correctionsFees, hors du conteneur que
+  // renderCorrections réécrit à chaque rendu (#24). Il en sortait par DEUX chemins — l'interpolation
+  // nominale et la branche « aucune commodité » ci-dessous.
   const total = achats.length + ventes.length;
-  if (!total) return `${fee}<p class="empty">Aucune commodité ${q ? "correspondante " : ""}à ${esc(t.name)}.</p>`;
+  const hero = stationHeroHTML(S, total, q);
+  if (!total) return `${hero}<p class="empty">Aucune commodité ${q ? "correspondante " : ""}à ${esc(t.name)}.</p>`;
   const section = (cle, titre, aide, tuiles) => tuiles.length
     ? `<div class="station-section"><h4 class="station-section-head ${cle}">◈ ${titre} <span class="station-count">${tuiles.length}</span><span class="station-section-aide">${aide}</span></h4>
        <div class="station-grid">${tuiles.join("")}</div></div>`
     : "";
-  return `<div class="station-title">◈ ${esc(t.name)}${sysBadge(t.system)} — clique un chiffre pour le corriger localement <span class="station-count">${total} commodité${total > 1 ? "s" : ""}${q ? " filtrées" : ""}</span></div>
-    ${fee}
+  return `${hero}
     ${section("achat", "On y achète", "ce que la station te vend — prix et stock", achats)}
     ${section("vente", "On y vend", "ce qu'elle te reprend — prix et demande", ventes)}`;
+}
+
+// Bandeau COLLANT de la station affichée : sa photo, son nom, sa zone, son code, et ce qu'on y a
+// corrigé. Il remplace la ligne de titre, qui sortait de l'écran au premier coup de molette — après
+// quoi plus rien ne disait quelle station on éditait, au milieu de 92 tuiles.
+function stationHeroHTML(S, total, q) {
+  const t = MARKET.terminals[S];
+  const n = Object.keys(OVERRIDES).filter((k) => k.split("|")[1] === t.name).length;
+  const vign = vignetteStation({ name: t.name, system: t.system, code: t.code || "", shot: t.shot || "" });
+  // Crédit à l'auteur de la capture, et SEULEMENT s'il existe : 97 terminaux ont une photo pour 89
+  // auteurs, donc huit afficheraient sinon un « photo : » suivi de rien.
+  const credit = t.shot && t.shotBy ? `<span class="stn-hero-credit">photo : ${esc(t.shotBy)}</span>` : "";
+  return `<div class="stn-hero">
+    ${vign}
+    <div class="stn-hero-txt">
+      <div class="stn-hero-line">
+        <span class="stn-hero-name">${esc(t.name)}</span>${sysBadge(t.system)}
+        <span class="stn-hero-zone">${esc(t.planet || "Espace profond")}</span>
+        <span class="stn-hero-code">${esc(t.code || "")}</span>
+        <span class="station-count">${total} commodité${total > 1 ? "s" : ""}${q ? " filtrées" : ""}</span>
+        ${n ? `<button type="button" id="stnClear" class="reset-ov" title="Effacer les corrections de cette station">✕ ${n} correction${n > 1 ? "s" : ""}</button>` : ""}
+      </div>
+      <div class="stn-hero-sub">clique un chiffre pour le corriger localement${credit}</div>
+    </div>
+  </div>`;
+}
+
+// Retour à la valeur UEX d'un chiffre corrigé. Contrôle DÉDIÉ, posé dans la tuile et hors du
+// `.editv` : celui-ci porte déjà `role="button"`, et y imbriquer un second bouton serait invalide en
+// ARIA — tandis que sortir le `✎` casserait la restauration de startEdit (qui mémorise puis rejoue
+// les childNodes du span) et l'assertion qui la couvre. Il annonce la valeur vers laquelle il
+// ramène : c'est ce que l'ancienne liste plate ne montrait jamais.
+function retourUEX(commodity, terminal, side, field, brut, ov) {
+  if (!ov) return "";
+  const v = Number.isFinite(Number(brut)) ? Number(brut) : null;
+  const quoi = field === "price" ? "le prix" : side === "buy" ? "le stock" : "la demande";
+  return `<button type="button" class="scomm-undo" data-c="${esc(commodity)}" data-t="${esc(terminal)}" data-s="${side}" data-f="${field}"` +
+    ` title="Revenir à ${quoi} publié par UEX">↺ ${fmtVol(v)}</button>`;
+}
+
+// La bande : une vignette par station corrigée, la station affichée épinglée en tête. C'est elle qui
+// remplace la liste plate — vingt corrections y tenaient en 900 px, elles tiennent ici en une rangée.
+function correctionsIndexHTML() {
+  const actif = stationSel != null ? MARKET.terminals[stationSel].name : null;
+  const groupes = groupOverridesByTerminal(OVERRIDES, actif);
+  if (!groupes.length) {
+    return '<p class="empty">Aucune correction locale pour l\'instant. Cherche une station ci-dessus pour en créer.</p>';
+  }
+  const autres = groupes.filter((g) => !g.actif);
+  const total = groupes.reduce((s, g) => s + g.corrections, 0);
+  const tuiles = groupes.map((g) => {
+    const t = termByName.get(g.terminal);
+    // Terminal disparu de market.json : la vignette s'affiche quand même, sinon la correction
+    // deviendrait invisible ET ineffaçable. Elle n'est simplement pas cliquable.
+    const vign = vignetteStation({ name: g.terminal, system: t ? t.system : "", code: t ? t.code || "" : "", shot: t ? t.shot || "" : "" });
+    return `<button type="button" class="stn-tile${g.actif ? " active" : ""}${t ? "" : " orphelin"}"` +
+      `${g.actif ? ' aria-current="true"' : ""} data-terminal="${esc(g.terminal)}"${t ? "" : " disabled"}>` +
+      `${vign}<span class="stn-tile-name">${esc(g.terminal)}</span>` +
+      `<span class="stn-tile-meta">${t ? sysBadge(t.system) : '<span class="sys">inconnu</span>'}` +
+      `<b>${g.corrections}</b></span>` +
+      `${g.actif ? '<span class="stn-tile-flag">en cours</span>' : ""}</button>`;
+  }).join("");
+  return `<div class="corr-list-head">
+      <span>◈ ${autres.length ? `${autres.length} autre${autres.length > 1 ? "s" : ""} station${autres.length > 1 ? "s" : ""} · ` : ""}${total} correction${total > 1 ? "s" : ""}</span>
+      <button id="resetAll" class="reset-ov">Tout réinitialiser</button>
+    </div><div class="stn-band">${tuiles}</div>`;
 }
 
 // Liste des relevés d'autoload, à côté des corrections locales et sur le même modèle : ils sont de
@@ -2656,30 +2733,27 @@ function autoloadListHTML() {
   return `<div class="corr-list-head"><span>${keys.length} relevé${keys.length > 1 ? "s" : ""} d'autoload</span><button id="resetAllK" class="reset-ov">Tout oublier</button></div>${items}`;
 }
 
-// Liste de toutes les corrections locales, avec suppression individuelle.
-function correctionsListHTML() {
-  const keys = Object.keys(OVERRIDES);
-  if (!keys.length) return '<p class="empty">Aucune correction locale pour l\'instant. Cherche une station ci-dessus pour en créer.</p>';
-  const sideLabel = (s) => (s === "buy" ? "achat" : "vente");
-  const items = keys.sort().map((k) => {
-    const o = OVERRIDES[k];
-    const [commodity, terminal, side] = k.split("|");
-    const parts = [];
-    if (o.price != null) parts.push(`prix <b>${fmt(o.price)}</b>`);
-    if (o.vol != null) parts.push(`${side === "buy" ? "stock" : "demande"} <b>${fmt(o.vol)}</b>`);
-    return `<div class="corr-item"><div><b>${esc(commodity)}</b> · ${esc(terminal)} <span class="corr-side">${sideLabel(side)}</span><div class="loc-sub">${parts.join(" · ")}</div></div><button class="corr-del" data-key="${esc(k)}" title="Supprimer cette correction">✕</button></div>`;
-  }).join("");
-  return `<div class="corr-list-head"><span>${keys.length} correction${keys.length > 1 ? "s" : ""}</span><button id="resetAll" class="reset-ov">Tout réinitialiser</button></div>${items}`;
-}
-
 function renderCorrections() {
   if (!MARKET) { withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
   resolveStation();
   const q = $("search").value.trim().toLowerCase();
   const station = stationSel != null ? stationTableHTML(stationSel, q) : '<p class="manifest-hint">Cherche une station ci-dessus pour voir et corriger ses prix et stocks.</p>';
+  // La bande est peinte APRÈS le panneau, bien qu'elle s'affiche au-dessus : stationTableHTML
+  // appelle effVals, dont la purge des volumes périmés est un effet de bord. Compter d'abord
+  // afficherait une correction que le rendu suivant vient d'effacer.
   $("correctionsStation").innerHTML = station;
-  $("correctionsList").innerHTML = correctionsListHTML() + autoloadListHTML();
+  $("correctionsIndex").innerHTML = correctionsIndexHTML();
+  // Le panneau de frais n'est réécrit QUE si son contenu a changé (#24). Le sortir de
+  // #correctionsStation ne suffisait pas : renderCorrections réécrivait son nouveau conteneur tout
+  // aussi inconditionnellement, et un montant en cours de frappe repartait à vide au moindre
+  // re-rendu — un filtre tapé, une correction ailleurs. Le panneau ne dépend que de la station
+  // affichée et du store des relevés : cette signature suffit à décider.
+  const signature = `${stationSel}|${JSON.stringify(AUTOLOAD_K)}`;
+  if (signature !== feesRendus) {
+    feesRendus = signature;
+    $("correctionsFees").innerHTML = (stationSel != null ? stationFeeHTML(stationSel) : "") + autoloadListHTML();
+  }
   notifySuperseded();
 }
 
@@ -2920,12 +2994,55 @@ async function init() {
   $("chainOrigin").addEventListener("input", debounce(() => { resolveChainOrigin(); refresh(); }));
   $("hops").addEventListener("input", refresh);
   // Contrôles « Corrections » : recherche de station + suppression / reset (délégué).
-  $("station").addEventListener("input", debounce(() => { resolveStation(); refresh(); }));
+  // Ne re-rend QUE si la station résolue a CHANGÉ. Le sélecteur, lui, rend immédiatement au choix :
+  // sans ce garde, le rendu différé du debounce arrivait ~300 ms après et refaisait le même écran
+  // pour rien — en détachant au passage l'éditeur d'un chiffre ouvert entre les deux. Même famille
+  // que #24 : tout re-rendu gratuit de cette vue efface une saisie en cours.
+  $("station").addEventListener("input", debounce(() => {
+    const avant = stationSel;
+    resolveStation();
+    if (stationSel !== avant) refresh();
+  }));
   $("corrections").addEventListener("click", (e) => {
     // Les relevés d'autoload se testent AVANT les corrections : leur ✕ porte aussi `.corr-del`
     // (même bouton à l'écran) et tomberait sinon dans la branche qui écrit dans OVERRIDES.
     const alDel = e.target.closest(".al-del");
     if (alDel) { forgetStationReading(alDel.dataset.key); return; }
+    // Vignette de la bande : recharge sa station. Écrit le LIBELLÉ CANONIQUE, comme le sélecteur —
+    // resolveStation résout par correspondance exacte, et c'est lui que le permalien transporte.
+    const tuile = e.target.closest(".stn-tile");
+    if (tuile && !tuile.disabled) {
+      const t = termByName.get(tuile.dataset.terminal);
+      if (t) { $("station").value = stationLabel(t.name, t.system); resolveStation(); refresh(); saveState(); }
+      return;
+    }
+    // Retour à la valeur UEX d'un chiffre corrigé.
+    const undo = e.target.closest(".scomm-undo");
+    if (undo) {
+      const { c, t: term, s: side, f: field } = undo.dataset;
+      // Rendre son stock à UEX reste un changement de volume : sans ce gel, un voyage déjà planifié
+      // se rebattrait tout seul. Même règle que startEdit et que l'ancien ✕ de la liste plate.
+      if (field === "vol") pinLegsForVolume(c, term, side);
+      const o = OVERRIDES[ovKey(c, term, side)];
+      setOverride(c, term, side, field, null, o ? o.base : 0);
+      updateOvBadge();
+      refresh();
+      return;
+    }
+    // Efface les corrections de la SEULE station affichée (bouton du bandeau).
+    if (e.target.closest("#stnClear")) {
+      const nom = stationSel != null ? MARKET.terminals[stationSel].name : null;
+      if (nom) {
+        for (const k of Object.keys(OVERRIDES)) {
+          const [commodity, terminal, side] = k.split("|");
+          if (terminal !== nom) continue;
+          if (OVERRIDES[k].vol != null) pinLegsForVolume(commodity, terminal, side);
+          delete OVERRIDES[k];
+        }
+        saveOverrides(); updateOvBadge(); refresh();
+      }
+      return;
+    }
     const del = e.target.closest(".corr-del");
     if (del) {
       // Supprimer une correction de volume rend le stock d'UEX : c'est encore un changement de

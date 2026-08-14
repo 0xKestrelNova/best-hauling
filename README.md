@@ -31,7 +31,7 @@ Six vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût,
 | **Boucles ⇄** | Meilleures boucles A⇄B (une commodité à l'aller, une autre au retour) pour ne jamais repartir à vide |
 | **En route 🧭** | Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut retient la commodité qui **rapporte** le plus une fois plafonnée par le stock et la demande, pas celle à la plus forte marge affichée |
-| **Corrections ✎** | Voir/gérer ses corrections locales et en créer en **cherchant une station** (voir plus bas) |
+| **Corrections ✎** | Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 
 Autres éléments :
@@ -336,6 +336,18 @@ jamais partagé ni mis dans l'URL) et **intelligent** :
 - Elle est **périmée automatiquement** dès qu'UEX republie ce point avec un relevé plus récent (retour à la valeur UEX, petit flash de notification).
 - Un **volume** (stock, demande, et la déduction d'un `✓ chargé`) périme **aussi au bout de 3 h**, même si UEX n'a rien republié. Un **prix**, non : les deux ne vieillissent pas pareil, [voir plus bas](#pourquoi-un-volume-périme-en-3-h-et-pas-un-prix).
 - Sémantique respectée : un **stock d'achat à 0 = terminal vide** (plafonne à 0), et une **demande que _tu_ corriges fait autorité** — y compris un 0, qui vaut « pas de demande » et plafonne à 0 même là où UEX ne renseignait rien. Les valeurs UEX brutes, elles, gardent leur sémantique propre (`null` = capacité inconnue, `0` = terminal saturé) : [voir le piège des volumes UEX](#sémantique-des-volumes-uex-piège).
+- **Retour arrière par chiffre** : un chiffre corrigé porte, sous lui, un bouton `↺` qui annonce la valeur UEX vers laquelle il ramène. On défait là où on regarde.
+
+### La vue Corrections se range par station
+
+La vue est organisée autour de la **station**, pas de la correction ([ADR-003](docs/superpowers/specs/2026-08-13-refonte-vue-corrections-adr.md)) :
+
+- **Une bande de vignettes** en tête, une par station corrigée, avec sa photo et son compteur. Vingt corrections y tiennent en une rangée, là où la liste plate en faisait vingt lignes — rangées par commodité, donc jamais côte à côte pour un même comptoir.
+- La **station affichée est épinglée en première position** et mise en surbrillance (« en cours »). La bande se lit comme une barre d'onglets ; un clic sur une vignette recharge sa station.
+- Un **bandeau collant** porte la photo du terminal, son système, sa zone, son code UEX et le nombre de corrections qu'on y a faites — il reste à l'écran pendant qu'on fait défiler les 92 commodités de GrimHEX.
+- Le **sélecteur de station** est groupé `système › zone › station`, cherche par nom **ou par code** (`ARCL1`, `PYROG`), et n'est plus tronqué.
+
+Les photos viennent d'UEX (soumises par des joueurs, l'auteur est crédité) : **97 des 114 terminaux** en ont une. Les 17 autres reçoivent une vignette générée, teintée par système et portant le code — aucune requête, aucune case vide. Elles ne sont pas mises en cache hors-ligne (le service worker ignore volontairement le cross-origin) : le repli prend alors le relais.
 
 ### Pourquoi un volume périme en 3 h, et pas un prix
 
