@@ -252,11 +252,16 @@ test("Chaîne : le filtre « même système » contraint la chaîne (régression
   const origin = await page.locator("#originList option").first().getAttribute("value");
   await page.fill("#chainOrigin", origin);
   await expect(page.locator("#chainOut .chain-leg").first()).toBeVisible();
-  // Avec « même système », tous les badges système de la chaîne doivent être identiques.
+  // Avec « même système », tous les badges système de la chaîne doivent être identiques. Ils sont
+  // posés sur le fil d'Ariane `.chain-path` (un badge par étape), jamais dans les `.chain-leg`.
   await page.check("#sameSystem");
   await expect(page.locator("#chainOut .chain-leg").first()).toBeVisible();
-  const systems = await page.locator("#chainOut .chain-leg .sys").allInnerTexts();
-  expect(new Set(systems.map((s) => s.trim())).size).toBeLessThanOrEqual(1);
+  const systems = (await page.locator("#chainOut .chain-path .sys").allInnerTexts()).map((s) => s.trim());
+  // Compter les badges AVANT de les comparer : `allInnerTexts()` n'attend rien et rend `[]` sur un
+  // sélecteur mort, et `new Set([]).size` vaut 0 — donc toute assertion d'unicité seule reste verte
+  // quand la classe visée est renommée. C'est cette garde qui empêche le test de redevenir creux.
+  expect(systems.length).toBeGreaterThan(0);
+  expect(new Set(systems).size).toBe(1);
 });
 
 // Pose la vue « En route » sur le premier terminal de départ proposé et rend la carte Manifeste.
