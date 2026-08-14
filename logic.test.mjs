@@ -18,6 +18,7 @@ import {
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
+  refusActif, migrerRefus, DUREE_VOL,
   refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
@@ -3865,4 +3866,79 @@ test("groupOverridesByTerminal purge les volumes périmés AVANT de compter", ()
 test("groupOverridesByTerminal : une station dont tout a péri sort de la bande", () => {
   const store = OV({ "Vieux|Levski|buy": { vol: 12, base: 1, pris: 0 } });
   assert.deepEqual(groupOverridesByTerminal(store, null, 10 * 3600), []);
+});
+
+// ---------- #20 : un refus de comptoir est périssable ----------
+// Un comptoir n'est plein que sur son shard et à cet instant. Le marqueur `refuse` n'avait pas de
+// date, donc il était éternel — alors que la MÊME information saisie à la main dans la vue
+// Corrections périmait en 3 h. Deux durées de vie pour un fait, dont l'une n'avait été décidée par
+// personne.
+const LOT_REFUSE = (at) => [{ name: "Agricium", units: 30, paid: 100, from: "A", refuse: "GrimHEX", refuseAt: at }];
+const MARCHE_REFUS = {
+  terminals: [{ name: "GrimHEX", system: "Stanton" }],
+  commodities: [{ name: "Agricium", buys: [], sells: [[0, 300, null, 0]] }],
+};
+
+test("refusActif : un refus de moins de 3 h protège encore le lot", () => {
+  const maintenant = 10_000;
+  assert.equal(refusActif(LOT_REFUSE(maintenant - 600)[0], "GrimHEX", maintenant), true);
+});
+
+test("refusActif : passé 3 h, le lot redevient vendable ici", () => {
+  const maintenant = 10_000 + DUREE_VOL;
+  assert.equal(refusActif(LOT_REFUSE(10_000)[0], "GrimHEX", maintenant + 1), false);
+  // La borne elle-même reste protégée : on périme APRÈS la durée, pas pile dessus.
+  assert.equal(refusActif(LOT_REFUSE(10_000)[0], "GrimHEX", maintenant), true);
+});
+
+test("refusActif : le refus ne vaut QUE pour sa station", () => {
+  assert.equal(refusActif(LOT_REFUSE(10_000)[0], "Area18", 10_100), false);
+});
+
+test("refusActif : un marqueur sans date est tenu pour périmé, jamais pour éternel", () => {
+  // C'est l'état hérité d'avant #20. `migrerRefus` les date au chargement ; celui qui passerait au
+  // travers ne doit pas rester protégé pour toujours.
+  assert.equal(refusActif({ name: "Agricium", refuse: "GrimHEX" }, "GrimHEX", 10_000), false);
+});
+
+test("vente implicite : un refus frais survit à l'étape, un refus périmé non", () => {
+  const t0 = 10_000;
+  const frais = sellAllAt(LOT_REFUSE(t0), MARCHE_REFUS, 0, (v) => v, t0 + 600);
+  assert.equal(frais.ventes.length, 0, "le reste gardé traverse l'étape — ADR-002 tient");
+  assert.equal(holdScu(frais.hold), 30);
+
+  const perime = sellAllAt(LOT_REFUSE(t0), MARCHE_REFUS, 0, (v) => v, t0 + DUREE_VOL + 1);
+  assert.equal(perime.ventes.length, 1, "trois heures plus tard, le comptoir est réinterrogé");
+  assert.equal(perime.ventes[0].units, 30);
+  assert.equal(holdScu(perime.hold), 0);
+});
+
+test("sellFromHold : la péremption vaut aussi pour le chemin nominal", () => {
+  const t0 = 10_000;
+  assert.equal(sellFromHold(LOT_REFUSE(t0), "Agricium", 30, 300, "GrimHEX", t0 + 600).vendu, 0);
+  assert.equal(sellFromHold(LOT_REFUSE(t0), "Agricium", 30, 300, "GrimHEX", t0 + DUREE_VOL + 1).vendu, 30);
+  // Un geste EXPLICITE (sans `at`) vend quand même, marqueur ou pas : l'intention prime.
+  assert.equal(sellFromHold(LOT_REFUSE(t0), "Agricium", 30, 300).vendu, 30);
+});
+
+test("refuseHere date son marqueur", () => {
+  const [l] = refuseHere([{ name: "Agricium", units: 30 }], "Agricium", "GrimHEX", 4242);
+  assert.equal(l.refuse, "GrimHEX");
+  assert.equal(l.refuseAt, 4242);
+});
+
+test("migrerRefus : les marqueurs hérités reçoivent une fenêtre pleine, pas la péremption", () => {
+  const avant = [{ name: "Agricium", units: 30, refuse: "GrimHEX" }, { name: "Titanium", units: 10 }];
+  const { hold, migres } = migrerRefus(avant, 7777);
+  assert.equal(migres, 1);
+  assert.equal(hold[0].refuseAt, 7777);
+  assert.equal(hold[1].refuseAt, undefined, "un lot sans refus n'est pas touché");
+  assert.equal(refusActif(hold[0], "GrimHEX", 7777), true, "protégé à partir de maintenant");
+});
+
+test("migrerRefus : rien à faire rend le MÊME tableau, pour n'écrire nulle part", () => {
+  const deja = [{ name: "Agricium", units: 30, refuse: "GrimHEX", refuseAt: 100 }];
+  const r = migrerRefus(deja, 7777);
+  assert.equal(r.migres, 0);
+  assert.equal(r.hold, deja);
 });

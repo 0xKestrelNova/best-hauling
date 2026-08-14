@@ -1664,12 +1664,12 @@ export function holdByCommodity(hold) {
 // `refuse: <station>` et sont alors SAUTÉS. C'est ce qui protège le résidu de la vente implicite
 // déclenchée en avançant d'une étape. Un geste EXPLICITE, lui, ne passe pas `at` et vend quand
 // même : l'intention de l'utilisateur prime toujours sur un marqueur posé plus tôt.
-export function sellFromHold(hold, name, units, price, at = null) {
+export function sellFromHold(hold, name, units, price, at = null, nowSec = Date.now() / 1000) {
   let reste = Math.max(0, Math.floor(units || 0));
   const suivant = [], consommes = [];
   let vendu = 0, cout = 0;
   for (const l of hold) {
-    if (l.name !== name || reste <= 0 || (at && l.refuse === at)) { suivant.push(l); continue; }
+    if (l.name !== name || reste <= 0 || (at && refusActif(l, at, nowSec))) { suivant.push(l); continue; }
     const pris = Math.min(l.units || 0, reste);
     if (pris <= 0) { suivant.push(l); continue; }
     reste -= pris; vendu += pris; cout += pris * (l.paid || 0);
@@ -1697,8 +1697,43 @@ export function stockApres(stock, units) {
 // Marque le reste d'une commodité comme REFUSÉ à cette station : le comptoir n'en a pas voulu.
 // Sans ce marqueur, avancer d'une étape — qui vaut « j'ai tout vendu ici » — effacerait le résidu
 // au moment exact où il devient le sujet.
-export function refuseHere(hold, name, station) {
-  return hold.map((l) => (l.name === name ? { ...l, refuse: station } : l));
+//
+// Le marqueur est DATÉ, et c'est tout le sujet de #20. Un comptoir n'est plein que sur son shard et
+// à cet instant : en changeant de shard, ou simplement dix minutes plus tard, le même terminal en
+// reprend. La saturation observée est donc périssable, exactement comme un stock — et la même
+// information saisie à la main dans la vue Corrections périmait déjà en 3 h. Sans date ici, le
+// refus était éternel : deux durées de vie pour un seul fait, dont l'une n'avait été décidée par
+// personne.
+export function refuseHere(hold, name, station, at = Date.now() / 1000) {
+  return hold.map((l) => (l.name === name ? { ...l, refuse: station, refuseAt: at } : l));
+}
+
+// Ce lot est-il encore protégé à cette station ? UNE règle, consultée par les deux chemins de vente
+// — sinon ils divergent, ce qui est précisément le défaut qu'on corrige.
+// Réemploie `DUREE_VOL`, l'horloge des volumes corrigés : le refus décrit le même phénomène (« ce
+// comptoir ne prend plus »), il n'a aucune raison de vieillir autrement.
+export function refusActif(lot, station, nowSec = Date.now() / 1000, dureeVol = DUREE_VOL) {
+  if (!lot || lot.refuse !== station) return false;
+  // Marqueur sans date : hérité d'avant #20. `migrerRefus` les date au chargement ; si l'un passe
+  // malgré tout, on le tient pour périmé plutôt qu'éternel — un refus d'âge inconnu ne prouve rien.
+  if (!(lot.refuseAt > 0)) return false;
+  return nowSec - lot.refuseAt <= dureeVol;
+}
+
+// Date les marqueurs hérités d'avant #20, au chargement de la soute. Sans cette passe ils seraient
+// tous tenus pour périmés d'un coup (voir `refusActif`) et un résidu volontairement gardé pourrait
+// partir à la première étape franchie. On leur offre donc une fenêtre pleine à partir de
+// maintenant : c'est le seul choix qui ne perd rien.
+// Renvoie { hold, migres } — `migres` vaut 0 quand il n'y avait rien à faire, ce qui permet à
+// l'appelant de n'écrire dans localStorage que s'il le faut.
+export function migrerRefus(hold, nowSec = Date.now() / 1000) {
+  let migres = 0;
+  const suivant = (hold || []).map((l) => {
+    if (!l || !l.refuse || l.refuseAt > 0) return l;
+    migres++;
+    return { ...l, refuseAt: nowSec };
+  });
+  return { hold: migres ? suivant : hold, migres };
 }
 
 // Prix et capacité d'une commodité à un terminal donné, corrections appliquées. null si ce
@@ -1717,7 +1752,7 @@ export function sellableAt(market, terminalIdx, name, resolve) {
 // Vend à ce terminal TOUT ce que la soute peut y écouler — c'est la vente implicite : quitter une
 // escale sous-entend qu'on y a fait son affaire. Ce qu'une vente partielle y a explicitement laissé
 // (`refuse`) traverse l'étape intact. Renvoie { hold, ventes, recette, cout, profit }.
-export function sellAllAt(hold, market, terminalIdx, resolve) {
+export function sellAllAt(hold, market, terminalIdx, resolve, nowSec = Date.now() / 1000) {
   const t = market.terminals[terminalIdx];
   if (!t) return { hold, ventes: [], recette: 0, cout: 0, profit: 0 };
   let courant = hold;
@@ -1726,9 +1761,9 @@ export function sellAllAt(hold, market, terminalIdx, resolve) {
   for (const nom of [...new Set(hold.map((l) => l.name))]) {
     const pt = sellableAt(market, terminalIdx, nom, resolve);
     if (!pt) continue; // ce terminal ne reprend pas cette commodité : elle reste à bord
-    const dispo = courant.reduce((s, l) => s + (l.name === nom && l.refuse !== t.name ? l.units || 0 : 0), 0);
+    const dispo = courant.reduce((s, l) => s + (l.name === nom && !refusActif(l, t.name, nowSec) ? l.units || 0 : 0), 0);
     if (dispo <= 0) continue;
-    const r = sellFromHold(courant, nom, dispo, pt.price, t.name);
+    const r = sellFromHold(courant, nom, dispo, pt.price, t.name, nowSec);
     if (!r.vendu) continue;
     courant = r.hold;
     recette += r.recette; cout += r.cout;

@@ -318,6 +318,21 @@ Règle retenue, qui préserve les deux intentions :
 
 Sans quoi le geste le plus naturel de l'app détruirait silencieusement la donnée la plus précieuse.
 
+#### Amendement (2026-08-14) — le refus périme en 3 h
+
+La règle ci-dessus tient, et elle est conservée telle quelle : un résidu déclaré traverse l'étape.
+Ce qui n'avait jamais été décidé, c'est sa **permanence** — elle n'était que l'effet de bord d'un
+marqueur sans date.
+
+Un comptoir n'est plein que sur **son shard et à cet instant**. En changeant de shard, ou même en se
+reconnectant dix minutes plus tard sur le même, le terminal en reprend. La saturation observée est
+donc une information périssable, au même titre qu'un stock — et la même information saisie à la main
+dans la vue Corrections périmait déjà au bout de `DUREE_VOL`, soit 3 h. Le marqueur `refuse` porte
+désormais sa date et suit cette horloge (`refusActif`, `logic.mjs`).
+
+Le scénario fondateur de cet ADR — vendre 30 SCU sur 2 200 et repartir avec 2 170 — reste
+intégralement protégé : à l'échelle d'un voyage, rien ne change. Voir #20.
+
 ### Les lots, et ce qu'ils imposent
 
 La moyenne pondérée était le choix simple ; elle est écartée au profit du **juste**. La soute est
