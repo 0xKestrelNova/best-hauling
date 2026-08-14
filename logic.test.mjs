@@ -23,6 +23,7 @@ import {
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
   cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
+  soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   stationTree, groupOverridesByTerminal,
 } from "./logic.mjs";
 
@@ -2845,6 +2846,88 @@ test("detacherLotsDeJambe : effacer le voyage délie les lots sans les débarque
   assert.equal(r.length, 2);
   assert.equal("leg" in r[0], false);
   assert.equal(r[0].units, 100); // le fret payé survit à l'effacement du parcours (ADR-002)
+});
+
+// ---------- Le registre des chargements : quelle jambe a pris quoi, et où (#21, #22) ----------
+const prise = (nom, terminal, ref, units) => ({ name: nom, terminal, ref, units });
+
+test("soldeDuPoint : deux jambes au même point se partagent une seule référence", () => {
+  // A→B→A→C : les jambes 0 et 2 achètent toutes deux du Titanium à A, qui en annonçait 100.
+  let c = poserChargement({}, "0|A|B", [prise("Titanium", "A", 100, 60)]);
+  c = poserChargement(c, "2|A|C", [prise("Titanium", "A", 100, 40)]);
+  const plein = soldeDuPoint(c, "Titanium", "A");
+  assert.deepEqual(plein, { ref: 100, pris: 100 });
+  assert.equal(stockApres(plein.ref, plein.pris), 0);
+
+  // Annuler la PREMIÈRE ne rend que SES 60 : la jambe 2 tient toujours ses 40.
+  const s = soldeDuPoint(retirerChargement(c, "0|A|B"), "Titanium", "A");
+  assert.deepEqual(s, { ref: 100, pris: 40 });
+  assert.equal(stockApres(s.ref, s.pris), 60); // et surtout pas 100 : l'instantané absolu effaçait la jambe 2
+});
+
+test("soldeDuPoint : la référence survit à l'écrêtage à 0, que « stock + units » ne sait pas défaire", () => {
+  // La jambe 0 prend PLUS que le rayon n'annonçait : stockApres écrête à 0, et le stock effectif
+  // ne porte plus l'information « il y en avait 100 ».
+  let c = poserChargement({}, "0|A|B", [prise("Gold", "A", 100, 150)]);
+  c = poserChargement(c, "1|A|C", [prise("Gold", "A", 100, 20)]);
+  const plein = soldeDuPoint(c, "Gold", "A");
+  assert.equal(stockApres(plein.ref, plein.pris), 0);
+
+  const s = soldeDuPoint(retirerChargement(c, "0|A|B"), "Gold", "A");
+  assert.equal(stockApres(s.ref, s.pris), 80); // « 0 + 150 » aurait rendu 150 à un rayon qui n'en eut jamais que 100
+});
+
+test("soldeDuPoint : un point que plus aucune jambe ne tient n'a plus de référence", () => {
+  const c = poserChargement({}, "0|A|B", [prise("Gold", "A", 100, 60)]);
+  assert.deepEqual(soldeDuPoint(retirerChargement(c, "0|A|B"), "Gold", "A"), { ref: null, pris: 0 });
+  assert.deepEqual(soldeDuPoint(c, "Gold", "B"), { ref: null, pris: 0 }); // autre rayon, autre solde
+  assert.deepEqual(soldeDuPoint(c, "Gold", "A", "0|A|B"), { ref: null, pris: 0 }); // `sauf` exclut la jambe annulée
+});
+
+test("poserChargement : une jambe sans prise reste CHARGÉE — c'est l'état qui compte d'abord", () => {
+  // Rayon au stock inconnu : rien à déduire, mais la jambe est bel et bien engagée. Sans entrée,
+  // elle repasserait à « ✓ chargé » et doublerait la soute au clic suivant.
+  const c = poserChargement({}, "0|A|B", []);
+  assert.equal("0|A|B" in c, true);
+  assert.deepEqual(retirerChargement(c, "0|A|B"), {});
+});
+
+test("migrerChargements : une soute écrite AVANT le registre reste chargée et annulable", () => {
+  // Ancien format : l'état vivait dans la présence des lots, et le stock d'avant dans `avant`.
+  const lots = [
+    { name: "Titanium", units: 60, paid: 1000, from: "A", at: 1, leg: "0|A|B", avant: 100 },
+    { name: "Titanium", units: 40, paid: 1000, from: "A", at: 2, leg: "2|A|C", avant: 40 },
+    { name: "Gold", units: 10, paid: 5, from: "X", at: 3 }, // sans jambe : rien à reconstruire
+  ];
+  const r = migrerChargements({}, lots);
+  assert.equal(r.change, true);
+  assert.deepEqual(Object.keys(r.chargements).sort(), ["0|A|B", "2|A|C"]);
+  // La référence retenue est la PLUS GRANDE : l'`avant` de la seconde jambe lisait déjà un rayon
+  // amputé par la première, c'est la plus ancienne qui dit ce que la station annonçait.
+  assert.deepEqual(soldeDuPoint(r.chargements, "Titanium", "A"), { ref: 100, pris: 100 });
+  assert.equal(r.lots.length, 3);
+  assert.equal(r.lots.some((l) => "avant" in l), false); // `avant` est mort : le registre porte tout
+  assert.equal(r.lots[0].units, 60);                     // et le fret, lui, ne bouge pas d'un SCU
+});
+
+test("migrerChargements : le registre existant fait foi, une soute déjà migrée ne bouge pas", () => {
+  const lots = [{ name: "Titanium", units: 60, paid: 1000, from: "A", at: 1, leg: "0|A|B" }];
+  const deja = poserChargement({}, "0|A|B", [prise("Titanium", "A", 100, 60)]);
+  const r = migrerChargements(deja, lots);
+  assert.equal(r.change, false);
+  assert.equal(r.chargements, deja); // rien à réécrire : pas de sauvegarde inutile
+  assert.equal(r.lots, lots);
+});
+
+test("reindexerRangsJambe : le REGISTRE suit la renumérotation, comme le manifeste et les lots", () => {
+  // A→B→C, on retire l'arrêt A : la jambe A→B disparaît, B→C recule au rang 0.
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0);
+  const r = reindexerRangsJambe({
+    edits: {}, pins: {}, lots: [lotDe("1|B|C")],
+    chargements: { "0|A|B": [prise("Gold", "A", 100, 10)], "1|B|C": [prise("Gold", "B", 50, 5)] },
+  }, retrait);
+  assert.deepEqual(Object.keys(r.chargements), ["0|B|C"]); // sans ça la jambe repassait à « ✓ chargé »
+  assert.deepEqual(soldeDuPoint(r.chargements, "Gold", "B"), { ref: 50, pris: 5 });
 });
 
 // ---------- Suggestions d'arrêts : mêmes filtres que la vue qui les affichera ----------

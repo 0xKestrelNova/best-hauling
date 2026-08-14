@@ -477,6 +477,15 @@ test("Multi commodité : « avec les simples » remet les trajets à une commodi
 // Les lots de la soute, tels que persistés — la source de vérité, plus lisible qu'un texte de panneau.
 const lots = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("best-hauling-hold") || "[]"));
 const holdScuDe = (ls) => ls.reduce((s, l) => s + l.units, 0);
+// Le stock EFFECTIF d'un point d'achat, lu là où l'app l'affiche : la vue Corrections. C'est le seul
+// endroit qui montre ce que la station annonce APRÈS déduction — donc le seul juge des chargements.
+async function stockAchat(page, station, nom) {
+  await page.click("#viewCorrections");
+  await page.fill("#station", station);
+  const c = page.locator(`#correctionsStation .editv[data-c="${nom}"][data-s="buy"][data-f="vol"]`).first();
+  await expect(c).toBeVisible({ timeout: 8000 });
+  return Number(await c.getAttribute("data-v"));
+}
 
 async function jambeChargeable(page) {
   await manifesteDepuis(page, "Megumi — Pyro");
@@ -643,6 +652,128 @@ test("Soute : retirer un arrêt AVANT une jambe chargée ne la rend pas recharge
   // Et re-cliquer ANNULE le chargement, au lieu d'en ajouter un second exemplaire.
   await page.locator("#journeyCard .jleg-load").first().click();
   expect(holdScuDe(await lots(page))).toBe(0);
+});
+
+test("Soute : vider la soute ne rend pas la jambe rechargeable, le rayon n'est pas déduit deux fois (#21)", async ({ page }) => {
+  // « Cette jambe est chargée » se DÉDUISAIT de la présence de ses lots. Le ✕ de la soute — comme
+  // une vente — les faisait disparaître sans rien rendre à la station : le bouton repassait à
+  // « ✓ chargé », le clic suivant redéduisait le rayon DEPUIS le stock déjà amputé (100 → 40 → 0),
+  // et la valeur d'origine était perdue pour de bon.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
+  const pris = Number(await page.locator("#manifest .mline", { hasText: nom }).first().locator(".mqty-input").inputValue());
+  expect(pris).toBeGreaterThan(0);
+  const avant = await stockAchat(page, "Megumi — Pyro", nom);
+
+  await manifesteDepuis(page, "Megumi — Pyro");
+  await page.click("#manifestToJourney");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(Math.max(0, avant - pris));
+
+  // Le ✕ débarque le fret ; il ne DÉCHARGE pas la jambe — rien n'est revenu au rayon.
+  await page.click("#viewEnroute");
+  await page.locator("#holdClear").click();
+  await expect(page.locator("#holdCard")).toBeHidden();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i);
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(Math.max(0, avant - pris));
+
+  // Le clic suivant ANNULE, il ne recharge pas : le rayon retrouve exactement sa valeur d'origine.
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/chargé/i);
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(avant);
+});
+
+test("Soute : annuler une jambe ne rend au rayon que CE QU'ELLE y a pris (#22)", async ({ page }) => {
+  // Parcours A→B→A→C : les jambes 0 et 2 achètent la MÊME commodité au MÊME point. Annuler la
+  // première réécrivait un instantané ABSOLU du stock d'avant, effaçant la déduction de la seconde
+  // — la station reproposait aussitôt un stock fantôme, toujours à bord.
+  const plan = await page.evaluate(async () => {
+    const m = await (await fetch("data/market.json")).json();
+    const a = m.terminals.findIndex((t) => t.name === "Megumi");
+    if (a < 0) return null;
+    for (const c of m.commodities) {
+      const b = c.buys.find((x) => x[0] === a);
+      if (!b || !(b[2] >= 30)) continue;                                  // du stock, et de quoi le partager
+      const u = Math.floor(b[2] / 3);
+      // Une capacité de vente trop petite plafonnerait la ligne du manifeste, pas la prise.
+      const dest = c.sells.filter((x) => x[0] !== a && (x[2] == null || x[2] >= u)).slice(0, 2);
+      if (dest.length < 2) continue;
+      const nomSys = (i) => [m.terminals[i].name, m.terminals[i].system];
+      return { nom: c.name, units: u, a: nomSys(a), b: nomSys(dest[0][0]), d: nomSys(dest[1][0]) };
+    }
+    return null;
+  });
+  test.skip(!plan, "aucune commodité de Megumi n'a du stock à partager entre deux débouchés");
+
+  const [A, As] = plan.a, [B, Bs] = plan.b, [D, Ds] = plan.d;
+  // Le parcours passe par le lien partageable ; les manifestes des jambes 0 et 2 sont IMPOSÉS, sinon
+  // rien ne garantit qu'elles choisiraient la même commodité au même point.
+  await page.evaluate(({ A, B, D, nom, units }) => {
+    localStorage.setItem("best-hauling-journey-edits-v2", JSON.stringify({
+      [`0|${A}|${B}`]: [{ name: nom, units }],
+      [`1|${B}|${A}`]: [],
+      [`2|${A}|${D}`]: [{ name: nom, units }],
+    }));
+  }, { A, B, D, nom: plan.nom, units: plan.units });
+
+  const j = JSON.stringify({ c: 0, l: [[A, As, B, Bs], [B, Bs, A, As], [A, As, D, Ds]].map(([f, fs, t, ts]) => [f, fs, t, ts, plan.nom, 0, 0, 0]) });
+  await page.goto("/index.html#" + new URLSearchParams({ v: "enroute", cargo: "5000", useCargo: "1", j }).toString());
+  await page.reload(); // un `goto` qui ne change que le fragment ne relit pas l'état au démarrage
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveCount(2); // la jambe 1 ne charge rien
+
+  const station = `${A} — ${As}`;
+  const ref = await stockAchat(page, station, plan.nom);
+  expect(ref).toBeGreaterThanOrEqual(plan.units * 2);
+
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(0).click(); // jambe 0 : A→B
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units);
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(1).click(); // jambe 2 : A→C, même rayon
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units * 2);
+
+  // On se ravise sur la jambe 0 : le rayon ne récupère QUE ses SCU. Ceux de la jambe 2 sont
+  // toujours à bord, prise chez lui — les lui rendre inventerait du stock.
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(0).click();
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units);
+});
+
+test("Soute : une soute écrite AVANT le registre des chargements reste chargée et annulable", async ({ page }) => {
+  // Garde-fou de migration : chez qui a déjà du fret à bord, l'état « chargée » vit sur les lots
+  // (`leg`) et le stock d'avant dans `avant`. Sans reprise, la jambe repasserait à « ✓ chargé » au
+  // premier rechargement — le bug #21 servi à froid, sans que l'utilisateur ait rien touché.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
+  const avant = await stockAchat(page, "Megumi — Pyro", nom);
+  await manifesteDepuis(page, "Megumi — Pyro");
+  await page.click("#manifestToJourney");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  const apresCharge = await stockAchat(page, "Megumi — Pyro", nom);
+  expect(apresCharge).toBeLessThan(avant);
+  await page.click("#viewEnroute");
+
+  // On rétrograde le stockage au format d'avant : le registre disparaît, `avant` revient sur les lots.
+  await page.evaluate(() => {
+    const reg = JSON.parse(localStorage.getItem("best-hauling-jambes-chargees") || "{}");
+    const refs = new Map();
+    for (const prises of Object.values(reg)) for (const p of prises) refs.set(`${p.name}|${p.terminal}`, p.ref);
+    const vieux = JSON.parse(localStorage.getItem("best-hauling-hold") || "[]")
+      .map((l) => (refs.has(`${l.name}|${l.from}`) ? { ...l, avant: refs.get(`${l.name}|${l.from}`) } : l));
+    localStorage.setItem("best-hauling-hold", JSON.stringify(vieux));
+    localStorage.removeItem("best-hauling-jambes-chargees");
+  });
+  await page.reload();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i, { timeout: 8000 });
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(apresCharge); // la correction n'a pas bougé
+
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(avant); // annuler rend toujours exactement
 });
 
 test("Soute : recharger la même commodité crée un SECOND lot, sans fondre les prix", async ({ page }) => {

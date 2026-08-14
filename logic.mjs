@@ -1451,11 +1451,12 @@ export function removeJourneyStop(journey, stopIndex, bridge) {
   };
 }
 
-// ---------- Le RANG d'une jambe, et ses TROIS porteurs ----------
-// Trois choses sont indexées par le rang d'une jambe : le manifeste ÉDITÉ, le 🔒 qui dit pourquoi
-// il l'est, et l'étiquette `leg` que le chargement pose sur les lots de la soute. Retirer un arrêt
-// renumérote les jambes : n'en décaler que deux les fait diverger. C'est le troisième, oublié, qui
-// rendait « ✓ chargé » une jambe dont le fret était déjà à bord — et un second clic la doublait.
+// ---------- Le RANG d'une jambe, et ses QUATRE porteurs ----------
+// Quatre choses sont indexées par le rang d'une jambe : le manifeste ÉDITÉ, le 🔒 qui dit pourquoi
+// il l'est, l'étiquette `leg` que le chargement pose sur les lots de la soute, et l'entrée du
+// REGISTRE des chargements (plus bas). Retirer un arrêt renumérote les jambes : n'en décaler que
+// trois les fait diverger. C'est d'en avoir oublié un que venait le double chargement — la jambe
+// renumérotée se croyait vide alors que son fret était à bord.
 
 // Nouvelle clé d'une jambe après un retrait d'arrêt : la même, renumérotée — ou `null` si la jambe
 // a disparu du parcours. Une clé illisible ressort INTACTE : on ne renumérote pas ce qu'on n'a pas
@@ -1472,13 +1473,16 @@ export function cleApresRetrait(cle, { removedFrom, removedCount, insertedCount 
 
 const sansEtiquette = (lot) => { const { leg, ...reste } = lot; return reste; };
 
-// Réindexe LES TROIS PORTEURS d'un seul appel — c'est tout l'intérêt : ils ne peuvent plus
+// Réindexe LES QUATRE PORTEURS d'un seul appel — c'est tout l'intérêt : ils ne peuvent plus
 // diverger, et un appelant ne peut plus en oublier un. Les STORES perdent l'entrée d'une jambe
 // disparue (le plan qu'elle portait n'existe plus) ; les LOTS, jamais : le fret est réellement à
 // bord. On leur retire seulement leur étiquette — ils restent en soute, visibles, vendables, mais
 // rattachés à aucune jambe. Les recoller au pont A→C serait pire : sa cargaison est RECALCULÉE, le
 // voyage prétendrait l'avoir chargée, et son vrai chargement deviendrait impossible.
-export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrait) {
+// Le registre suit la même règle que les stores : la déduction d'une jambe disparue reste posée sur
+// le rayon — le fret est parti avec, il n'est pas revenu — mais plus rien ne peut l'annuler, comme
+// pour les lots qu'on vient de délier.
+export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [], chargements = {} }, retrait) {
   const decale = (store) => {
     const suivant = {};
     for (const [k, v] of Object.entries(store)) {
@@ -1490,6 +1494,7 @@ export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrai
   return {
     edits: decale(edits),
     pins: decale(pins),
+    chargements: decale(chargements),
     lots: lots.map((l) => {
       if (l.leg == null) return l;
       const n = cleApresRetrait(l.leg, retrait);
@@ -1504,6 +1509,83 @@ export function reindexerRangsJambe({ edits = {}, pins = {}, lots = [] }, retrai
 // corrigée pour les manifestes édités, à laquelle les étiquettes avaient échappé.
 export function detacherLotsDeJambe(lots) {
   return lots.map((l) => (l.leg == null ? l : sansEtiquette(l)));
+}
+
+// ---------- Le REGISTRE des chargements : quelle jambe a pris quoi, et où ----------
+// « Cette jambe est chargée » se DÉDUISAIT de la présence de ses lots en soute. Or la soute se vide
+// par bien d'autres chemins que « annuler » — son ✕, une vente, la vente implicite du départ — et
+// aucun ne rend quoi que ce soit au rayon. La jambe repassait donc à « ✓ chargé », le clic suivant
+// redéduisait, et la valeur d'origine du rayon partait avec les lots qui la portaient (100 → 40 → 0).
+// Le registre porte l'état EXPLICITEMENT, et il survit au fret : le fret peut quitter la soute, ce
+// qu'on doit au rayon reste dû.
+//
+//   { "<rang>|<from>|<to>": [ { name, terminal, ref, units }, … ] }
+//
+// Une entrée = une jambe chargée, même avec zéro prise (rayon au stock inconnu : rien à déduire,
+// mais la jambe est bel et bien engagée).
+//
+// `ref` est le stock du rayon AVANT toute déduction de jambe. C'est la TROISIÈME forme, la seule qui
+// tienne avec DEUX chargements au même point :
+//   - l'instantané absolu (« annuler rend les 100 d'avant ») efface la prise de l'autre jambe, et la
+//     station reproprose un stock fantôme qui est toujours à bord ;
+//   - le relatif (« stock effectif + units ») repart d'un chiffre que stockApres a pu écrêter à 0,
+//     et rend alors au rayon plus qu'il n'a jamais annoncé ;
+//   - la référence MOINS la somme des prises encore en cours tient dans les deux cas.
+
+// Ce qu'un point d'achat doit annoncer : sa `ref` (null si plus aucune jambe n'y prend rien) et le
+// total `pris` par les jambes encore chargées. `sauf` exclut une jambe — celle qu'on annule.
+// La `ref` retenue est la PLUS GRANDE : deux prises au même point la partagent par construction,
+// sauf après migration d'une soute ancienne où chaque lot portait le stock déjà amputé qu'il avait
+// lu. La plus grande est alors la plus ancienne, donc ce que la station annonçait vraiment.
+export function soldeDuPoint(chargements, name, terminal, sauf = null) {
+  let ref = null, pris = 0;
+  for (const [cle, prises] of Object.entries(chargements || {})) {
+    if (cle === sauf || !Array.isArray(prises)) continue;
+    for (const p of prises) {
+      if (p.name !== name || p.terminal !== terminal || p.ref == null) continue;
+      if (ref == null || p.ref > ref) ref = p.ref;
+      pris += Math.max(0, Math.floor(p.units || 0));
+    }
+  }
+  return { ref, pris };
+}
+
+export function poserChargement(chargements, cle, prises) {
+  return {
+    ...chargements,
+    [cle]: (prises || []).map((p) => ({ name: p.name, terminal: p.terminal, ref: p.ref, units: p.units })),
+  };
+}
+
+export function retirerChargement(chargements, cle) {
+  const { [cle]: _parti, ...reste } = chargements || {};
+  return reste;
+}
+
+// Une soute écrite AVANT le registre : l'état vivait dans la présence des lots, et le stock d'avant
+// dans leur champ `avant`. On reconstruit le registre à partir d'eux — sans quoi une jambe déjà
+// chargée repasserait à « ✓ chargé » au premier rechargement de page, chez un utilisateur qui n'a
+// rien touché. Aucune correction n'est écrite : on ne fait que retrouver qui a pris quoi.
+// `avant` est ensuite retiré des lots — le registre le porte, et deux sources divergeraient.
+// Renvoie { chargements, lots, change } ; `change` faux = rien à persister.
+export function migrerChargements(chargements, lots) {
+  const connus = chargements || {};
+  const source = lots || [];
+  const ajout = {};
+  let vieux = false;
+  for (const l of source) {
+    if ("avant" in l) vieux = true;
+    if (l.leg == null || connus[l.leg]) continue; // le registre existant fait foi sur ses jambes
+    const prises = ajout[l.leg] || (ajout[l.leg] = []);
+    if (l.avant == null) continue;                // rien de déductible : la jambe est chargée, sans prise
+    prises.push({ name: l.name, terminal: l.from, ref: l.avant, units: l.units || 0 });
+  }
+  const suivant = Object.keys(ajout).length ? { ...connus, ...ajout } : connus;
+  return {
+    chargements: suivant,
+    lots: vieux ? source.map((l) => { const { avant: _a, ...reste } = l; return reste; }) : source,
+    change: vieux || suivant !== connus,
+  };
 }
 
 // Déplace la position courante (bornée à 0..legs.length).

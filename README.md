@@ -268,8 +268,16 @@ Trois règles à connaître :
 **correction locale** comme une autre, ancrée à la date UEX du point, donc périmée dès qu'UEX
 republie. Sans elle, la station continuait d'annoncer un stock déjà emporté et le manifeste suivant
 le reproposait. Si tu as pris **plus** que le stock publié, le rayon tombe à **0** et jamais en
-négatif : le relevé était faux, c'est tout ce qu'on en sait. Annuler le chargement rend exactement
-ce qui avait été retiré — le lot porte la valeur d'avant.
+négatif : le relevé était faux, c'est tout ce qu'on en sait. Annuler un chargement rend au rayon
+**ce que cette jambe-là y a pris**, et rien de plus : sur un aller-retour où deux jambes achètent au
+même point, se raviser sur la première laisse la seconde déduite. Lui rendre le stock d'avant
+reproposerait une cargaison qui est toujours à bord.
+
+**Une jambe chargée le reste tant que tu ne l'annules pas.** Vendre, déposer, vider la soute par son
+✕ : tous ces gestes sortent le fret, aucun ne le remet en rayon. Le bouton reste donc `⬢ à bord` et
+la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il rend toujours exactement ce
+qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
+et le rayon était déduit une seconde fois depuis un chiffre déjà amputé.
 
 **Vendre, déposer, repartir.** Un bouton par commodité ouvre un champ prérempli au total :
 valider vend tout, réduire vend partiellement. Ce que le comptoir n'a pas pris est marqué
