@@ -1276,11 +1276,38 @@ test("Compagnon de voyage : une suggestion filtrée par la vue n'est jamais prop
   await expect(page.locator("#journeyCard .jcargo-item .illegal")).toHaveCount(0);
 });
 
+// Démarre un voyage depuis la première ligne DONT LA JAMBE A UN MANIFESTE ÉDITABLE.
+//
+// Ces amorces cliquaient la première ligne du tableau. Elles dépendaient donc de l'ORDRE du
+// classement, qui a changé avec l'ADR-005 (tri sur le profit net) : la nouvelle tête de liste mène
+// à une jambe sans manifeste à éditer, et `.jman` n'apparaît jamais. Le défaut n'était pas visible
+// chez moi et l'était en CI — la démonstration qu'un test adossé à « la première ligne » teste le
+// classement en croyant tester autre chose.
+//
+// On balaie donc les premières lignes jusqu'à en trouver une qui convient, et on échoue franchement
+// si aucune ne convient : ça, ce serait une vraie régression de l'éditeur de jambe.
+async function ouvrirUneJambeEditable(page, essais = 10, convient = null) {
+  for (let i = 0; i < essais; i++) {
+    const lignes = page.locator("#rows tr");
+    if (i >= (await lignes.count())) break;
+    await lignes.nth(i).locator(".journey-pick").click();
+    const charge = page.locator("#journeyCard .jcargo-item").first();
+    if (await charge.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await page.locator("#journeyCard .jleg-head").first().click();
+      if (await page.locator("#journeyCard .jman").isVisible({ timeout: 2000 }).catch(() => false)) {
+        if (!convient || (await convient())) return;
+      }
+    }
+    await page.locator("#journeyClear").click().catch(() => {});
+    // Un voyage effacé laisse une entrée vide dans le store d'intentions : on la retire, sinon les
+    // tests qui vérifient « aucune intention enregistrée » liraient les traces du balayage.
+    await page.evaluate(() => localStorage.removeItem("best-hauling-journey-edits-v2"));
+  }
+  throw new Error("aucune des premières lignes ne mène à une jambe qui convienne");
+}
+
 test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors lien", async ({ page }) => {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();          // déplie l'éditeur
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
+  await ouvrirUneJambeEditable(page);
   await page.locator("#journeyCard .jman-qty").first().fill("7");
   await page.locator("#journeyCard .jman-qty").first().blur();
   await expect(page.locator("#journeyCard .jleg-edited")).toHaveCount(1);  // ✎ = manifeste personnalisé
@@ -1294,14 +1321,21 @@ test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors
 
 // Déplie l'éditeur de la 1re jambe et vide les SCU de chaque ligne (1 SCU) pour libérer la soute,
 // quel que soit le manifeste optimal du jour -> il reste forcément de la place à suggérer.
-async function openLegEditorWithFreeSpace(page) {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
-  const qty = page.locator("#journeyCard .jman-qty");
-  for (let i = 0; i < (await qty.count()); i++) await qty.nth(i).fill("1");
-  await qty.first().blur();
+// Ouvre une jambe ET libère de la place — assez pour qu'une saisie de plusieurs dizaines de SCU
+// laisse encore des SCU libres. Sans ce seuil, la boîte de suggestions disparaît en cours de test
+// sur une jambe étroite, et l'assertion échoue sur un élément absent plutôt que sur son contenu.
+async function openLegEditorWithFreeSpace(page, libresMin = 60) {
+  const libres = async () => {
+    const t = await page.locator("#journeyCard .jman-suggest .suggest-head").innerText().catch(() => "");
+    const m = t.match(/(\d+)\s*SCU libres/i);
+    return m ? Number(m[1]) : 0;
+  };
+  await ouvrirUneJambeEditable(page, 10, async () => {
+    const qty = page.locator("#journeyCard .jman-qty");
+    for (let i = 0; i < (await qty.count()); i++) await qty.nth(i).fill("1");
+    await qty.first().blur();
+    return (await libres()) >= libresMin;
+  });
 }
 
 test("Compagnon de voyage : libérer des SCU dans une jambe propose de quoi remplir", async ({ page }) => {
@@ -1700,10 +1734,7 @@ test("les filtres à saisie libre sont débouncés : un mot tapé ne re-rend qu'
 // Ouvre l'éditeur d'une jambe SANS y toucher (le helper ci-dessus, lui, ajuste les SCU et bascule
 // donc la jambe en « éditée » — ce qu'on veut justement éviter ici).
 async function openLegEditorPristine(page) {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
+  await ouvrirUneJambeEditable(page);
 }
 
 test("jambe : un ajout refusé pour doublon ne bascule pas la jambe en « éditée »", async ({ page }) => {
@@ -1717,7 +1748,10 @@ test("jambe : un ajout refusé pour doublon ne bascule pas la jambe en « édit�
   // Rien n'a été ajouté ET la jambe n'est pas devenue « personnalisée » : sans le correctif,
   // materializeLeg s'exécutait AVANT la garde et gelait le manifeste sur les prix du jour.
   await expect(page.locator("#journeyCard .jleg-edited")).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem("best-hauling-journey-edits-v2"))).toBeFalsy();
+  // Sur le CONTENU, pas sur la chaîne : un voyage effacé écrit "{}", qui est « truthy » tout en
+  // n'enregistrant aucune intention. C'est l'absence d'intention qu'on veut ici.
+  const edits = await page.evaluate(() => JSON.parse(localStorage.getItem("best-hauling-journey-edits-v2") || "{}"));
+  expect(Object.keys(edits)).toEqual([]);
 });
 
 test("jambe : seule l'intention est persistée, jamais un instantané de marché", async ({ page }) => {
