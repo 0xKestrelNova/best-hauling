@@ -1276,11 +1276,33 @@ test("Compagnon de voyage : une suggestion filtrée par la vue n'est jamais prop
   await expect(page.locator("#journeyCard .jcargo-item .illegal")).toHaveCount(0);
 });
 
+// Démarre un voyage depuis la première ligne DONT LA JAMBE A UN MANIFESTE ÉDITABLE.
+//
+// Ces amorces cliquaient la première ligne du tableau. Elles dépendaient donc de l'ORDRE du
+// classement, qui a changé avec l'ADR-005 (tri sur le profit net) : la nouvelle tête de liste mène
+// à une jambe sans manifeste à éditer, et `.jman` n'apparaît jamais. Le défaut n'était pas visible
+// chez moi et l'était en CI — la démonstration qu'un test adossé à « la première ligne » teste le
+// classement en croyant tester autre chose.
+//
+// On balaie donc les premières lignes jusqu'à en trouver une qui convient, et on échoue franchement
+// si aucune ne convient : ça, ce serait une vraie régression de l'éditeur de jambe.
+async function ouvrirUneJambeEditable(page, essais = 10) {
+  for (let i = 0; i < essais; i++) {
+    const lignes = page.locator("#rows tr");
+    if (i >= (await lignes.count())) break;
+    await lignes.nth(i).locator(".journey-pick").click();
+    const charge = page.locator("#journeyCard .jcargo-item").first();
+    if (await charge.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await page.locator("#journeyCard .jleg-head").first().click();
+      if (await page.locator("#journeyCard .jman").isVisible({ timeout: 2000 }).catch(() => false)) return;
+    }
+    await page.locator("#journeyClear").click().catch(() => {});
+  }
+  throw new Error("aucune des premières lignes ne mène à une jambe au manifeste éditable");
+}
+
 test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors lien", async ({ page }) => {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();          // déplie l'éditeur
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
+  await ouvrirUneJambeEditable(page);
   await page.locator("#journeyCard .jman-qty").first().fill("7");
   await page.locator("#journeyCard .jman-qty").first().blur();
   await expect(page.locator("#journeyCard .jleg-edited")).toHaveCount(1);  // ✎ = manifeste personnalisé
@@ -1295,10 +1317,7 @@ test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors
 // Déplie l'éditeur de la 1re jambe et vide les SCU de chaque ligne (1 SCU) pour libérer la soute,
 // quel que soit le manifeste optimal du jour -> il reste forcément de la place à suggérer.
 async function openLegEditorWithFreeSpace(page) {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
+  await ouvrirUneJambeEditable(page);
   const qty = page.locator("#journeyCard .jman-qty");
   for (let i = 0; i < (await qty.count()); i++) await qty.nth(i).fill("1");
   await qty.first().blur();
@@ -1700,10 +1719,7 @@ test("les filtres à saisie libre sont débouncés : un mot tapé ne re-rend qu'
 // Ouvre l'éditeur d'une jambe SANS y toucher (le helper ci-dessus, lui, ajuste les SCU et bascule
 // donc la jambe en « éditée » — ce qu'on veut justement éviter ici).
 async function openLegEditorPristine(page) {
-  await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 8000 });
-  await page.locator("#journeyCard .jleg-head").first().click();
-  await expect(page.locator("#journeyCard .jman")).toBeVisible();
+  await ouvrirUneJambeEditable(page);
 }
 
 test("jambe : un ajout refusé pour doublon ne bascule pas la jambe en « éditée »", async ({ page }) => {
