@@ -193,6 +193,11 @@ h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 26px; 
 .rs-updated b { color: var(--text); font-size: 11px; }
 .rs-counts { font-size: 10px; color: var(--muted); line-height: 1.65; }
 .rs-counts b { color: var(--acc); }
+/* Version déployée : présente, jamais bruyante. Plus discrète que les compteurs au-dessus — on la
+   cherche quand on rédige un rapport de bug, on ne la lit pas en travaillant. `:empty` la retire du
+   flux tant que l'estampille manque, sinon elle laisserait une marge orpheline. */
+.rail-version { margin-top: 9px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.5px; color: var(--muted); opacity: 0.65; }
+.rail-version:empty { display: none; }
 
 main { padding: 22px 30px 40px; }
 

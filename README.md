@@ -454,6 +454,40 @@ Les relevés bruts et le raisonnement complet sont dans
   « même système » contraint la Chaîne). Playwright est une dépendance **de dev uniquement** — le site livré reste sans dépendance.
 - **CI** ([`ci.yml`](.github/workflows/ci.yml)) : unitaires + E2E sur chaque push/PR.
 
+## Versions et déploiement
+
+`main` **est** la production : un push y déclenche la reconstruction et le déploiement Pages. Il n'y
+a rien à télécharger — les *releases* GitHub ne servent donc pas à distribuer, seulement à donner un
+changelog liable et un point de retour nommé.
+
+La version vit dans **`package.json`**, et nulle part ailleurs. Elle redescend à trois endroits qui
+ne peuvent pas la lire eux-mêmes, via [`scripts/version.mjs`](scripts/version.mjs) :
+
+| Où | Comment |
+|---|---|
+| le nom du cache de [`sw.js`](sw.js) | écrit à la main, **vérifié par un test** |
+| `data/meta.json` | écrit au build, avec le commit court du runner |
+| le bas du rail | lu depuis ce `meta.json` |
+
+Le nom du cache n'est pas décoratif : la coquille est servie en *stale-while-revalidate*, donc sans
+changement de nom un visiteur déjà installé continue de recevoir l'**ancien** `index.html` pendant
+toute une visite. Le bump était manuel, donc oubliable ; `node --test` échoue désormais s'il ne suit
+pas la version.
+
+### Clôturer un jalon
+
+Quand toutes les issues d'un jalon sont fermées, trois commandes :
+
+```bash
+npm version 1.0.1 --no-git-tag-version   # bump package.json
+# bump le CACHE de sw.js pour qu'il suive — `node --test` refuse le contraire
+git commit -am "chore(release): v1.0.1" && git push
+gh release create v1.0.1 --generate-notes   # tag + changelog assemblé depuis les PR fusionnées
+```
+
+Les notes sont **générées** à partir des titres de PR : c'est pour ça qu'ils décrivent ce qui change
+pour l'utilisateur plutôt que le fichier qui a bougé.
+
 ## Personnalisation
 
 - Fréquence de mise à jour : le `cron` dans [`update-data.yml`](.github/workflows/update-data.yml).

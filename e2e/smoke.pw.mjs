@@ -2244,3 +2244,47 @@ for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur:
     expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(1);
   });
 }
+
+// #75 : l'app n'affichait AUCUNE version. Un rapport de bug n'était rattachable à rien — on ne
+// savait pas si l'utilisateur regardait le `main` d'il y a dix minutes ou une coquille servie
+// depuis son cache d'il y a trois semaines. L'estampille vient de meta.json, écrite au build : on
+// l'injecte ici, parce que l'amorce versionnée dans data/ ne la porte pas tant qu'aucun build n'est
+// passé (même raison que l'enrichissement de market.json dans autoload.pw.mjs).
+test.describe("version déployée", () => {
+  // `serviceWorkers: "block"` est INDISPENSABLE, comme dans autoload.pw.mjs : le service worker sert
+  // data/meta.json depuis son cache (réseau d'abord, cache en repli), et page.route ne voit alors
+  // jamais passer la requête — l'interception ci-dessous serait silencieusement sans effet.
+  test.use({ serviceWorkers: "block" });
+
+  test("version : l'estampille du déploiement s'affiche dans le rail (#75)", async ({ page }) => {
+    await page.route("**/data/meta.json", async (route) => {
+      const res = await route.fetch();
+      const meta = await res.json();
+      await route.fulfill({ response: res, json: { ...meta, app_version: "9.9.9", commit: "abc1234" } });
+    });
+    await page.goto("/index.html");
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+
+    const v = page.locator("#railVersion");
+    await expect(v).toHaveText("v9.9.9 · abc1234");
+    await expect(v).toHaveAttribute("title", /rapport de bug/);
+  });
+
+  test("version : sans estampille, le rail ne montre rien plutôt qu'un « v— » (#75)", async ({ page }) => {
+    // L'amorce du dépôt n'a pas encore d'app_version : c'est le cas nominal en local, il ne doit pas
+    // produire de trou dans le rail. `:empty { display: none }` s'en charge, encore faut-il que le
+    // code ne remplisse pas l'élément avec un repli.
+    await page.route("**/data/meta.json", async (route) => {
+      const res = await route.fetch();
+      const meta = await res.json();
+      delete meta.app_version;
+      delete meta.commit;
+      await route.fulfill({ response: res, json: meta });
+    });
+    await page.goto("/index.html");
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+    await expect(page.locator("#railVersion")).toHaveText("");
+    await expect(page.locator("#railVersion")).toBeHidden(); // :empty le retire du flux
+  });
+});
+

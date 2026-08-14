@@ -3470,6 +3470,16 @@ async function init() {
       if (rs) rs.innerHTML =
         `<div class="rs-updated">Dernière MàJ<br><b>${exact}</b></div>` +
         `<div class="rs-counts"><b>${meta.routes}</b> routes · <b>${meta.loops ?? LOOPS.length}</b> boucles · <b>${meta.commodities}</b> commodités</div>`;
+      // Version déployée, et le commit qui l'a produite. Sans ça, un rapport de bug n'est
+      // rattachable à rien : on ne sait pas si l'utilisateur regarde le `main` d'il y a dix minutes
+      // ou une coquille servie depuis son cache d'il y a trois semaines. Silencieux si l'estampille
+      // manque — l'amorce versionnée dans data/ ne la porte pas tant qu'un build n'est pas passé,
+      // et « v— » vaudrait moins que rien.
+      const rv = $("railVersion");
+      if (rv && meta.app_version) {
+        rv.textContent = `v${meta.app_version}${meta.commit ? ` · ${meta.commit}` : ""}`;
+        rv.title = `Version déployée${meta.commit ? ` — commit ${meta.commit}` : ""}. À citer dans un rapport de bug.`;
+      }
     }
     // Applique l'état restauré une fois le menu système peuplé, puis affiche la bonne vue.
     applyState(saved);

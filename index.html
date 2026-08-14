@@ -74,6 +74,11 @@
       <div class="rail-status">
         <div class="rail-status-head"><span class="live-dot"></span><span class="rl">Flux UEX</span></div>
         <div class="rail-status-body rl" id="railStatus"></div>
+        <!-- Version déployée. Ici et pas dans .brand : ce bloc est déjà la zone d'état du rail, et
+             la marque est convoitée par le retour à l'accueil (#61) et le bouton de tuto (#62).
+             Reste vide tant que meta.json ne porte pas l'estampille — en local, l'amorce versionnée
+             n'en a pas, et afficher « v— » vaudrait moins que ne rien afficher. -->
+        <div class="rail-version rl" id="railVersion"></div>
       </div>
     </nav>
 
