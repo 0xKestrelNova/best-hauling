@@ -818,15 +818,66 @@ export function manifestsFrom(market, origin, destSystem, f, resolve, destTermin
     // un chiffre qui n'est pas celui qui classe le manifeste : les frais grossissent avec le volume,
     // donc le remplissage le plus chargé n'est pas toujours le plus rentable une fois déduits.
     // Une ligne dont les frais dépassent la marge fait perdre de l'argent : la charger quand même
-    // classerait ce manifeste sous un autre qui, lui, l'aurait laissée au sol. La place libérée ne
-    // se recycle pas — les candidates suivantes sont moins rentables, par construction du tri.
-    const evalue = (rempli) => {
-      const kept = fee ? rempli.lines.filter((l) => l.units * l.margin > lineHaulFee(l.units, l, fee)) : rempli.lines;
-      return { lines: kept, profit: fee ? manifestTotals(kept, fee).profit : rempli.profit };
+    // classerait ce manifeste sous un autre qui, lui, l'aurait laissée au sol. Mais une ligne ne se
+    // juge PAS seule, et c'est ce que faisait le filtre `units * margin > lineHaulFee` appliqué
+    // après coup (#41) : il ratait les deux moitiés de la question.
+    //   - La place de la ligne écartée n'était rendue à personne. Le tri classe sur la marge au SCU,
+    //     le filtre coupait sur la marge TOTALE, et les deux ne sont pas monotones l'un dans
+    //     l'autre : une petite ligne à très forte marge préempte de la place en tête de tri, puis se
+    //     fait écarter faute de couvrir la base de frais — 1 SCU de soute restait vide devant
+    //     1 337 SCU à quai.
+    //   - Une ligne rentable SEULE peut coûter au manifeste plus qu'elle ne rapporte : 1 SCU de
+    //     Methane gagne 667 net, mais prend sa place aux 739 du Nitrogen et paie une base de frais
+    //     de plus. Rentable, et pourtant à laisser au sol.
+    // D'où le seul critère juste : une ligne reste si le manifeste vaut plus AVEC elle que sans, ce
+    // qui suppose de rebâtir le chargement à chaque retrait — la place libérée retourne alors
+    // d'elle-même aux candidates suivantes. Le tour qui n'améliore rien s'arrête, et une candidate
+    // retirée ne revient jamais : la boucle est bornée par le nombre de candidates.
+    // Ça ne rend pas `fillCargo` optimal — le sac à dos à deux contraintes reste hors de portée.
+    // Ce qui est acquis : soute seule contrainte, un manifeste ne rapporte jamais moins que sa
+    // meilleure commodité seule (0 contre-exemple sur les 167 434 arcs de l'instantané). Sous
+    // budget bornant, c'est le budget qui joue la seconde contrainte et il en reste 16 sur 499 772.
+
+    // Remplit, puis retire les lignes qui ne couvrent même pas leurs propres frais (lineNet <= 0) —
+    // et recommence, parce que le retrait rend de la place et que les suivantes chargent davantage,
+    // ce qui peut à son tour rendre déficitaire une ligne qui tenait à plus petit volume.
+    // Ce verdict-là ne vaut QUE pour le chargement qui vient d'être bâti : il dépend du volume
+    // attribué, donc de qui d'autre est à bord. 126 SCU de Human Food Bars perdent 60 aUEC là où
+    // 128 en gagnent 200 — deux SCU de moins et la cargaison ne tient plus en caisses de 32. Le
+    // rejet reste donc LOCAL à cet appel, et `evalue` repart toujours des candidates au complet.
+    const remplir = (liste) => {
+      let restantes = liste;
+      for (;;) {
+        const rempli = fillCargo(restantes, f.cargo, budget);
+        const jetees = new Set();
+        const lines = rempli.lines.filter((l) => {
+          if (lineNet(l.units, l, fee) > 0) return true;
+          jetees.add(l.name);
+          return false;
+        });
+        if (!jetees.size) return { lines, profit: manifestTotals(lines, fee).profit };
+        restantes = restantes.filter((c) => !jetees.has(c.name));
+      }
     };
-    let meilleur = evalue(fillCargo([...items].sort(parMarge), f.cargo, budget));
+    const evalue = (ordre) => {
+      const candidates = [...items].sort(ordre);
+      if (!fee) return fillCargo(candidates, f.cargo, budget);
+      const laissees = new Set();                       // écartées pour de bon : une par tour, jamais reprises
+      let retenu = remplir(candidates);
+      for (;;) {
+        let mieux = null, sacrifiee = null;
+        for (const l of retenu.lines) {
+          const essai = remplir(candidates.filter((c) => c.name !== l.name && !laissees.has(c.name)));
+          if (!mieux || essai.profit > mieux.profit) { mieux = essai; sacrifiee = l.name; }
+        }
+        if (!mieux || mieux.profit <= retenu.profit) return retenu;
+        laissees.add(sacrifiee);
+        retenu = mieux;
+      }
+    };
+    let meilleur = evalue(parMarge);
     if (isFinite(budget)) {
-      const alt = evalue(fillCargo([...items].sort(parRendement), f.cargo, budget));
+      const alt = evalue(parRendement);
       if (alt.profit > meilleur.profit) meilleur = alt;
     }
     if (!meilleur.lines.length) continue;
