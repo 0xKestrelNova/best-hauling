@@ -486,11 +486,16 @@ pas la version.
 Quand toutes les issues d'un jalon sont fermées, trois commandes :
 
 ```bash
-npm version 1.0.1 --no-git-tag-version   # bump package.json
+git checkout -b chore/release-v1-0-1        # `main` ne reçoit jamais de commit direct
+npm version 1.0.1 --no-git-tag-version      # bump package.json
 # bump le CACHE de sw.js pour qu'il suive — `node --test` refuse le contraire
-git commit -am "chore(release): v1.0.1" && git push
+git commit -am "chore(release): v1.0.1" && git push -u origin HEAD
+gh pr create --label chore && gh pr merge --merge   # CI verte, puis fusion
+git checkout main && git pull
 gh release create v1.0.1 --generate-notes   # tag + changelog assemblé depuis les PR fusionnées
 ```
+
+Le tag se pose **après** la fusion, sur `main` : il doit désigner le commit réellement déployé.
 
 Les notes sont **générées** à partir des titres de PR : c'est pour ça qu'ils décrivent ce qui change
 pour l'utilisateur plutôt que le fichier qui a bougé.
