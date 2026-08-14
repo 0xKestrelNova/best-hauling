@@ -675,7 +675,7 @@ tbody tr:hover td { border-bottom-color: var(--line2); }
 /* Pastille de fraîcheur : dernière ligne, en bas de la cellule. */
 .loc-fresh { margin-top: 6px; }
 /* Boucles : Départ / ⇄ inter-système / Arrivée empilés sur 3 lignes, mêmes styles pour les
-   deux noms (via .term-name). Le bouton 🗺 est le 1er enfant du td -> la règle générique
+   deux noms (via .term-name). Le bouton ▶ est le 1er enfant du td -> la règle générique
    « .loc > div:first-child » ne cible pas .loop-ends (aucun div n'est premier enfant). */
 .loop-arrow { color: var(--acc); font-weight: 700; font-size: 13px; }
 .loop-cell { display: flex; align-items: flex-start; gap: 8px; }
@@ -1047,7 +1047,7 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 /* Icônes des commodités chargées, dans la cellule de gauche du tableau. */
 .multi-icons { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
 .multi-icons .muted { font-size: 10px; }
-/* Chargement détaillé (dépliage 🗺) : même grille que les suggestions, + une colonne caisses. */
+/* Chargement détaillé (dépliage 📦) : même grille que les suggestions, + une colonne caisses. */
 /* Le chargement est désormais SEUL dans la rangée dépliée : il y reprend le liseré ambre et le
    retrait que .schema portait au-dessus de lui (#30). Le trait supérieur, qui ne servait qu'à l'en
    séparer, n'a plus rien à séparer. */
