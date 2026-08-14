@@ -938,6 +938,78 @@ async function corrige(page, champ, cote, valeur) {
 }
 const profitJambe = (page) => page.locator("#journeyCard .jleg-profit").first();
 
+// ---------- Le chargement qu'on COMPOSE à la main sur la carte Manifeste (#19) ----------
+// Ajoute au manifeste une commodité qui n'y est pas encore, et rend son nom.
+async function ajouteAuManifeste(page) {
+  const dejaLa = await page.locator("#manifest .mname").allInnerTexts();
+  const opts = await page.locator("#commodityList option").evaluateAll((els) => els.map((e) => e.value));
+  const nom = opts.find((o) => !dejaLa.some((h) => h.includes(o)));
+  await page.fill("#manifestAddInput", nom);
+  await page.click("#manifestAddBtn");
+  return nom;
+}
+
+test("Manifeste : une composition à la main survit à un prix corrigé (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  test.skip(!(await page.locator("#manifestAddInput").count()), "aucun chargement rentable depuis ce terminal");
+  const ajoutee = await ajouteAuManifeste(page);
+  const lignes = await page.locator("#manifest .mline").count();
+  const qty = page.locator("#manifest .mqty-input").first();
+  await qty.fill("30");
+  await qty.blur();
+
+  // Le geste du bug : corriger un prix d'achat depuis la carte, qui rend ses chiffres en `editv` et
+  // invite donc explicitement au geste. renderManifest remettait `currentManifest` à null et
+  // recalculait tout : la ligne ajoutée disparaissait et les SCU repartaient à leur valeur optimale.
+  await corrige(page, "price", "buy", 4321);
+
+  await expect(page.locator("#manifest .mline")).toHaveCount(lignes);
+  // `.mline .mname` et non `.mname` : les suggestions de remplissage portent le même nom de classe.
+  await expect(page.locator("#manifest .mline .mname").last()).toContainText(ajoutee);
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue("30");
+  // …et la carte affiche bien le prix qu'on vient de corriger : l'intention survit, pas le marché.
+  await expect(page.locator("#manifest .editv[data-f='price'][data-s='buy']").first())
+    .toHaveAttribute("data-v", "4321");
+});
+
+test("Manifeste : la composition se recharge, et « ↺ optimal » rend la main au calcul (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const qty = page.locator("#manifest .mqty-input").first();
+  const optimal = await qty.inputValue();
+  test.skip(optimal === "30", "le chargement optimal charge déjà les SCU que le test va saisir");
+  await qty.fill("30");
+  await qty.blur();
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(1); // ✎ : composé à la main
+
+  // Persistée comme le manifeste d'une jambe de voyage : le rechargement ne l'efface pas.
+  await page.reload();
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue("30", { timeout: 8000 });
+
+  await page.click("#manifestReset");
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue(optimal);
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(0);
+});
+
+test("Manifeste : changer de quai de départ abandonne la composition (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const qty = page.locator("#manifest .mqty-input").first();
+  const optimal = await qty.inputValue();
+  test.skip(optimal === "30", "le chargement optimal charge déjà les SCU que le test va saisir");
+  await qty.fill("30");
+  await qty.blur();
+
+  // Un autre quai : la composition ne le suit pas — ses lignes se lisent aux prix de Megumi.
+  const autre = await page.locator("#originList option").evaluateAll(
+    (els) => els.map((e) => e.value).find((v) => !v.startsWith("Megumi")),
+  );
+  await page.fill("#origin", autre);
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(0);
+  // Et de retour à Megumi : le calcul, pas la composition d'avant, qui ressortirait sans qu'on
+  // l'ait demandée.
+  await page.fill("#origin", "Megumi — Pyro");
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue(optimal);
+});
+
 test("Corrections : un prix corrigé se retrouve dans le board Commodités", async ({ page }) => {
   // Le board lisait market.json BRUT, sans résolveur : on corrigeait un prix dans un tableau et la
   // tuile gardait la marge d'UEX — donc un classement et une heatmap sur un chiffre démenti.

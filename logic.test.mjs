@@ -15,7 +15,7 @@ import {
   manifestsFrom, multiTrips, tripMetrics, legFromTrip,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, legsToPin,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
   refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
@@ -2626,6 +2626,31 @@ test("sameIntent : distingue longueur, nom et SCU", () => {
   assert.equal(sameIntent(a, [{ name: "Gold", units: 300 }, { name: "Butin", units: 10 }]), false); // nom
   assert.equal(sameIntent(a, [{ name: "Gold", units: 299 }, { name: "Drug", units: 10 }]), false);  // SCU
   assert.equal(sameIntent([], []), true);
+});
+
+// ---------- Composition en cours de la carte Manifeste (#19) ----------
+// L'intention d'« En route » porte sur un COUPLE de terminaux. Ce qui la garde en vie, et ce qui
+// l'abandonne, est la question que l'issue posait : la voici, en une règle qu'on peut lire.
+const COMPO = { from: "Megumi", fromSystem: "Pyro", to: "Rod's Fuel", toSystem: "Pyro", lines: [{ name: "Copper", units: 30 }] };
+const VUE_COMPO = { from: { name: "Megumi", system: "Pyro" }, dest: null, destSystem: "" };
+
+test("manifestIntentSurvives : le couple de terminaux décide, et rien d'autre", () => {
+  assert.equal(manifestIntentSurvives(COMPO, VUE_COMPO), true);
+  // Forcer l'arrivée SUR la station qu'on composait déjà ne change pas de route.
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, dest: { name: "Rod's Fuel", system: "Pyro" } }), true);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, destSystem: "Pyro" }), true);
+  // Vidée à la main, elle reste une intention : lui rendre l'optimal serait le défaut qu'on corrige.
+  assert.equal(manifestIntentSurvives({ ...COMPO, lines: [] }, VUE_COMPO), true);
+});
+
+test("manifestIntentSurvives : seule une AUTRE route l'abandonne", () => {
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, from: { name: "Checkmate", system: "Pyro" } }), false);
+  // Homonymes : même nom, autre système, autre quai — c'est de ces terminaux-là que les prix se lisent.
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, from: { name: "Megumi", system: "Stanton" } }), false);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, dest: { name: "Checkmate", system: "Pyro" } }), false);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, destSystem: "Stanton" }), false);
+  assert.equal(manifestIntentSurvives(null, VUE_COMPO), false);
+  assert.equal(manifestIntentSurvives({ ...COMPO, lines: undefined }, VUE_COMPO), false); // store abîmé
 });
 
 test("manifeste intact : destination libre et destination forcée donnent le MÊME chargement", () => {

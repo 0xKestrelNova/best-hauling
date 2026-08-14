@@ -12,7 +12,7 @@ import {
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, legsToPin, journeyMap,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, sellableAt, sellAllAt,
   offloadPlan, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -863,6 +863,106 @@ function resolveDest() {
 
 let currentManifest = null; // manifeste courant, mutable (édition SCU + suggestions ajoutées)
 
+// ---------- Le chargement qu'on COMPOSE à la main (#19) ----------
+// Lignes ajoutées, SCU ramenés à ce qu'on veut vraiment acheter : cette intention n'existait que
+// dans `currentManifest`, que renderManifest remet à null à chaque rendu. Un prix corrigé, une
+// frappe dans la recherche ou un vaisseau changé l'effaçaient sans un mot. Elle se persiste donc
+// comme le manifeste d'une jambe de voyage, et SOUS LA MÊME FORME : l'INTENTION seule —
+// [{ name, units }] — jamais un instantané de marché, dont les prix se figeraient au jour de
+// l'édition (cf. hydrateManifestLine). Le couple de terminaux l'accompagne : c'est de LEURS prix
+// que ses lignes sont relues, et une composition ne vaut que pour la route qu'on composait.
+// Une seule à la fois, là où JOURNEY_EDITS en indexe une par jambe : la carte n'en montre qu'une, et
+// une composition rangée sous un couple qu'on ne regarde plus ressortirait des jours plus tard sans
+// qu'on l'ait demandée. Le système est stocké avec le nom — deux terminaux peuvent porter le même
+// nom dans deux systèmes, et les lignes se relisent par INDEX de terminal.
+const MANIFEST_EDIT_KEY = "best-hauling-manifest-edit";
+let MANIFEST_EDIT = null; // { from, fromSystem, to, toSystem, lines: [{ name, units }] } ou null
+function loadManifestEdit() {
+  try { MANIFEST_EDIT = JSON.parse(localStorage.getItem(MANIFEST_EDIT_KEY)) || null; } catch { MANIFEST_EDIT = null; }
+  if (!MANIFEST_EDIT || !Array.isArray(MANIFEST_EDIT.lines)) MANIFEST_EDIT = null;
+}
+function saveManifestEdit() {
+  try {
+    if (MANIFEST_EDIT) localStorage.setItem(MANIFEST_EDIT_KEY, JSON.stringify(MANIFEST_EDIT));
+    else localStorage.removeItem(MANIFEST_EDIT_KEY);
+  } catch {}
+}
+// Retient ce qui est à l'écran comme intention. Appelée par CHAQUE geste de composition — ajout
+// suggéré, ajout libre, retrait, SCU ajustés — parce que c'est le geste qui fait la composition,
+// pas son résultat : deux gestes qui se compensent laissent quand même une carte à soi.
+function retenirManifeste() {
+  const m = currentManifest;
+  if (!m) return;
+  MANIFEST_EDIT = {
+    from: m.origin.name, fromSystem: m.origin.system,
+    to: m.dest.name, toSystem: m.dest.system,
+    lines: manifestIntent(m.lines),
+  };
+  saveManifestEdit();
+}
+function oublierManifeste() { MANIFEST_EDIT = null; saveManifestEdit(); }
+// « ↺ optimal » : la carte redevient un calcul, et se remet à suivre le marché et les filtres.
+function resetManifeste() { oublierManifeste(); refresh(); }
+
+// La marque et le contrôle du chargement composé à la main. Les deux mêmes chaînes servent au rendu
+// de la carte ET à leur pose en direct à la première frappe dans un champ SCU : celle-là ne repeint
+// pas la carte (elle arracherait le champ qu'on remplit), et sans ces deux-là rien à l'écran ne
+// dirait que la carte est désormais la tienne, ni comment la rendre au calcul.
+const MANIFEST_MARQUE = '<span class="manifest-edited" title="Chargement composé à la main : ses lignes, ses SCU et cette destination sont les tiens. Les prix, eux, continuent de suivre le marché. « ↺ optimal » rend la main au calcul.">✎</span>';
+const MANIFEST_BOUTON_OPTIMAL = '<button id="manifestReset" type="button" class="manifest-reset" title="Revenir au chargement optimal calculé pour ce départ">↺ optimal</button>';
+function marquerManifesteCompose() {
+  const titre = $("manifest").querySelector(".manifest-title");
+  if (titre && !titre.querySelector(".manifest-edited")) titre.insertAdjacentHTML("beforeend", " " + MANIFEST_MARQUE);
+  const ajout = $("manifest").querySelector(".manifest-add");
+  if (ajout && !$("manifestReset")) ajout.insertAdjacentHTML("beforeend", MANIFEST_BOUTON_OPTIMAL);
+}
+
+// La composition vaut-elle pour la carte demandée ? Sinon elle est abandonnée SUR PLACE : la garder
+// en réserve la ferait ressurgir au retour sur cette route, longtemps après le geste qui l'a écrite.
+// Rend { edit, destIdx } ou null ; `destIdx` est l'arrivée que la carte doit alors afficher.
+function compositionEnCours(originIdx, destTerminal, destSystem) {
+  if (!MANIFEST_EDIT) return null;
+  const ot = MARKET.terminals[originIdx];
+  const dt = destTerminal == null ? null : MARKET.terminals[destTerminal];
+  const destIdx = stationMap.get(stationLabel(MANIFEST_EDIT.to, MANIFEST_EDIT.toSystem));
+  const vivante = destIdx != null && manifestIntentSurvives(MANIFEST_EDIT, {
+    from: { name: ot.name, system: ot.system },
+    dest: dt && { name: dt.name, system: dt.system },
+    destSystem,
+  });
+  if (!vivante) { oublierManifeste(); return null; }
+  // Commodité disparue d'UEX : oubliée plutôt qu'affichée en fantôme, comme sur une jambe de voyage.
+  // Purge SUR PLACE — les SCU sont adressés par index de ligne (`data-i`), l'intention et l'écran ne
+  // peuvent pas diverger d'un cran.
+  const gardees = MANIFEST_EDIT.lines.filter((e) => findCommodity(e.name));
+  const perdues = gardees.length !== MANIFEST_EDIT.lines.length;
+  if (perdues) { MANIFEST_EDIT.lines = gardees; saveManifestEdit(); }
+  // Vidée par cette purge, et non par un geste : la composition ne parlait plus que de commodités
+  // qui n'existent plus, la carte reprend son calcul. Vidée à la main, elle reste (cf. logic.mjs).
+  if (perdues && !gardees.length) { oublierManifeste(); return null; }
+  return { edit: MANIFEST_EDIT, destIdx };
+}
+
+// Lignes d'une composition, RELUES au marché courant : c'est ce qui fait qu'un prix corrigé
+// s'affiche alors que les SCU, eux, ne bougent pas.
+const lignesComposees = (edit, fromIdx, toIdx) =>
+  edit.lines.map((e) => hydrateManifestLine(MARKET, fromIdx, toIdx, findCommodity(e.name), e.units, effVals));
+
+// Carte d'un couple de terminaux dont plus AUCUN chargement n'est rentable : bestManifest ne rend
+// alors rien, et la composition faite à la main disparaîtrait avec lui — alors que le geste qui
+// vient de tuer la rentabilité (un prix d'achat corrigé vers le haut) est justement celui qui la
+// rend précieuse. Mêmes champs que ceux que manifestsFrom estampille sur un trajet ; les lignes
+// viennent de l'appelant.
+function manifesteSansOptimal(originIdx, destIdx, f) {
+  const ot = MARKET.terminals[originIdx], dt = MARKET.terminals[destIdx];
+  const point = feeResolver(f);
+  return {
+    origin: ot, originIdx, dest: dt, destIdx, cross: ot.system !== dt.system,
+    lines: [], profit: 0, cargo: f.cargo,
+    fee: point ? { buy: point(ot), sell: point(dt) } : null,
+  };
+}
+
 const isOv = (commodity, terminal, side, field) => {
   const o = OVERRIDES[ovKey(commodity, terminal, side)];
   return !!(o && o[field] != null);
@@ -931,6 +1031,7 @@ function addSuggestion(name) {
   const u = addableUnits(it, manifestRemaining());
   if (u <= 0) return;
   currentManifest.lines.push({ ...it, units: u, cap: u });
+  retenirManifeste();
   paintManifest();
 }
 
@@ -946,6 +1047,7 @@ function addManifestCommodity(name) {
   const c = findCommodity(name);
   if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
   m.lines.push(freeManifestLine(MARKET, m.originIdx, m.destIdx, c, manifestRemaining().cargoLeft, effVals));
+  retenirManifeste();
   paintManifest();
 }
 
@@ -954,6 +1056,7 @@ function removeManifestLine(name) {
   const m = currentManifest;
   if (!m) return;
   m.lines = m.lines.filter((l) => l.name !== name);
+  retenirManifeste();
   paintManifest();
 }
 
@@ -984,7 +1087,7 @@ function paintManifest() {
   card.hidden = false;
   card.innerHTML =
     `<div class="manifest-head">
-      <span class="manifest-title">◈ Manifeste — ${esc(m.origin.name)}${sysBadge(m.origin.system)} → ${esc(m.dest.name)}${sysBadge(m.dest.system)}${m.cross ? ' <span class="cross">⚡ inter-système</span>' : ""}</span>
+      <span class="manifest-title">◈ Manifeste — ${esc(m.origin.name)}${sysBadge(m.origin.system)} → ${esc(m.dest.name)}${sysBadge(m.dest.system)}${m.cross ? ' <span class="cross">⚡ inter-système</span>' : ""}${MANIFEST_EDIT ? " " + MANIFEST_MARQUE : ""}</span>
       <span class="manifest-tot" id="manifestTot">${manifestTotalsHTML(m, totals)}</span>
       ${manifestJourneyHTML(m)}
       <button id="copyManifest" class="copy-btn" title="Copier le plan de chargement">⧉ Copier</button>
@@ -1018,6 +1121,7 @@ function paintManifest() {
     <div class="manifest-add">
       <input id="manifestAddInput" list="commodityList" placeholder="Ajouter n'importe quelle commodité (même non vendable ici)…" autocomplete="off" aria-label="Ajouter une commodité" />
       <button id="manifestAddBtn" type="button" class="copy-btn">+ Ajouter</button>
+      ${MANIFEST_EDIT ? MANIFEST_BOUTON_OPTIMAL : ""}
     </div>
     <div id="manifestSuggest" class="manifest-suggest"></div>`;
   renderSuggestions();
@@ -1047,6 +1151,11 @@ function updateManifestTotals() {
   });
   const totals = manifestTotals(currentManifest.lines, pair); // unités déjà synchronisées ci-dessus
   $("manifestTot").innerHTML = manifestTotalsHTML(currentManifest, totals);
+  // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
+  // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
+  // champ. Ce que ça écrit tient en deux nombres par ligne.
+  retenirManifeste();
+  marquerManifesteCompose();
   renderSuggestions();
 }
 
@@ -1094,12 +1203,19 @@ function renderManifest(origin, destSystem, f, destTerminal) {
     return;
   }
   const fLibre = aBord > 0 ? { ...f, cargo: libre } : f;
-  const man = bestManifest(MARKET, origin, destSystem, fLibre, effVals, destTerminal, feeResolver(f));
+  // Une composition en cours IMPOSE sa destination : laisser la carte se re-router toute seule sous
+  // une correction de prix ferait disparaître de l'écran le chargement qu'on est en train de
+  // composer — le symptôme même qu'on corrige. Forcer l'arrivée au champ, elle, l'abandonne.
+  const compo = compositionEnCours(origin, destTerminal, destSystem);
+  const cible = compo ? compo.destIdx : destTerminal;
+  const man = bestManifest(MARKET, origin, destSystem, fLibre, effVals, cible, feeResolver(f))
+    || (compo ? manifesteSansOptimal(origin, cible, fLibre) : null);
   if (!man) {
     card.hidden = false;
     card.innerHTML = `<div class="manifest-hint">Aucun chargement rentable depuis ce terminal vers cette destination${aBord > 0 ? ` dans les <b>${fmt(libre)} SCU</b> qui restent libres` : ""}.</div>`;
     return;
   }
+  if (compo) man.lines = lignesComposees(compo.edit, origin, cible);
   man.originIdx = origin;
   man.f = fLibre;
   man.aBord = aBord; // pour que la carte dise pourquoi elle ne remplit que ça
@@ -3072,6 +3188,7 @@ async function init() {
     if (e.target.closest("#manifestToJourney")) { manifestToJourney(); return; }
     if (e.target.closest("#copyManifest")) { copyManifest(); return; }
     if (e.target.closest("#manifestAddBtn")) { addManifestCommodity($("manifestAddInput").value); return; }
+    if (e.target.closest("#manifestReset")) { resetManifeste(); return; }
     const del = e.target.closest(".mline-del");
     if (del) { removeManifestLine(del.dataset.name); return; }
     const add = e.target.closest(".suggest-add");
@@ -3239,6 +3356,7 @@ async function init() {
   loadAutoloadK();
   loadJourneyEdits();
   loadJourneyPins();
+  loadManifestEdit();
   loadSoute();
   loadDepots();
   updateOvBadge();
