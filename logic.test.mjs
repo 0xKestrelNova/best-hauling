@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
   normalizeScores, scoreBarWidth, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
   profitPerHour, rawScoreOf, routePasses, loopPasses,
@@ -15,7 +15,7 @@ import {
   manifestsFrom, multiTrips, tripMetrics, legFromTrip,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, legsToPin,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
   refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
@@ -23,6 +23,7 @@ import {
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
   cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
+  soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   stationTree, groupOverridesByTerminal,
 } from "./logic.mjs";
 
@@ -187,6 +188,21 @@ test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
   assert.equal(scoreBarWidth(null), 0);
   assert.equal(scoreBarWidth(undefined), 0);
   assert.equal(scoreBarWidth(NaN), 0);
+});
+
+// Lecture de SOURCE, sur le modèle des tests de coquille (scripts/csp.test.mjs) : ce que ce test
+// épingle est invisible à tout test de rendu. La règle `.scorebar i { width: 0 }` corrige déjà le
+// symptôme à elle seule — une largeur invalide est écartée et la cascade retombe sur le 0 — donc
+// retirer l'appel à scoreBarWidth laisserait la suite entièrement VERTE, pendant que l'app se
+// remettrait à émettre du CSS invalide. Vérifié en remettant app.js à sa version d'avant : les deux
+// e2e du score passaient encore. Ceinture ET bretelles : la feuille de style rattrape, l'appel
+// empêche. On teste donc l'appel lui-même, faute de pouvoir l'observer.
+test("scoreCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
+  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const cellule = app.match(/function scoreCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
+  assert.ok(cellule, "ancre : scoreCell existe toujours sous ce nom");
+  assert.match(cellule[0], /width:\$\{scoreBarWidth\(/,
+    "la largeur de .scorebar i doit passer par scoreBarWidth, jamais par le score brut");
 });
 
 // ---------- Tri ----------
@@ -674,6 +690,45 @@ test("autoloadFee : à taille de caisse constante, le coût croît avec le volum
     prec = f;
   }
   assert.ok(autoloadFee(31, 32, 1) > autoloadFee(32, 32, 1), "31 SCU en 4 caisses > 32 SCU en 1");
+});
+
+// ---------- Relevé de station : du montant payé au coefficient ----------
+test("kFromReading : le relevé de Ruin redonne son coefficient", () => {
+  // La spec : 1 159 aUEC pour 32 SCU en une caisse de 32 -> 1 159 / 820 = 1,413.
+  assert.equal(autoloadFee(32, 32, 1), 820);
+  assert.equal(kFromReading(1159, 32, 32), 1.413);
+  // Le plafond de caisse du terminal compte : à 16, les mêmes 32 SCU font deux caisses (850 à k=1).
+  assert.equal(kFromReading(1159, 32, 16), 1.364);
+});
+
+test("kFromReading : une mesure qui ne dit rien ne rend pas un coefficient", () => {
+  assert.equal(kFromReading(1159, 0, 32), null);    // sans quantité, aucune référence
+  assert.equal(kFromReading(0, 32, 32), null);      // sans montant, aucune mesure
+  assert.equal(kFromReading(-500, 32, 32), null);
+  assert.equal(kFromReading(NaN, 32, 32), null);    // champ vide -> Number("") vaut 0, texte -> NaN
+});
+
+test("kPlausible : les deux stations mesurées passent, le décalage de virgule non (#27)", () => {
+  // Les seuls coefficients jamais mesurés : Endgame (l'ancrage) et Ruin.
+  assert.ok(kPlausible(1));
+  assert.ok(kPlausible(1.4));
+  assert.ok(kPlausible(kFromReading(1159, 32, 32)));
+  // Le bug : un zéro de trop dans le montant, et k passe à mille sans que rien ne le signale.
+  assert.equal(kFromReading(1159000, 32, 32), 1413.415);
+  assert.ok(!kPlausible(1413.415), "1 159 000 aUEC pour 32 SCU n'est pas un tarif de station");
+  // Ce que les bornes doivent attraper, exactement : le plus PETIT décalage de virgule possible
+  // depuis la plage mesurée — un zéro de trop sur la station la moins chère (1,0 -> 10), un dernier
+  // chiffre oublié sur la plus chère (1,4 -> 0,14). Toute borne entre les deux les rejette.
+  assert.ok(!kPlausible(10));
+  assert.ok(!kPlausible(0.14));
+  assert.ok(K_PLAUSIBLE.max < 10 && K_PLAUSIBLE.min > 0.14);
+  // Et elles restent larges : ×4 et ÷4 autour de l'ancrage, soit dix fois l'écart réellement
+  // observé entre les deux stations. Une plage resserrée sur [1 ; 1,4] ferait confirmer la moitié
+  // des relevés honnêtes, à commencer par le k global par défaut.
+  assert.equal(K_PLAUSIBLE.min * K_PLAUSIBLE.max, 1);
+  assert.ok(kPlausible(K_PLAUSIBLE.min) && kPlausible(K_PLAUSIBLE.max));
+  assert.ok(kPlausible(1.2), "le k global par défaut doit rester au-dessus de tout soupçon");
+  assert.ok(!kPlausible(null)); // une mesure inutilisable n'est pas un coefficient plausible
 });
 
 // ---------- addableUnits (suggestions) ----------
@@ -2679,6 +2734,31 @@ test("sameIntent : distingue longueur, nom et SCU", () => {
   assert.equal(sameIntent([], []), true);
 });
 
+// ---------- Composition en cours de la carte Manifeste (#19) ----------
+// L'intention d'« En route » porte sur un COUPLE de terminaux. Ce qui la garde en vie, et ce qui
+// l'abandonne, est la question que l'issue posait : la voici, en une règle qu'on peut lire.
+const COMPO = { from: "Megumi", fromSystem: "Pyro", to: "Rod's Fuel", toSystem: "Pyro", lines: [{ name: "Copper", units: 30 }] };
+const VUE_COMPO = { from: { name: "Megumi", system: "Pyro" }, dest: null, destSystem: "" };
+
+test("manifestIntentSurvives : le couple de terminaux décide, et rien d'autre", () => {
+  assert.equal(manifestIntentSurvives(COMPO, VUE_COMPO), true);
+  // Forcer l'arrivée SUR la station qu'on composait déjà ne change pas de route.
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, dest: { name: "Rod's Fuel", system: "Pyro" } }), true);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, destSystem: "Pyro" }), true);
+  // Vidée à la main, elle reste une intention : lui rendre l'optimal serait le défaut qu'on corrige.
+  assert.equal(manifestIntentSurvives({ ...COMPO, lines: [] }, VUE_COMPO), true);
+});
+
+test("manifestIntentSurvives : seule une AUTRE route l'abandonne", () => {
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, from: { name: "Checkmate", system: "Pyro" } }), false);
+  // Homonymes : même nom, autre système, autre quai — c'est de ces terminaux-là que les prix se lisent.
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, from: { name: "Megumi", system: "Stanton" } }), false);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, dest: { name: "Checkmate", system: "Pyro" } }), false);
+  assert.equal(manifestIntentSurvives(COMPO, { ...VUE_COMPO, destSystem: "Stanton" }), false);
+  assert.equal(manifestIntentSurvives(null, VUE_COMPO), false);
+  assert.equal(manifestIntentSurvives({ ...COMPO, lines: undefined }, VUE_COMPO), false); // store abîmé
+});
+
 test("manifeste intact : destination libre et destination forcée donnent le MÊME chargement", () => {
   // C'est l'invariant qui justifie de ne RIEN persister quand le manifeste n'a pas été touché :
   // legManifest, qui force le terminal d'arrivée, recalculera exactement ce que la carte affichait.
@@ -2832,6 +2912,88 @@ test("detacherLotsDeJambe : effacer le voyage délie les lots sans les débarque
   assert.equal(r.length, 2);
   assert.equal("leg" in r[0], false);
   assert.equal(r[0].units, 100); // le fret payé survit à l'effacement du parcours (ADR-002)
+});
+
+// ---------- Le registre des chargements : quelle jambe a pris quoi, et où (#21, #22) ----------
+const prise = (nom, terminal, ref, units) => ({ name: nom, terminal, ref, units });
+
+test("soldeDuPoint : deux jambes au même point se partagent une seule référence", () => {
+  // A→B→A→C : les jambes 0 et 2 achètent toutes deux du Titanium à A, qui en annonçait 100.
+  let c = poserChargement({}, "0|A|B", [prise("Titanium", "A", 100, 60)]);
+  c = poserChargement(c, "2|A|C", [prise("Titanium", "A", 100, 40)]);
+  const plein = soldeDuPoint(c, "Titanium", "A");
+  assert.deepEqual(plein, { ref: 100, pris: 100 });
+  assert.equal(stockApres(plein.ref, plein.pris), 0);
+
+  // Annuler la PREMIÈRE ne rend que SES 60 : la jambe 2 tient toujours ses 40.
+  const s = soldeDuPoint(retirerChargement(c, "0|A|B"), "Titanium", "A");
+  assert.deepEqual(s, { ref: 100, pris: 40 });
+  assert.equal(stockApres(s.ref, s.pris), 60); // et surtout pas 100 : l'instantané absolu effaçait la jambe 2
+});
+
+test("soldeDuPoint : la référence survit à l'écrêtage à 0, que « stock + units » ne sait pas défaire", () => {
+  // La jambe 0 prend PLUS que le rayon n'annonçait : stockApres écrête à 0, et le stock effectif
+  // ne porte plus l'information « il y en avait 100 ».
+  let c = poserChargement({}, "0|A|B", [prise("Gold", "A", 100, 150)]);
+  c = poserChargement(c, "1|A|C", [prise("Gold", "A", 100, 20)]);
+  const plein = soldeDuPoint(c, "Gold", "A");
+  assert.equal(stockApres(plein.ref, plein.pris), 0);
+
+  const s = soldeDuPoint(retirerChargement(c, "0|A|B"), "Gold", "A");
+  assert.equal(stockApres(s.ref, s.pris), 80); // « 0 + 150 » aurait rendu 150 à un rayon qui n'en eut jamais que 100
+});
+
+test("soldeDuPoint : un point que plus aucune jambe ne tient n'a plus de référence", () => {
+  const c = poserChargement({}, "0|A|B", [prise("Gold", "A", 100, 60)]);
+  assert.deepEqual(soldeDuPoint(retirerChargement(c, "0|A|B"), "Gold", "A"), { ref: null, pris: 0 });
+  assert.deepEqual(soldeDuPoint(c, "Gold", "B"), { ref: null, pris: 0 }); // autre rayon, autre solde
+  assert.deepEqual(soldeDuPoint(c, "Gold", "A", "0|A|B"), { ref: null, pris: 0 }); // `sauf` exclut la jambe annulée
+});
+
+test("poserChargement : une jambe sans prise reste CHARGÉE — c'est l'état qui compte d'abord", () => {
+  // Rayon au stock inconnu : rien à déduire, mais la jambe est bel et bien engagée. Sans entrée,
+  // elle repasserait à « ✓ chargé » et doublerait la soute au clic suivant.
+  const c = poserChargement({}, "0|A|B", []);
+  assert.equal("0|A|B" in c, true);
+  assert.deepEqual(retirerChargement(c, "0|A|B"), {});
+});
+
+test("migrerChargements : une soute écrite AVANT le registre reste chargée et annulable", () => {
+  // Ancien format : l'état vivait dans la présence des lots, et le stock d'avant dans `avant`.
+  const lots = [
+    { name: "Titanium", units: 60, paid: 1000, from: "A", at: 1, leg: "0|A|B", avant: 100 },
+    { name: "Titanium", units: 40, paid: 1000, from: "A", at: 2, leg: "2|A|C", avant: 40 },
+    { name: "Gold", units: 10, paid: 5, from: "X", at: 3 }, // sans jambe : rien à reconstruire
+  ];
+  const r = migrerChargements({}, lots);
+  assert.equal(r.change, true);
+  assert.deepEqual(Object.keys(r.chargements).sort(), ["0|A|B", "2|A|C"]);
+  // La référence retenue est la PLUS GRANDE : l'`avant` de la seconde jambe lisait déjà un rayon
+  // amputé par la première, c'est la plus ancienne qui dit ce que la station annonçait.
+  assert.deepEqual(soldeDuPoint(r.chargements, "Titanium", "A"), { ref: 100, pris: 100 });
+  assert.equal(r.lots.length, 3);
+  assert.equal(r.lots.some((l) => "avant" in l), false); // `avant` est mort : le registre porte tout
+  assert.equal(r.lots[0].units, 60);                     // et le fret, lui, ne bouge pas d'un SCU
+});
+
+test("migrerChargements : le registre existant fait foi, une soute déjà migrée ne bouge pas", () => {
+  const lots = [{ name: "Titanium", units: 60, paid: 1000, from: "A", at: 1, leg: "0|A|B" }];
+  const deja = poserChargement({}, "0|A|B", [prise("Titanium", "A", 100, 60)]);
+  const r = migrerChargements(deja, lots);
+  assert.equal(r.change, false);
+  assert.equal(r.chargements, deja); // rien à réécrire : pas de sauvegarde inutile
+  assert.equal(r.lots, lots);
+});
+
+test("reindexerRangsJambe : le REGISTRE suit la renumérotation, comme le manifeste et les lots", () => {
+  // A→B→C, on retire l'arrêt A : la jambe A→B disparaît, B→C recule au rang 0.
+  const retrait = removeJourneyStop(parcours(["A", "B", "C"], 0), 0);
+  const r = reindexerRangsJambe({
+    edits: {}, pins: {}, lots: [lotDe("1|B|C")],
+    chargements: { "0|A|B": [prise("Gold", "A", 100, 10)], "1|B|C": [prise("Gold", "B", 50, 5)] },
+  }, retrait);
+  assert.deepEqual(Object.keys(r.chargements), ["0|B|C"]); // sans ça la jambe repassait à « ✓ chargé »
+  assert.deepEqual(soldeDuPoint(r.chargements, "Gold", "B"), { ref: 50, pris: 5 });
 });
 
 // ---------- Suggestions d'arrêts : mêmes filtres que la vue qui les affichera ----------
@@ -3320,6 +3482,144 @@ test("manifestsFrom : une commodité dont les frais dépassent la marge reste au
   // Contre-épreuve chiffrée : c'est bien parce que ses 500 aUEC de marge ne couvrent pas ses deux
   // opérations d'autoload que « Maigre » reste à quai — pas parce qu'elle serait filtrée ailleurs.
   assert.ok(100 * 5 < 2 * OP1, `500 de marge devrait rester sous ${2 * OP1} de frais`);
+});
+
+// --- Une ligne laissée au sol ne laisse pas sa place vide (#41) ---
+// Le marché du bug, aux chiffres exacts de MIC-L5 -> Ruin Station : une commodité à très forte
+// marge dont il ne reste qu'1 SCU à quai, et une seconde à marge moindre mais en stock abondant.
+// À k = 1 et maxBox 32, un chargement d'1 SCU coûte 200 aUEC par opération, donc 400 pour les deux
+// — plus que les 335 que « Waste » rapporte. Elle se fait donc écarter, mais APRÈS avoir préempté
+// son SCU en tête de tri : c'est le SCU que la soute perdait.
+const MKT_41 = () => ({
+  terminals: [TERM_NET("MIC-L5"), TERM_NET("Ruin Station")],
+  commodities: [
+    { name: "Waste", kind: "scrap", illegal: false, buys: [[0, 100, 1, NOW, 5]], sells: [[1, 435, 999, NOW, 3]] },
+    { name: "Scrap", kind: "scrap", illegal: false, buys: [[0, 100, 1337, NOW, 5]], sells: [[1, 235, 9999, NOW, 3]] },
+  ],
+});
+const frais41 = (t) => autoloadPoint(t, 1);
+
+test("manifestsFrom : la place d'une ligne écartée pour cause de frais retourne au remplissage", () => {
+  const f = F({ useCargo: true, cargo: 96 });
+  // Non vacuisant : « Waste » est bien écartée à bon droit, et c'est bien elle qui part en tête.
+  assert.equal(lineNet(1, { margin: 335 }, { buy: PT_A, sell: PT_A }), 335 - 2 * autoloadFee(1, 32, 1));
+  assert.ok(lineNet(1, { margin: 335 }, { buy: PT_A, sell: PT_A }) < 0, "la fixture doit rendre Waste déficitaire");
+  assert.deepEqual(manifestsFrom(MKT_41(), 0, "", f, idResolve)[0].lines.map((l) => [l.name, l.units]),
+    [["Waste", 1], ["Scrap", 95]]);                     // sans frais, elle est rentable et se charge
+  // Avec frais : « Waste » reste au sol, et son SCU revient au « Scrap » au lieu de rester vide.
+  const [t] = manifestsFrom(MKT_41(), 0, "", f, idResolve, null, frais41);
+  assert.deepEqual(t.lines.map((l) => [l.name, l.units]), [["Scrap", 96]]);  // 95 avant le correctif
+  assert.equal(t.lines.reduce((a, l) => a + l.units, 0), 96, "la soute repartait entamée d'1 SCU");
+  assert.equal(t.profit, 96 * 135 - 2 * autoloadFee(96, 32, 1));
+  assert.equal(t.profit, 8_640);                                             // 8 365 avant le correctif
+  // Et il y avait bien de quoi remplir : 1 337 SCU de Scrap attendaient à quai.
+  assert.ok(t.lines[0].stock > 96, "fixture sans stock de rechange : le test ne prouverait rien");
+});
+
+test("manifestsFrom : une ligne rentable SEULE mais qui prend sa place aux autres reste au sol", () => {
+  // L'autre moitié du même défaut, aux chiffres de CRU-L1 -> ARC-L1. « Methane » gagne 667 nets sur
+  // son unique SCU : jugée seule, elle mérite la soute. Mais ce SCU vaut 739 au « Nitrogen », et la
+  // charger coûte une base de frais de plus — le manifeste perd 212 aUEC à l'emporter.
+  const mkt = () => ({
+    terminals: [TERM_NET("CRU-L1"), TERM_NET("ARC-L1")],
+    commodities: [
+      { name: "Methane", kind: "gas", illegal: false, buys: [[0, 100, 1, NOW, 5]], sells: [[1, 1167, 999, NOW, 3]] },
+      { name: "Nitrogen", kind: "gas", illegal: false, buys: [[0, 100, 639, NOW, 5]], sells: [[1, 839, 9999, NOW, 3]] },
+    ],
+  });
+  const f = F({ useCargo: true, cargo: 96 });
+  // Non vacuisant : prise isolément, la ligne est bénéficiaire — ce n'est PAS le filtre déficitaire
+  // qui doit la retirer, et l'ancien code la gardait pour cette raison.
+  assert.equal(lineNet(1, { margin: 1067 }, { buy: PT_A, sell: PT_A }), 667);
+  const [t] = manifestsFrom(mkt(), 0, "", f, idResolve, null, frais41);
+  assert.deepEqual(t.lines.map((l) => [l.name, l.units]), [["Nitrogen", 96]]);
+  assert.equal(t.profit, 96 * 739 - 2 * autoloadFee(96, 32, 1));
+  assert.equal(t.profit, 66_624);                       // 66 412 avant : Methane 1 + Nitrogen 95
+  assert.ok(t.profit > 667 + 95 * 739 - 2 * autoloadFee(95, 32, 1), "le chargement à deux lignes devait perdre");
+});
+
+test("manifestsFrom : une ligne déficitaire à 126 SCU redevient éligible à 128, et le manifeste la reprend", () => {
+  // Aux chiffres de Rat's Nest -> Port Tressler, k = 2. Le verdict « cette ligne ne couvre pas ses
+  // frais » dépend du VOLUME qu'on lui a donné, donc de qui d'autre est à bord : « Human Food Bars »
+  // perd 60 aUEC sur 126 SCU et en gagne 200 sur 128, parce que 126 SCU ne tiennent plus en caisses
+  // de 32. Un rejet retenu d'un tour sur l'autre condamnait la meilleure option de l'arc : la soute
+  // repartait avec les 2 SCU de Fluorine et 146 aUEC.
+  const mkt = () => ({
+    terminals: [TERM_NET("Rat's Nest"), TERM_NET("Port Tressler")],
+    commodities: [
+      { name: "Fluorine", kind: "gas", illegal: false, buys: [[0, 100, 2, NOW, 5]], sells: [[1, 613, 999, NOW, 3]] },
+      { name: "Human Food Bars", kind: "food", illegal: false, buys: [[0, 100, 6000, NOW, 5]], sells: [[1, 190, 9999, NOW, 3]] },
+    ],
+  });
+  const f = F({ useCargo: true, cargo: 128 });
+  const frais2 = (t) => autoloadPoint(t, 2);
+  // Non vacuisant : c'est bien le passage de 128 à 126 SCU qui renverse le signe, par les caisses.
+  assert.equal(lineNet(128, { margin: 90 }, { buy: PT_A, sell: PT_A }) > 0, true);
+  assert.equal(126 * 90 - 2 * autoloadFee(126, 32, 2), -60);
+  assert.equal(128 * 90 - 2 * autoloadFee(128, 32, 2), 200);
+  const [t] = manifestsFrom(mkt(), 0, "", f, idResolve, null, frais2);
+  assert.deepEqual(t.lines.map((l) => [l.name, l.units]), [["Human Food Bars", 128]]);
+  assert.equal(t.profit, 200);                          // 146 avant : Fluorine 2 SCU, seule à bord
+});
+
+test("manifestsFrom : sans frais, le chargement des 4 284 arcs réels est inchangé au SCU près", () => {
+  // Garde-fou : la reprise du remplissage ne vit QUE dans la branche à frais. Interrupteur éteint,
+  // `fillCargo` doit rendre exactement ce qu'il rendait — un seul appel, aucun retrait, aucun tri
+  // de plus. C'est ce total figé qui le dit.
+  const f = F({ useCargo: true, cargo: 96 });
+  let arcs = 0, scu = 0, profit = 0;
+  for (let o = 0; o < REAL.terminals.length; o++) {
+    for (const t of manifestsFrom(REAL, o, "", f, idResolve)) {
+      arcs++; profit += t.profit;
+      scu += t.lines.reduce((a, l) => a + l.units, 0);
+    }
+  }
+  assert.deepEqual({ arcs, scu, profit }, { arcs: 4_284, scu: 344_101, profit: 392_892_971 });
+});
+
+test("manifestsFrom : frais actifs, aucun manifeste réel ne rapporte moins que sa meilleure commodité seule", () => {
+  // La non-régression MESURÉE, sur l'instantané entier : pour chaque arc, on chiffre la meilleure
+  // commodité chargée SEULE (le repli que le joueur a toujours sous la main) et on exige que le
+  // manifeste fasse au moins aussi bien. C'est l'invariant que le SCU perdu cassait : 20 arcs sur
+  // 4 219 y échouaient, jusqu'à −3,2 % (MIC-L5 -> Ruin Station, 8 365 contre 8 640).
+  const f = F({ useCargo: true, cargo: 96 });
+  const frais = (t) => autoloadPoint(t, 1);
+  let arcs = 0, multi = 0;
+  const echecs = [];
+  for (let o = 0; o < REAL.terminals.length; o++) {
+    for (const t of manifestsFrom(REAL, o, "", f, idResolve, null, frais)) {
+      arcs++;
+      if (t.lines.length > 1) multi++;
+      // Zéro plancher : ne rien charger reste une option, donc un manifeste ne perd jamais d'argent.
+      let mono = 0;
+      for (const it of suggestionsFrom(REAL, { lines: [], originIdx: t.originIdx, destIdx: t.destIdx, origin: t.origin, dest: t.dest, f }, idResolve)) {
+        let u = Math.min(f.cargo, it.stock);
+        if (it.demand != null || it.demandKnown) u = Math.min(u, it.demand);
+        if (u > 0) mono = Math.max(mono, u * it.margin - lineHaulFee(u, it, t.fee));
+      }
+      if (t.profit < mono) echecs.push(`${t.origin.name} -> ${t.dest.name} : ${t.profit} < ${mono}`);
+    }
+  }
+  assert.equal(arcs, 4_219, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le défaut");
+  assert.deepEqual(echecs, []);
+  // Non vacuisant : l'invariant serait trivialement vrai si le correctif avait ramené tout le monde
+  // à une seule commodité. Le remplissage multi-commodité doit rester la règle, pas l'exception.
+  assert.ok(multi > 700, `chargements multi-commodité tombés à ${multi} : le correctif a trop coupé`);
+});
+
+test("manifestsFrom : le remplissage relancé s'arrête même quand TOUTES les candidates sont déficitaires", () => {
+  // La borne de la boucle : chaque tour retire au moins une candidate et une candidate retirée ne
+  // revient jamais, donc le pire des cas — tout jeter — termine sur un manifeste vide, pas en rond.
+  const mkt = () => ({
+    terminals: [TERM_NET("Depart"), TERM_NET("Sobre")],
+    commodities: Array.from({ length: 12 }, (_, i) => ({
+      name: `Miette${i}`, kind: "metal", illegal: false,
+      buys: [[0, 100, 1, NOW, 5]], sells: [[1, 100 + 12 - i, 999, NOW, 3]],   // marge 12 -> 1, stock 1
+    })),
+  });
+  const f = F({ useCargo: true, cargo: 96 });
+  assert.equal(manifestsFrom(mkt(), 0, "", f, idResolve)[0].lines.length, 12); // sans frais, on prend tout
+  assert.deepEqual(manifestsFrom(mkt(), 0, "", f, idResolve, null, frais41), []);
 });
 
 test("buildChainAdjacency : estampille sur chaque saut les frais de ses DEUX terminaux", () => {

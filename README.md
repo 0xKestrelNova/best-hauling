@@ -44,7 +44,7 @@ la manutention dépasse la marge, c'est le cas que l'interrupteur sert à révé
 signe et **en rouge**, jamais dans le vert des gains.
 - **Mode Butin** (vue Commodités) : quand le coût d'acquisition est nul, la marge n'a plus de sens — seul compte le **prix de revente**. Ce mode liste **tout ce qui se vend** chez UEX, y compris les ~36 commodités sans aucun point d'achat, et n'affiche que **où l'écouler**. Sa heatmap se calcule **par rang** et non par ratio : les prix de revente s'étalent sur cinq ordres de grandeur (34 M aUEC/SCU pour le Saldynium contre 1 000 pour l'Iron Ore), une échelle linéaire écraserait tout le board.
 - **Décomposition SCU en caisses** (32/24/16/8/4/2/1) sur le manifeste et en infobulle.
-- **Manifeste ajustable** : chaque ligne se modifie à la main — tu peux **dépasser le stock UEX** (vol de fret, relevé périmé…) ; le champ passe en ambre pour le signaler.
+- **Manifeste ajustable** : chaque ligne se modifie à la main — tu peux **dépasser le stock UEX** (vol de fret, relevé périmé…) ; le champ passe en ambre pour le signaler. Le chargement que tu **composes** ainsi (lignes ajoutées, SCU ramenés) **reste** : il porte le badge `✎`, garde sa destination, et survit à un prix corrigé, à une frappe dans la recherche ou à un changement de vaisseau — le total `120/32 SCU` te dit alors que tu charges plus que la soute. Il est **local** (localStorage) comme un manifeste de jambe, et `↺ optimal` rend la main au calcul. Changer de **terminal de départ**, ou forcer une **autre arrivée**, l'abandonne : ses lignes se lisent aux prix de ces deux comptoirs-là et d'aucun autre.
 - **Détail du chargement** dépliable (📦), sur les lignes **multi commodité** : ce que contient le chargement, commodité par commodité (stock, demande, prix, marge, profit, caisses). Les autres tables n'ont pas de dépliant — la **carte du parcours** y montre la géographie, et le temps estimé se lit en infobulle de « Profit/heure ».
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
@@ -268,8 +268,16 @@ Trois règles à connaître :
 **correction locale** comme une autre, ancrée à la date UEX du point, donc périmée dès qu'UEX
 republie. Sans elle, la station continuait d'annoncer un stock déjà emporté et le manifeste suivant
 le reproposait. Si tu as pris **plus** que le stock publié, le rayon tombe à **0** et jamais en
-négatif : le relevé était faux, c'est tout ce qu'on en sait. Annuler le chargement rend exactement
-ce qui avait été retiré — le lot porte la valeur d'avant.
+négatif : le relevé était faux, c'est tout ce qu'on en sait. Annuler un chargement rend au rayon
+**ce que cette jambe-là y a pris**, et rien de plus : sur un aller-retour où deux jambes achètent au
+même point, se raviser sur la première laisse la seconde déduite. Lui rendre le stock d'avant
+reproposerait une cargaison qui est toujours à bord.
+
+**Une jambe chargée le reste tant que tu ne l'annules pas.** Vendre, déposer, vider la soute par son
+✕ : tous ces gestes sortent le fret, aucun ne le remet en rayon. Le bouton reste donc `⬢ à bord` et
+la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il rend toujours exactement ce
+qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
+et le rayon était déduit une seconde fois depuis un chiffre déjà amputé.
 
 **Vendre, déposer, repartir.** Un bouton par commodité ouvre un champ prérempli au total :
 valider vend tout, réduire vend partiellement. Ce que le comptoir n'a pas pris est marqué
@@ -399,7 +407,11 @@ quand UEX renvoie 0** : ce repli sous-estime les frais plutôt que de les invent
 D'où le **`≈` sur tout montant** : l'app donne un ordre de grandeur fiable, pas un chiffre exact. Si tu
 relèves le tarif réel d'une station, tu peux **l'enregistrer** (montant observé pour une quantité donnée →
 `k` déduit) : c'est **local**, comme les corrections, jamais partagé ni mis dans l'URL — seuls
-l'interrupteur et le `k` global entrent dans le permalien.
+l'interrupteur et le `k` global entrent dans le permalien. Un relevé qui donne un `k` hors de la plage
+plausible (**0,25 à 4**, soit ×4 et ÷4 autour de l'ancrage — dix fois l'écart entre les deux stations
+mesurées) **demande confirmation** avant d'être retenu : un zéro de trop dans le montant produit un
+coefficient d'apparence honnête, ensuite affiché « (relevé) » comme s'il avait été mesuré. La question
+ne refuse rien — un tarif vraiment surprenant reste enregistrable en un clic.
 
 Deux hypothèses complètent le modèle, faute de mesures : le **nombre de caisses est fixé au chargement**
 (au déchargement on sort les caisses qu'on a, seul le tarif change) et **une transaction par commodité**
@@ -408,6 +420,17 @@ n'est manutentionnée qu'à un bout ne paie qu'**une** opération : le fret char
 plus loin (« vend ailleurs ») n'est pas déchargé à l'arrivée, celui déjà en soute (« acquis ailleurs » :
 butin, minage, salvage) n'a pas été chargé au départ. Un terminal qu'UEX déclare sans autoload
 (`is_auto_load`) n'est jamais facturé.
+
+Parce que la base se paie **par ligne**, une commodité peut coûter au manifeste plus qu'elle ne lui
+rapporte : ses 335 aUEC de marge sur l'unique SCU en stock ne couvrent pas les 400 de manutention,
+ou bien son SCU vaudrait davantage rempli de la commodité suivante. Le manifeste optimal la **laisse
+au sol et rend sa place au remplissage** — il ne garde une ligne que s'il vaut plus avec elle que
+sans, et il rebâtit le chargement à chaque retrait plutôt que de laisser la soute entamée. Garantie
+qui en découle, **quand la soute est la seule contrainte** : un manifeste ne rapporte jamais moins
+que sa meilleure commodité chargée seule sur le même trajet — vérifié sur les 167 434 arcs des
+40 combinaisons soute × tarif de l'instantané. Sous **budget bornant**, c'est un sac à dos à deux
+contraintes : le remplissage reste glouton et 16 arcs sur 499 772 y restent en deçà (contre 4 166
+avant), écart maximal 12 %.
 
 Les relevés bruts et le raisonnement complet sont dans
 [`docs/superpowers/specs/2026-08-10-frais-autoload-design.md`](docs/superpowers/specs/2026-08-10-frais-autoload-design.md).

@@ -4,7 +4,7 @@
 import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible,
   ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
@@ -12,13 +12,14 @@ import {
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, legsToPin, journeyMap,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
   loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, sellableAt, sellAllAt,
   offloadPlan, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
   reindexerRangsJambe, detacherLotsDeJambe,
+  soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   encodeJourney, decodeJourney,
 } from "./logic.mjs";
 
@@ -231,15 +232,6 @@ function saveAutoloadK() { try { localStorage.setItem(AUTOLOAD_KEY, JSON.stringi
 const globalK = () => { const v = Number($("alk").value); return v > 0 ? v : K_DEFAULT; };
 const kFor = (terminal) => { const o = AUTOLOAD_K[alKey(terminal)]; return o && o.k > 0 ? o.k : globalK(); };
 
-// Déduit k d'un montant observé en jeu : personne ne lit un coefficient à l'écran, on lit une
-// facture. k = montant payé / montant que la formule prédirait au tarif d'ancrage (k = 1).
-// null quand la mesure ne dit rien (quantité nulle, montant absurde).
-function kFromReading(amount, scu, maxBox) {
-  const ref = autoloadFee(scu, maxBox, 1);
-  if (!(ref > 0) || !(amount > 0)) return null;
-  return Math.round((amount / ref) * 1000) / 1000;
-}
-
 // Ce qu'UNE extrémité facture. `point` est ce que consomme logic.mjs ; les autres champs servent à
 // EXPLIQUER le chiffre à l'écran — « cette station ne propose pas l'autoload » et « UEX ne nous a
 // pas dit si elle le propose » aboutissent au même 0 mais ne se racontent pas pareil, et aucun des
@@ -277,7 +269,8 @@ const feeResolver = (f) => (f.autoload ? (t) => autoloadPoint(t, kFor(t && t.nam
 // relevés à 2,8 % près, et `k` varie de 40 % entre les deux seules stations mesurées. Le « ≈ » le
 // dit, partout où le chiffre a été amputé.
 const fmtFee = (n, fees) => (fees > 0 ? "≈ " + fmt(n) : fmt(n));
-const kText = (e) => `×${e.k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} ${e.measured ? "(relevé)" : "(k global)"}`;
+const kFmt = (k) => k.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
+const kText = (e) => `×${kFmt(e.k)} ${e.measured ? "(relevé)" : "(k global)"}`;
 function feeEndText(e) {
   if (!e.known) return `${e.name} : autoload inconnu (donnée UEX absente) — rien facturé`;
   if (!e.available) return `${e.name} : pas d'autoload — rien facturé`;
@@ -489,7 +482,17 @@ function renderMulti(f) {
     empty.textContent = "Active la soute (SCU) pour calculer des trajets multi-commodité.";
     return;
   }
-  if (!MARKET) { withMarket(refresh); return; } // graphe requis
+  // Graphe requis. On vide comme le fait la branche « soute inactive » juste au-dessus : laisser les
+  // trajets à UNE commodité sous un mode qui promet des chargements combinés, c'est un tableau qui
+  // ne correspond plus à `shownMulti` — ▶ et 📦 y lisaient un index vide et ne faisaient RIEN.
+  // #empty reste masqué : le tableau n'est pas vide à cause des filtres, le marché n'est pas là.
+  if (!MARKET) {
+    shownMulti = [];
+    $("rows").innerHTML = "";
+    empty.hidden = true;
+    withMarket(refresh);
+    return;
+  }
   // Le contexte de frais descend DANS multiTrips (et non après coup) : c'est lui qui trie puis
   // TRONQUE à 300 trajets, un trajet meilleur en net serait donc coupé avant d'atteindre le tableau.
   const trips = multiTrips(MARKET, f, effVals, 300, f.multiAll ? 1 : 2, feeResolver(f))
@@ -864,6 +867,106 @@ function resolveDest() {
 
 let currentManifest = null; // manifeste courant, mutable (édition SCU + suggestions ajoutées)
 
+// ---------- Le chargement qu'on COMPOSE à la main (#19) ----------
+// Lignes ajoutées, SCU ramenés à ce qu'on veut vraiment acheter : cette intention n'existait que
+// dans `currentManifest`, que renderManifest remet à null à chaque rendu. Un prix corrigé, une
+// frappe dans la recherche ou un vaisseau changé l'effaçaient sans un mot. Elle se persiste donc
+// comme le manifeste d'une jambe de voyage, et SOUS LA MÊME FORME : l'INTENTION seule —
+// [{ name, units }] — jamais un instantané de marché, dont les prix se figeraient au jour de
+// l'édition (cf. hydrateManifestLine). Le couple de terminaux l'accompagne : c'est de LEURS prix
+// que ses lignes sont relues, et une composition ne vaut que pour la route qu'on composait.
+// Une seule à la fois, là où JOURNEY_EDITS en indexe une par jambe : la carte n'en montre qu'une, et
+// une composition rangée sous un couple qu'on ne regarde plus ressortirait des jours plus tard sans
+// qu'on l'ait demandée. Le système est stocké avec le nom — deux terminaux peuvent porter le même
+// nom dans deux systèmes, et les lignes se relisent par INDEX de terminal.
+const MANIFEST_EDIT_KEY = "best-hauling-manifest-edit";
+let MANIFEST_EDIT = null; // { from, fromSystem, to, toSystem, lines: [{ name, units }] } ou null
+function loadManifestEdit() {
+  try { MANIFEST_EDIT = JSON.parse(localStorage.getItem(MANIFEST_EDIT_KEY)) || null; } catch { MANIFEST_EDIT = null; }
+  if (!MANIFEST_EDIT || !Array.isArray(MANIFEST_EDIT.lines)) MANIFEST_EDIT = null;
+}
+function saveManifestEdit() {
+  try {
+    if (MANIFEST_EDIT) localStorage.setItem(MANIFEST_EDIT_KEY, JSON.stringify(MANIFEST_EDIT));
+    else localStorage.removeItem(MANIFEST_EDIT_KEY);
+  } catch {}
+}
+// Retient ce qui est à l'écran comme intention. Appelée par CHAQUE geste de composition — ajout
+// suggéré, ajout libre, retrait, SCU ajustés — parce que c'est le geste qui fait la composition,
+// pas son résultat : deux gestes qui se compensent laissent quand même une carte à soi.
+function retenirManifeste() {
+  const m = currentManifest;
+  if (!m) return;
+  MANIFEST_EDIT = {
+    from: m.origin.name, fromSystem: m.origin.system,
+    to: m.dest.name, toSystem: m.dest.system,
+    lines: manifestIntent(m.lines),
+  };
+  saveManifestEdit();
+}
+function oublierManifeste() { MANIFEST_EDIT = null; saveManifestEdit(); }
+// « ↺ optimal » : la carte redevient un calcul, et se remet à suivre le marché et les filtres.
+function resetManifeste() { oublierManifeste(); refresh(); }
+
+// La marque et le contrôle du chargement composé à la main. Les deux mêmes chaînes servent au rendu
+// de la carte ET à leur pose en direct à la première frappe dans un champ SCU : celle-là ne repeint
+// pas la carte (elle arracherait le champ qu'on remplit), et sans ces deux-là rien à l'écran ne
+// dirait que la carte est désormais la tienne, ni comment la rendre au calcul.
+const MANIFEST_MARQUE = '<span class="manifest-edited" title="Chargement composé à la main : ses lignes, ses SCU et cette destination sont les tiens. Les prix, eux, continuent de suivre le marché. « ↺ optimal » rend la main au calcul.">✎</span>';
+const MANIFEST_BOUTON_OPTIMAL = '<button id="manifestReset" type="button" class="manifest-reset" title="Revenir au chargement optimal calculé pour ce départ">↺ optimal</button>';
+function marquerManifesteCompose() {
+  const titre = $("manifest").querySelector(".manifest-title");
+  if (titre && !titre.querySelector(".manifest-edited")) titre.insertAdjacentHTML("beforeend", " " + MANIFEST_MARQUE);
+  const ajout = $("manifest").querySelector(".manifest-add");
+  if (ajout && !$("manifestReset")) ajout.insertAdjacentHTML("beforeend", MANIFEST_BOUTON_OPTIMAL);
+}
+
+// La composition vaut-elle pour la carte demandée ? Sinon elle est abandonnée SUR PLACE : la garder
+// en réserve la ferait ressurgir au retour sur cette route, longtemps après le geste qui l'a écrite.
+// Rend { edit, destIdx } ou null ; `destIdx` est l'arrivée que la carte doit alors afficher.
+function compositionEnCours(originIdx, destTerminal, destSystem) {
+  if (!MANIFEST_EDIT) return null;
+  const ot = MARKET.terminals[originIdx];
+  const dt = destTerminal == null ? null : MARKET.terminals[destTerminal];
+  const destIdx = stationMap.get(stationLabel(MANIFEST_EDIT.to, MANIFEST_EDIT.toSystem));
+  const vivante = destIdx != null && manifestIntentSurvives(MANIFEST_EDIT, {
+    from: { name: ot.name, system: ot.system },
+    dest: dt && { name: dt.name, system: dt.system },
+    destSystem,
+  });
+  if (!vivante) { oublierManifeste(); return null; }
+  // Commodité disparue d'UEX : oubliée plutôt qu'affichée en fantôme, comme sur une jambe de voyage.
+  // Purge SUR PLACE — les SCU sont adressés par index de ligne (`data-i`), l'intention et l'écran ne
+  // peuvent pas diverger d'un cran.
+  const gardees = MANIFEST_EDIT.lines.filter((e) => findCommodity(e.name));
+  const perdues = gardees.length !== MANIFEST_EDIT.lines.length;
+  if (perdues) { MANIFEST_EDIT.lines = gardees; saveManifestEdit(); }
+  // Vidée par cette purge, et non par un geste : la composition ne parlait plus que de commodités
+  // qui n'existent plus, la carte reprend son calcul. Vidée à la main, elle reste (cf. logic.mjs).
+  if (perdues && !gardees.length) { oublierManifeste(); return null; }
+  return { edit: MANIFEST_EDIT, destIdx };
+}
+
+// Lignes d'une composition, RELUES au marché courant : c'est ce qui fait qu'un prix corrigé
+// s'affiche alors que les SCU, eux, ne bougent pas.
+const lignesComposees = (edit, fromIdx, toIdx) =>
+  edit.lines.map((e) => hydrateManifestLine(MARKET, fromIdx, toIdx, findCommodity(e.name), e.units, effVals));
+
+// Carte d'un couple de terminaux dont plus AUCUN chargement n'est rentable : bestManifest ne rend
+// alors rien, et la composition faite à la main disparaîtrait avec lui — alors que le geste qui
+// vient de tuer la rentabilité (un prix d'achat corrigé vers le haut) est justement celui qui la
+// rend précieuse. Mêmes champs que ceux que manifestsFrom estampille sur un trajet ; les lignes
+// viennent de l'appelant.
+function manifesteSansOptimal(originIdx, destIdx, f) {
+  const ot = MARKET.terminals[originIdx], dt = MARKET.terminals[destIdx];
+  const point = feeResolver(f);
+  return {
+    origin: ot, originIdx, dest: dt, destIdx, cross: ot.system !== dt.system,
+    lines: [], profit: 0, cargo: f.cargo,
+    fee: point ? { buy: point(ot), sell: point(dt) } : null,
+  };
+}
+
 const isOv = (commodity, terminal, side, field) => {
   const o = OVERRIDES[ovKey(commodity, terminal, side)];
   return !!(o && o[field] != null);
@@ -932,6 +1035,7 @@ function addSuggestion(name) {
   const u = addableUnits(it, manifestRemaining());
   if (u <= 0) return;
   currentManifest.lines.push({ ...it, units: u, cap: u });
+  retenirManifeste();
   paintManifest();
 }
 
@@ -947,6 +1051,7 @@ function addManifestCommodity(name) {
   const c = findCommodity(name);
   if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
   m.lines.push(freeManifestLine(MARKET, m.originIdx, m.destIdx, c, manifestRemaining().cargoLeft, effVals));
+  retenirManifeste();
   paintManifest();
 }
 
@@ -955,6 +1060,7 @@ function removeManifestLine(name) {
   const m = currentManifest;
   if (!m) return;
   m.lines = m.lines.filter((l) => l.name !== name);
+  retenirManifeste();
   paintManifest();
 }
 
@@ -985,7 +1091,7 @@ function paintManifest() {
   card.hidden = false;
   card.innerHTML =
     `<div class="manifest-head">
-      <span class="manifest-title">◈ Manifeste — ${esc(m.origin.name)}${sysBadge(m.origin.system)} → ${esc(m.dest.name)}${sysBadge(m.dest.system)}${m.cross ? ' <span class="cross">⚡ inter-système</span>' : ""}</span>
+      <span class="manifest-title">◈ Manifeste — ${esc(m.origin.name)}${sysBadge(m.origin.system)} → ${esc(m.dest.name)}${sysBadge(m.dest.system)}${m.cross ? ' <span class="cross">⚡ inter-système</span>' : ""}${MANIFEST_EDIT ? " " + MANIFEST_MARQUE : ""}</span>
       <span class="manifest-tot" id="manifestTot">${manifestTotalsHTML(m, totals)}</span>
       ${manifestJourneyHTML(m)}
       <button id="copyManifest" class="copy-btn" title="Copier le plan de chargement">⧉ Copier</button>
@@ -1019,6 +1125,7 @@ function paintManifest() {
     <div class="manifest-add">
       <input id="manifestAddInput" list="commodityList" placeholder="Ajouter n'importe quelle commodité (même non vendable ici)…" autocomplete="off" aria-label="Ajouter une commodité" />
       <button id="manifestAddBtn" type="button" class="copy-btn">+ Ajouter</button>
+      ${MANIFEST_EDIT ? MANIFEST_BOUTON_OPTIMAL : ""}
     </div>
     <div id="manifestSuggest" class="manifest-suggest"></div>`;
   renderSuggestions();
@@ -1048,6 +1155,11 @@ function updateManifestTotals() {
   });
   const totals = manifestTotals(currentManifest.lines, pair); // unités déjà synchronisées ci-dessus
   $("manifestTot").innerHTML = manifestTotalsHTML(currentManifest, totals);
+  // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
+  // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
+  // champ. Ce que ça écrit tient en deux nombres par ligne.
+  retenirManifeste();
+  marquerManifesteCompose();
   renderSuggestions();
 }
 
@@ -1095,12 +1207,19 @@ function renderManifest(origin, destSystem, f, destTerminal) {
     return;
   }
   const fLibre = aBord > 0 ? { ...f, cargo: libre } : f;
-  const man = bestManifest(MARKET, origin, destSystem, fLibre, effVals, destTerminal, feeResolver(f));
+  // Une composition en cours IMPOSE sa destination : laisser la carte se re-router toute seule sous
+  // une correction de prix ferait disparaître de l'écran le chargement qu'on est en train de
+  // composer — le symptôme même qu'on corrige. Forcer l'arrivée au champ, elle, l'abandonne.
+  const compo = compositionEnCours(origin, destTerminal, destSystem);
+  const cible = compo ? compo.destIdx : destTerminal;
+  const man = bestManifest(MARKET, origin, destSystem, fLibre, effVals, cible, feeResolver(f))
+    || (compo ? manifesteSansOptimal(origin, cible, fLibre) : null);
   if (!man) {
     card.hidden = false;
     card.innerHTML = `<div class="manifest-hint">Aucun chargement rentable depuis ce terminal vers cette destination${aBord > 0 ? ` dans les <b>${fmt(libre)} SCU</b> qui restent libres` : ""}.</div>`;
     return;
   }
+  if (compo) man.lines = lignesComposees(compo.edit, origin, cible);
   man.originIdx = origin;
   man.f = fLibre;
   man.aBord = aBord; // pour que la carte dise pourquoi elle ne remplit que ça
@@ -1112,7 +1231,12 @@ function renderManifest(origin, destSystem, f, destTerminal) {
 }
 
 function renderEnRoute() {
-  if (!MARKET) { withMarket(refresh); return; }
+  // #empty est PARTAGÉ avec Trajets / Boucles, et cette vue n'a encore rien de VRAI à y écrire :
+  // ce n'est pas un filtre qui vide le tableau, c'est le marché qui manque. Symétrie du
+  // EMPTY_DEFAULT posé en tête de render() / renderLoops() (#55), qui manquait ici parce que le
+  // retour anticipé précède toute écriture — et withMarket ne re-rend PAS en cas d'échec, donc le
+  // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
+  if (!MARKET) { $("empty").hidden = true; withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
   resolveOrigin(); // re-résout depuis le champ (peut avoir été posé par le parcours, sans événement input)
   resolveDest();
@@ -1226,6 +1350,23 @@ function loadSoute() {
 }
 function saveSoute() { try { localStorage.setItem(HOLD_KEY, JSON.stringify(SOUTE)); } catch {} }
 
+// Le REGISTRE des chargements (logic.mjs) : quelle jambe est engagée, et ce qu'elle a pris à quel
+// rayon. Store à part de la soute, et c'est tout le point : la soute se vide par son ✕, par une
+// vente, par la vente implicite du départ — aucun de ces chemins ne rend rien à la station, donc
+// aucun ne décharge la jambe. Le fret peut partir, ce qu'on doit au rayon reste dû.
+const CHARGES_KEY = "best-hauling-jambes-chargees";
+let CHARGEMENTS = {};
+// À appeler APRÈS loadSoute : la migration lit les lots pour reconstruire le registre d'une soute
+// écrite avant lui (l'état vivait alors dans la présence des lots, et le stock d'avant dans `avant`).
+function loadChargements() {
+  try { CHARGEMENTS = JSON.parse(localStorage.getItem(CHARGES_KEY)) || {}; } catch { CHARGEMENTS = {}; }
+  if (!CHARGEMENTS || typeof CHARGEMENTS !== "object" || Array.isArray(CHARGEMENTS)) CHARGEMENTS = {};
+  const m = migrerChargements(CHARGEMENTS, SOUTE);
+  CHARGEMENTS = m.chargements;
+  if (m.change) { SOUTE = m.lots; saveSoute(); saveChargements(); }
+}
+function saveChargements() { try { localStorage.setItem(CHARGES_KEY, JSON.stringify(CHARGEMENTS)); } catch {} }
+
 // Charge le manifeste d'une jambe dans la soute, au prix que l'app venait d'afficher. Les lots
 // portent la clé de la jambe : c'est ce qui permet d'annuler un chargement sans deviner.
 // Le point d'achat d'une commodité à un terminal, avec son stock EFFECTIF (corrections comprises)
@@ -1240,18 +1381,32 @@ function pointAchat(nomCommodite, nomTerminal) {
   return { commodite: c.name, stock: e.vol, base: b[3] };
 }
 
+// Réécrit la correction de stock d'un point d'achat DEPUIS LE REGISTRE : sa référence, moins tout ce
+// que les jambes encore chargées y prennent. Chargement et annulation posent la même question, et
+// une seule réponse les empêche de diverger — c'est ce qui manquait quand deux jambes achetaient au
+// même point. `prise.ref` sert de repli quand plus aucune jambe ne tient le rayon : on lui rend
+// alors exactement ce qu'il annonçait avant qu'on y touche.
+// Renvoie le solde appliqué, ou null si le point a disparu d'UEX (rien à corriger).
+function ecrireStockDuPoint(prise) {
+  const p = pointAchat(prise.name, prise.terminal);
+  if (!p) return null;
+  const s = soldeDuPoint(CHARGEMENTS, prise.name, prise.terminal);
+  const ref = s.ref != null ? s.ref : prise.ref;
+  setOverride(prise.name, prise.terminal, "buy", "vol", stockApres(ref, s.pris), p.base);
+  return { ref, pris: s.pris };
+}
+
 function chargerJambe(i) {
   const leg = JOURNEY && JOURNEY.legs[i];
   if (!leg || !MARKET) return;
   const k = legKey(leg, i);
-  if (SOUTE.some((l) => l.leg === k)) {
-    // Annulation : on rend à la station ce qu'on lui avait retiré. La valeur d'AVANT est portée par
-    // le lot, donc on restaure exactement — et non « stock + units », qui gonflerait un rayon qu'on
-    // avait vidé au-delà de ce qu'il annonçait.
-    for (const l of SOUTE.filter((x) => x.leg === k && x.avant != null)) {
-      const p = pointAchat(l.name, l.from);
-      if (p) setOverride(l.name, l.from, "buy", "vol", l.avant, p.base);
-    }
+  if (CHARGEMENTS[k]) {
+    // Annulation : on rend au rayon ce que CETTE jambe y a pris, et rien de plus. Les lots peuvent
+    // avoir quitté la soute entre-temps (vendus, déposés, débarqués) : c'est le registre, pas eux,
+    // qui sait ce qu'on doit.
+    const prises = CHARGEMENTS[k];
+    CHARGEMENTS = retirerChargement(CHARGEMENTS, k);
+    for (const pr of prises) ecrireStockDuPoint(pr);
     SOUTE = SOUTE.filter((l) => l.leg !== k);
     updateOvBadge();
   } else {
@@ -1260,27 +1415,36 @@ function chargerJambe(i) {
     const lots = loadHold([], lignes, leg.from, nowSec()).map((l) => ({ ...l, leg: k }));
     // Charger, c'est vider le rayon d'autant. On fige d'abord les jambes qui achetaient ce point
     // (même règle qu'une correction de volume saisie à la main), puis on écrit la déduction.
-    const vides = [];
+    const prises = [];
     for (const l of lots) {
       const p = pointAchat(l.name, l.from);
-      if (!p || p.stock == null) continue;
-      l.avant = p.stock;
+      if (!p || p.stock == null) continue; // stock inconnu : rien à déduire, la jambe reste chargée
+      // La référence est celle qu'une AUTRE jambe a déjà retenue pour ce rayon. Relire le stock
+      // effectif ici, ce serait relire notre propre déduction et la compter une seconde fois.
+      const s = soldeDuPoint(CHARGEMENTS, l.name, l.from);
+      prises.push({ name: l.name, terminal: l.from, ref: s.ref != null ? s.ref : p.stock, units: l.units });
       pinLegsForVolume(l.name, l.from, "buy");
-      const reste = stockApres(p.stock, l.units);
-      setOverride(l.name, l.from, "buy", "vol", reste, p.base);
-      if (p.stock < l.units) vides.push(l.name); // le relevé annonçait moins que ce qu'on a pris
+    }
+    CHARGEMENTS = poserChargement(CHARGEMENTS, k, prises);
+    const vides = [];
+    for (const pr of prises) {
+      const s = ecrireStockDuPoint(pr);
+      if (s && s.pris > s.ref) vides.push(pr.name); // la station en annonçait moins qu'on n'en a pris
     }
     SOUTE = SOUTE.concat(lots);
     updateOvBadge();
     if (vides.length) {
-      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : le relevé UEX en annonçait moins que ce que tu as pris`);
+      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : la station en annonçait moins que ce que tu as pris`);
     }
   }
-  saveSoute();
+  saveSoute(); saveChargements();
   renderJourney();
   refresh();
 }
-const jambeChargee = (leg, i) => SOUTE.some((l) => l.leg === legKey(leg, i));
+// L'état « chargée » est PORTÉ par le registre, jamais déduit des lots : la soute se vide par
+// d'autres chemins que « annuler », et aucun ne défait le chargement — le fret est parti, il n'est
+// pas revenu au rayon.
+const jambeChargee = (leg, i) => !!CHARGEMENTS[legKey(leg, i)];
 
 // « Où suis-je ? » — l'étape courante du voyage, ou à défaut le terminal de départ d'« En route ».
 // C'est ce terminal qui fixe le prix d'une vente et qui porte le marqueur « refusé ici ».
@@ -1427,6 +1591,9 @@ function ecoulerHTML() {
   return `<div class="hold-ecouler"><div class="ec-head">Où écouler — classé par ce que ça rapporte, prix d'achat déduit</div>${lignes}</div>`;
 }
 
+// Débarquer le fret n'est pas le remettre en rayon : le registre des chargements n'est pas touché,
+// donc les jambes restent chargées (🔒 « ⬢ à bord ») et leur déduction reste posée. C'est ce qui
+// garde le chemin « annuler » atteignable — le seul qui rende vraiment son stock à la station.
 function viderSoute() { SOUTE = []; saveSoute(); renderSoute(); refresh(); }
 function retirerLot(i) { SOUTE = SOUTE.filter((_, j) => j !== i); saveSoute(); renderSoute(); refresh(); }
 
@@ -1627,9 +1794,17 @@ function clearJourney() {
   // ultérieur dont la jambe 0 relie les deux mêmes terminaux s'affichait « ⬢ à bord », et le clic
   // déchargeait les lots de l'ancien voyage en restaurant leurs stocks.
   SOUTE = detacherLotsDeJambe(SOUTE); saveSoute();
+  // Quatrième porteur du rang : le registre des chargements. Plus aucune jambe n'existe, donc plus
+  // rien à décharger — les déductions déjà posées sur les rayons, elles, restent : le fret est bien
+  // parti avec. Comme pour les lots qu'on vient de délier, elles ne sont simplement plus annulables.
+  CHARGEMENTS = {}; saveChargements();
   journeyExpandedLeg = -1;
   renderJourney();
-  saveState();
+  // Comme tous les autres mutateurs du parcours : la carte Voyage n'est pas la seule à lire JOURNEY.
+  // Les Boucles hissent en tête celles qui partent de la fin du parcours (.from-here) et le board
+  // Commodités marque d'un ◆ ce qu'on transporte — sans ce rendu, les deux gardaient l'état d'AVANT
+  // l'effacement jusqu'au geste suivant. `refresh` finit par `saveState`, inutile de le doubler.
+  refresh();
 }
 // Ensemble des commodités transportées au moins une fois sur le parcours (union des manifestes).
 function journeyCarriedCommodities() {
@@ -1927,14 +2102,15 @@ function beginJourney(label) {
 }
 
 // Réindexe tout ce qui est indexé par le RANG des jambes après une modification du parcours. Les
-// TROIS porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute — passent par le même
-// appel pur : les décaler séparément les ferait diverger, et c'est d'en avoir oublié un que venait
-// le double chargement (la jambe renumérotée se croyait vide alors que son fret était à bord).
+// QUATRE porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute, entrée du registre
+// des chargements — passent par le même appel pur : les décaler séparément les ferait diverger, et
+// c'est d'en avoir oublié un que venait le double chargement (la jambe renumérotée se croyait vide
+// alors que son fret était à bord).
 function reindexerApresRetrait(retrait) {
-  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE }, retrait);
-  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots;
+  const r = reindexerRangsJambe({ edits: JOURNEY_EDITS, pins: JOURNEY_PINS, lots: SOUTE, chargements: CHARGEMENTS }, retrait);
+  JOURNEY_EDITS = r.edits; JOURNEY_PINS = r.pins; SOUTE = r.lots; CHARGEMENTS = r.chargements;
   if (journeyExpandedLeg >= retrait.removedFrom) journeyExpandedLeg = -1; // le panneau déplié n'existe plus
-  saveJourneyEdits(); saveJourneyPins(); saveSoute();
+  saveJourneyEdits(); saveJourneyPins(); saveSoute(); saveChargements();
 }
 
 // Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
@@ -2552,6 +2728,16 @@ function saveStationReading() {
   const scu = Math.floor(Number($("alScu").value));
   const k = kFromReading(amount, scu, t.maxBox);
   if (k == null) { showToast("⚠ Relevé inutilisable — indique le montant payé et la quantité chargée"); return; }
+  // Un montant tapé à côté (un zéro de trop) donne un k d'apparence honnête, qu'on persiste et
+  // qu'on réaffiche « (relevé) » — il se lit alors comme une mesure fiable tout en multipliant les
+  // frais de cette station dans toutes les vues. Hors des bornes plausibles on DEMANDE, on ne
+  // refuse pas : un relevé surprenant reste une mesure, et c'est l'utilisateur qui l'a faite.
+  // Le message montre le montant tel qu'il a été compris et le compare aux deux tarifs connus :
+  // sans ce repère, « k = 1 413 » ne dit pas à quel point c'est absurde.
+  if (!kPlausible(k) && !confirm(
+    `${fmt(amount)} aUEC pour ${fmt(scu)} SCU à ${t.name}, c'est ×${kFmt(k)} le tarif d'Endgame.\n` +
+    `Les deux seules stations mesurées valent ×1 et ×1,4. Un zéro de trop ?\n\nEnregistrer ce relevé quand même ?`
+  )) return;
   AUTOLOAD_K[alKey(t.name)] = { k, amount, scu };
   saveAutoloadK();
   refresh();
@@ -2586,7 +2772,7 @@ function stationFeeHTML(S) {
   const rec = AUTOLOAD_K[alKey(t.name)];
   const k = kFor(t.name);
   const scu = rec ? rec.scu : 32;
-  const note = `<div class="fee-note">Tarif retenu : <b>k = ${k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
+  const note = `<div class="fee-note">Tarif retenu : <b>k = ${kFmt(k)}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
   return wrap(
     `<div class="fee-row">
        <span>Montant observé</span>
@@ -2729,7 +2915,7 @@ function autoloadListHTML() {
   const items = keys.sort().map((key) => {
     const o = AUTOLOAD_K[key];
     const terminal = key.slice(key.indexOf("|") + 1);
-    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${o.k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
+    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${kFmt(o.k)}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
   }).join("");
   return `<div class="corr-list-head"><span>${keys.length} relevé${keys.length > 1 ? "s" : ""} d'autoload</span><button id="resetAllK" class="reset-ov">Tout oublier</button></div>${items}`;
 }
@@ -3073,6 +3259,7 @@ async function init() {
     if (e.target.closest("#manifestToJourney")) { manifestToJourney(); return; }
     if (e.target.closest("#copyManifest")) { copyManifest(); return; }
     if (e.target.closest("#manifestAddBtn")) { addManifestCommodity($("manifestAddInput").value); return; }
+    if (e.target.closest("#manifestReset")) { resetManifeste(); return; }
     const del = e.target.closest(".mline-del");
     if (del) { removeManifestLine(del.dataset.name); return; }
     const add = e.target.closest(".suggest-add");
@@ -3240,7 +3427,9 @@ async function init() {
   loadAutoloadK();
   loadJourneyEdits();
   loadJourneyPins();
+  loadManifestEdit();
   loadSoute();
+  loadChargements(); // après loadSoute : la migration reconstruit le registre depuis les lots
   loadDepots();
   updateOvBadge();
   syncToggles();

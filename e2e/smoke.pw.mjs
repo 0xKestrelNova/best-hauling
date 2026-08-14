@@ -252,11 +252,16 @@ test("Chaîne : le filtre « même système » contraint la chaîne (régression
   const origin = await page.locator("#originList option").first().getAttribute("value");
   await page.fill("#chainOrigin", origin);
   await expect(page.locator("#chainOut .chain-leg").first()).toBeVisible();
-  // Avec « même système », tous les badges système de la chaîne doivent être identiques.
+  // Avec « même système », tous les badges système de la chaîne doivent être identiques. Ils sont
+  // posés sur le fil d'Ariane `.chain-path` (un badge par étape), jamais dans les `.chain-leg`.
   await page.check("#sameSystem");
   await expect(page.locator("#chainOut .chain-leg").first()).toBeVisible();
-  const systems = await page.locator("#chainOut .chain-leg .sys").allInnerTexts();
-  expect(new Set(systems.map((s) => s.trim())).size).toBeLessThanOrEqual(1);
+  const systems = (await page.locator("#chainOut .chain-path .sys").allInnerTexts()).map((s) => s.trim());
+  // Compter les badges AVANT de les comparer : `allInnerTexts()` n'attend rien et rend `[]` sur un
+  // sélecteur mort, et `new Set([]).size` vaut 0 — donc toute assertion d'unicité seule reste verte
+  // quand la classe visée est renommée. C'est cette garde qui empêche le test de redevenir creux.
+  expect(systems.length).toBeGreaterThan(0);
+  expect(new Set(systems).size).toBe(1);
 });
 
 // Pose la vue « En route » sur le premier terminal de départ proposé et rend la carte Manifeste.
@@ -347,6 +352,23 @@ test("Compagnon de voyage : pré-remplit Chaîne + remonte les boucles depuis l'
   await page.click("#viewLoops");
   expect(await page.locator("#loopRows tr.from-here").count()).toBeGreaterThan(0);
   await expect(page.locator("#loopRows tr").first()).toHaveClass(/from-here/); // pertinentes en tête
+});
+
+test("Compagnon de voyage : effacer le parcours repeint la vue courante (#23)", async ({ page }) => {
+  // clearJourney rendait la carte Voyage et sauvegardait, mais ne rappelait pas refresh() comme le
+  // font tous les autres mutateurs du parcours. Les vues qui lisent JOURNEY à leur rendu gardaient
+  // donc l'état d'avant : boucles hissées en tête avec le fond `.from-here`, tuiles « transportée »
+  // encore ◆. L'état SAUVÉ, lui, était déjà correct — d'où l'invisibilité à tout test de persistance.
+  await page.click("#viewLoops");
+  await expect(page.locator("#loopRows tr").first()).toBeVisible();
+  // Une boucle est un cycle A→B→A : la prendre place la fin du parcours sur SON propre terminal A,
+  // elle se marque donc « from-here » sans dépendre d'une intersection dans le jeu de données.
+  await page.locator("#loopRows tr").first().locator(".journey-pick").click();
+  await expect(page.locator("#loopRows tr.from-here").first()).toBeVisible();
+
+  await page.locator("#journeyClear").click();
+  await expect(page.locator("#journeyStartBtn")).toBeVisible(); // le parcours est bien effacé…
+  await expect(page.locator("#loopRows tr.from-here")).toHaveCount(0); // …et la vue le sait
 });
 
 test("Compagnon de voyage : cliquer une étape recale En route (position interactive)", async ({ page }) => {
@@ -455,6 +477,15 @@ test("Multi commodité : « avec les simples » remet les trajets à une commodi
 // Les lots de la soute, tels que persistés — la source de vérité, plus lisible qu'un texte de panneau.
 const lots = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("best-hauling-hold") || "[]"));
 const holdScuDe = (ls) => ls.reduce((s, l) => s + l.units, 0);
+// Le stock EFFECTIF d'un point d'achat, lu là où l'app l'affiche : la vue Corrections. C'est le seul
+// endroit qui montre ce que la station annonce APRÈS déduction — donc le seul juge des chargements.
+async function stockAchat(page, station, nom) {
+  await page.click("#viewCorrections");
+  await page.fill("#station", station);
+  const c = page.locator(`#correctionsStation .editv[data-c="${nom}"][data-s="buy"][data-f="vol"]`).first();
+  await expect(c).toBeVisible({ timeout: 8000 });
+  return Number(await c.getAttribute("data-v"));
+}
 
 async function jambeChargeable(page) {
   await manifesteDepuis(page, "Megumi — Pyro");
@@ -621,6 +652,128 @@ test("Soute : retirer un arrêt AVANT une jambe chargée ne la rend pas recharge
   // Et re-cliquer ANNULE le chargement, au lieu d'en ajouter un second exemplaire.
   await page.locator("#journeyCard .jleg-load").first().click();
   expect(holdScuDe(await lots(page))).toBe(0);
+});
+
+test("Soute : vider la soute ne rend pas la jambe rechargeable, le rayon n'est pas déduit deux fois (#21)", async ({ page }) => {
+  // « Cette jambe est chargée » se DÉDUISAIT de la présence de ses lots. Le ✕ de la soute — comme
+  // une vente — les faisait disparaître sans rien rendre à la station : le bouton repassait à
+  // « ✓ chargé », le clic suivant redéduisait le rayon DEPUIS le stock déjà amputé (100 → 40 → 0),
+  // et la valeur d'origine était perdue pour de bon.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
+  const pris = Number(await page.locator("#manifest .mline", { hasText: nom }).first().locator(".mqty-input").inputValue());
+  expect(pris).toBeGreaterThan(0);
+  const avant = await stockAchat(page, "Megumi — Pyro", nom);
+
+  await manifesteDepuis(page, "Megumi — Pyro");
+  await page.click("#manifestToJourney");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(Math.max(0, avant - pris));
+
+  // Le ✕ débarque le fret ; il ne DÉCHARGE pas la jambe — rien n'est revenu au rayon.
+  await page.click("#viewEnroute");
+  await page.locator("#holdClear").click();
+  await expect(page.locator("#holdCard")).toBeHidden();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i);
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(Math.max(0, avant - pris));
+
+  // Le clic suivant ANNULE, il ne recharge pas : le rayon retrouve exactement sa valeur d'origine.
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/chargé/i);
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(avant);
+});
+
+test("Soute : annuler une jambe ne rend au rayon que CE QU'ELLE y a pris (#22)", async ({ page }) => {
+  // Parcours A→B→A→C : les jambes 0 et 2 achètent la MÊME commodité au MÊME point. Annuler la
+  // première réécrivait un instantané ABSOLU du stock d'avant, effaçant la déduction de la seconde
+  // — la station reproposait aussitôt un stock fantôme, toujours à bord.
+  const plan = await page.evaluate(async () => {
+    const m = await (await fetch("data/market.json")).json();
+    const a = m.terminals.findIndex((t) => t.name === "Megumi");
+    if (a < 0) return null;
+    for (const c of m.commodities) {
+      const b = c.buys.find((x) => x[0] === a);
+      if (!b || !(b[2] >= 30)) continue;                                  // du stock, et de quoi le partager
+      const u = Math.floor(b[2] / 3);
+      // Une capacité de vente trop petite plafonnerait la ligne du manifeste, pas la prise.
+      const dest = c.sells.filter((x) => x[0] !== a && (x[2] == null || x[2] >= u)).slice(0, 2);
+      if (dest.length < 2) continue;
+      const nomSys = (i) => [m.terminals[i].name, m.terminals[i].system];
+      return { nom: c.name, units: u, a: nomSys(a), b: nomSys(dest[0][0]), d: nomSys(dest[1][0]) };
+    }
+    return null;
+  });
+  test.skip(!plan, "aucune commodité de Megumi n'a du stock à partager entre deux débouchés");
+
+  const [A, As] = plan.a, [B, Bs] = plan.b, [D, Ds] = plan.d;
+  // Le parcours passe par le lien partageable ; les manifestes des jambes 0 et 2 sont IMPOSÉS, sinon
+  // rien ne garantit qu'elles choisiraient la même commodité au même point.
+  await page.evaluate(({ A, B, D, nom, units }) => {
+    localStorage.setItem("best-hauling-journey-edits-v2", JSON.stringify({
+      [`0|${A}|${B}`]: [{ name: nom, units }],
+      [`1|${B}|${A}`]: [],
+      [`2|${A}|${D}`]: [{ name: nom, units }],
+    }));
+  }, { A, B, D, nom: plan.nom, units: plan.units });
+
+  const j = JSON.stringify({ c: 0, l: [[A, As, B, Bs], [B, Bs, A, As], [A, As, D, Ds]].map(([f, fs, t, ts]) => [f, fs, t, ts, plan.nom, 0, 0, 0]) });
+  await page.goto("/index.html#" + new URLSearchParams({ v: "enroute", cargo: "5000", useCargo: "1", j }).toString());
+  await page.reload(); // un `goto` qui ne change que le fragment ne relit pas l'état au démarrage
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator("#journeyCard .jleg-load")).toHaveCount(2); // la jambe 1 ne charge rien
+
+  const station = `${A} — ${As}`;
+  const ref = await stockAchat(page, station, plan.nom);
+  expect(ref).toBeGreaterThanOrEqual(plan.units * 2);
+
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(0).click(); // jambe 0 : A→B
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units);
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(1).click(); // jambe 2 : A→C, même rayon
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units * 2);
+
+  // On se ravise sur la jambe 0 : le rayon ne récupère QUE ses SCU. Ceux de la jambe 2 sont
+  // toujours à bord, prise chez lui — les lui rendre inventerait du stock.
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").nth(0).click();
+  expect(await stockAchat(page, station, plan.nom)).toBe(ref - plan.units);
+});
+
+test("Soute : une soute écrite AVANT le registre des chargements reste chargée et annulable", async ({ page }) => {
+  // Garde-fou de migration : chez qui a déjà du fret à bord, l'état « chargée » vit sur les lots
+  // (`leg`) et le stock d'avant dans `avant`. Sans reprise, la jambe repasserait à « ✓ chargé » au
+  // premier rechargement — le bug #21 servi à froid, sans que l'utilisateur ait rien touché.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
+  const avant = await stockAchat(page, "Megumi — Pyro", nom);
+  await manifesteDepuis(page, "Megumi — Pyro");
+  await page.click("#manifestToJourney");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  const apresCharge = await stockAchat(page, "Megumi — Pyro", nom);
+  expect(apresCharge).toBeLessThan(avant);
+  await page.click("#viewEnroute");
+
+  // On rétrograde le stockage au format d'avant : le registre disparaît, `avant` revient sur les lots.
+  await page.evaluate(() => {
+    const reg = JSON.parse(localStorage.getItem("best-hauling-jambes-chargees") || "{}");
+    const refs = new Map();
+    for (const prises of Object.values(reg)) for (const p of prises) refs.set(`${p.name}|${p.terminal}`, p.ref);
+    const vieux = JSON.parse(localStorage.getItem("best-hauling-hold") || "[]")
+      .map((l) => (refs.has(`${l.name}|${l.from}`) ? { ...l, avant: refs.get(`${l.name}|${l.from}`) } : l));
+    localStorage.setItem("best-hauling-hold", JSON.stringify(vieux));
+    localStorage.removeItem("best-hauling-jambes-chargees");
+  });
+  await page.reload();
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i, { timeout: 8000 });
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(apresCharge); // la correction n'a pas bougé
+
+  await page.click("#viewEnroute");
+  await page.locator("#journeyCard .jleg-load").first().click();
+  expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(avant); // annuler rend toujours exactement
 });
 
 test("Soute : recharger la même commodité crée un SECOND lot, sans fondre les prix", async ({ page }) => {
@@ -937,6 +1090,78 @@ async function corrige(page, champ, cote, valeur) {
   return avant;
 }
 const profitJambe = (page) => page.locator("#journeyCard .jleg-profit").first();
+
+// ---------- Le chargement qu'on COMPOSE à la main sur la carte Manifeste (#19) ----------
+// Ajoute au manifeste une commodité qui n'y est pas encore, et rend son nom.
+async function ajouteAuManifeste(page) {
+  const dejaLa = await page.locator("#manifest .mname").allInnerTexts();
+  const opts = await page.locator("#commodityList option").evaluateAll((els) => els.map((e) => e.value));
+  const nom = opts.find((o) => !dejaLa.some((h) => h.includes(o)));
+  await page.fill("#manifestAddInput", nom);
+  await page.click("#manifestAddBtn");
+  return nom;
+}
+
+test("Manifeste : une composition à la main survit à un prix corrigé (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  test.skip(!(await page.locator("#manifestAddInput").count()), "aucun chargement rentable depuis ce terminal");
+  const ajoutee = await ajouteAuManifeste(page);
+  const lignes = await page.locator("#manifest .mline").count();
+  const qty = page.locator("#manifest .mqty-input").first();
+  await qty.fill("30");
+  await qty.blur();
+
+  // Le geste du bug : corriger un prix d'achat depuis la carte, qui rend ses chiffres en `editv` et
+  // invite donc explicitement au geste. renderManifest remettait `currentManifest` à null et
+  // recalculait tout : la ligne ajoutée disparaissait et les SCU repartaient à leur valeur optimale.
+  await corrige(page, "price", "buy", 4321);
+
+  await expect(page.locator("#manifest .mline")).toHaveCount(lignes);
+  // `.mline .mname` et non `.mname` : les suggestions de remplissage portent le même nom de classe.
+  await expect(page.locator("#manifest .mline .mname").last()).toContainText(ajoutee);
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue("30");
+  // …et la carte affiche bien le prix qu'on vient de corriger : l'intention survit, pas le marché.
+  await expect(page.locator("#manifest .editv[data-f='price'][data-s='buy']").first())
+    .toHaveAttribute("data-v", "4321");
+});
+
+test("Manifeste : la composition se recharge, et « ↺ optimal » rend la main au calcul (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const qty = page.locator("#manifest .mqty-input").first();
+  const optimal = await qty.inputValue();
+  test.skip(optimal === "30", "le chargement optimal charge déjà les SCU que le test va saisir");
+  await qty.fill("30");
+  await qty.blur();
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(1); // ✎ : composé à la main
+
+  // Persistée comme le manifeste d'une jambe de voyage : le rechargement ne l'efface pas.
+  await page.reload();
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue("30", { timeout: 8000 });
+
+  await page.click("#manifestReset");
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue(optimal);
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(0);
+});
+
+test("Manifeste : changer de quai de départ abandonne la composition (#19)", async ({ page }) => {
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const qty = page.locator("#manifest .mqty-input").first();
+  const optimal = await qty.inputValue();
+  test.skip(optimal === "30", "le chargement optimal charge déjà les SCU que le test va saisir");
+  await qty.fill("30");
+  await qty.blur();
+
+  // Un autre quai : la composition ne le suit pas — ses lignes se lisent aux prix de Megumi.
+  const autre = await page.locator("#originList option").evaluateAll(
+    (els) => els.map((e) => e.value).find((v) => !v.startsWith("Megumi")),
+  );
+  await page.fill("#origin", autre);
+  await expect(page.locator("#manifest .manifest-edited")).toHaveCount(0);
+  // Et de retour à Megumi : le calcul, pas la composition d'avant, qui ressortirait sans qu'on
+  // l'ait demandée.
+  await page.fill("#origin", "Megumi — Pyro");
+  await expect(page.locator("#manifest .mqty-input").first()).toHaveValue(optimal);
+});
 
 test("Corrections : un prix corrigé se retrouve dans le board Commodités", async ({ page }) => {
   // Le board lisait market.json BRUT, sans résolveur : on corrigeait un prix dans un tableau et la
@@ -1336,6 +1561,50 @@ test.describe("chargement du marché", () => {
     await expect(page.locator("#empty")).toBeHidden(); // et non « Choisis un terminal de départ… »
     await expect(page.locator("#manifest")).toBeHidden();
     await expect(page.locator("#routes")).toBeVisible();
+  });
+
+  test("marché lent : « En route » n'affiche pas le message vide d'une autre vue (#26)", async ({ page }) => {
+    // Symétrie exacte de #55, laissée dans un seul sens : render() et renderLoops() remettent
+    // #empty à sa valeur d'index.html en tête de rendu, mais renderEnRoute sortait AVANT toute
+    // écriture quand le marché manquait. Le message de la vue qu'on quitte restait donc sous un
+    // tableau « En route » vide — et si le fetch échoue, withMarket ne re-rend pas : il y reste.
+    // 2,5 s : le test observe un état TRANSITOIRE, il faut que la fenêtre survive à un runner chargé.
+    await page.route("**/data/market.json", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500)); // le marché arrive bien après le changement de vue
+      return route.continue();
+    });
+
+    // On ATTEND que le filtre ait vidé le tableau : le rendu est débouncé, et changer de vue avant
+    // qu'il ne parte laisserait #empty masqué — le test passerait alors sans rien prouver.
+    await page.fill("#search", "zzz"); // aucune route -> #empty affiche le message des Trajets
+    await expect(page.locator("#rows tr")).toHaveCount(0);
+    await expect(page.locator("#empty")).toBeVisible();
+    await expect(page.locator("#empty")).toHaveText("Aucune route ne correspond aux filtres.");
+
+    await page.click("#viewEnroute");
+    await expect(page.locator("#enroute")).toBeVisible();
+    await expect(page.locator("#empty")).toBeHidden(); // sans marché, cette vue n'a rien de vrai à dire
+    // À l'arrivée du marché seulement, elle dit ce qui lui manque VRAIMENT.
+    await expect(page.locator("#empty")).toHaveText(
+      "Choisis un terminal de départ pour voir le fret à emporter.", { timeout: 15000 });
+  });
+
+  test("marché lent : le mode multi n'affiche pas les lignes des trajets simples (#25)", async ({ page }) => {
+    // renderMulti sortait le temps du fetch sans toucher à #rows : l'écran gardait les trajets à UNE
+    // commodité sous un mode qui promet des chargements combinés, et ▶ comme 📦 indexaient alors
+    // `shownMulti`, resté vide — clic mort, sans le moindre message.
+    // 2,5 s : idem, l'état observé est transitoire (il dure le temps du fetch et pas plus).
+    await page.route("**/data/market.json", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      return route.continue();
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible(); // trajets à une commodité
+    await page.check("#multiCommodity");
+    await expect(page.locator("#rows tr")).toHaveCount(0);  // le tableau suit son tableau de données
+    await expect(page.locator("#empty")).toBeHidden();      // et ne prétend pas que c'est un filtre
+    // Le mode finit par se remplir de VRAIS chargements combinés (plusieurs icônes par ligne).
+    await expect(page.locator("#rows .multi-icons").first()).toBeVisible({ timeout: 15000 });
   });
 });
 

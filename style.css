@@ -840,10 +840,16 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .carry-tag { color: var(--warn); font-style: italic; }
 .mline.carry { background: rgba(245, 167, 66, 0.04); }
 .mprofit.muted { color: var(--muted); }
-/* Ajout libre d'une commodité au manifeste. */
+/* Ajout libre d'une commodité au manifeste, et retour au chargement calculé. */
 .manifest-add { display: flex; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--line); }
 #manifestAddInput { flex: 1; min-width: 0; padding: 7px 10px; background: rgba(8, 11, 20, 0.9); border: 1px solid var(--line2); color: var(--text); border-radius: 3px; font-family: var(--font); font-size: 12px; }
 #manifestAddBtn { white-space: nowrap; }
+/* Même contrôle que le « ↺ optimal » d'une jambe de voyage (.jman-reset), même sobriété : il
+   annule un travail, il ne s'offre pas avant qu'on le cherche. */
+.manifest-reset { white-space: nowrap; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; padding: 7px 11px; }
+.manifest-reset:hover { color: var(--acc); border-color: var(--acc); }
+/* Chargement composé à la main : le ✎ des jambes de voyage, à la taille du titre de la carte. */
+.manifest-edited { color: var(--acc); font-size: 12px; cursor: help; }
 
 /* ---------- Chaîne ---------- */
 .chain-wrap { margin: 0 0 20px; }
