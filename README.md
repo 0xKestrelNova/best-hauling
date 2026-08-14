@@ -409,6 +409,17 @@ plus loin (« vend ailleurs ») n'est pas déchargé à l'arrivée, celui déjà
 butin, minage, salvage) n'a pas été chargé au départ. Un terminal qu'UEX déclare sans autoload
 (`is_auto_load`) n'est jamais facturé.
 
+Parce que la base se paie **par ligne**, une commodité peut coûter au manifeste plus qu'elle ne lui
+rapporte : ses 335 aUEC de marge sur l'unique SCU en stock ne couvrent pas les 400 de manutention,
+ou bien son SCU vaudrait davantage rempli de la commodité suivante. Le manifeste optimal la **laisse
+au sol et rend sa place au remplissage** — il ne garde une ligne que s'il vaut plus avec elle que
+sans, et il rebâtit le chargement à chaque retrait plutôt que de laisser la soute entamée. Garantie
+qui en découle, **quand la soute est la seule contrainte** : un manifeste ne rapporte jamais moins
+que sa meilleure commodité chargée seule sur le même trajet — vérifié sur les 167 434 arcs des
+40 combinaisons soute × tarif de l'instantané. Sous **budget bornant**, c'est un sac à dos à deux
+contraintes : le remplissage reste glouton et 16 arcs sur 499 772 y restent en deçà (contre 4 166
+avant), écart maximal 12 %.
+
 Les relevés bruts et le raisonnement complet sont dans
 [`docs/superpowers/specs/2026-08-10-frais-autoload-design.md`](docs/superpowers/specs/2026-08-10-frais-autoload-design.md).
 
