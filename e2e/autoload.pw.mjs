@@ -356,3 +356,27 @@ test("relevé de station : k déduit d'un montant observé, persistant, hors du 
   await page.locator("#station").dispatchEvent("input");
   await expect(page.locator(".corr-item.autoload")).toContainText("1,41"); // survit au rechargement
 });
+
+test("relevé de station : un zéro de trop se fait confirmer avant d'être retenu (#27)", async ({ page }) => {
+  await enrichMarket(page, "all", 32); // mêmes caisses de 32 SCU que le relevé de Ruin ci-dessus
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.click("#viewCorrections");
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await page.locator("#station").dispatchEvent("input");
+  await expect(page.locator("#alAmount")).toBeVisible();
+
+  // 1 159 000 au lieu de 1 159 : k = 1 413, mille fois le tarif d'ancrage. Playwright REFUSE tout
+  // dialogue tant qu'aucun écouteur n'est posé — c'est donc ici l'utilisateur qui dit « non ».
+  await page.fill("#alAmount", "1159000");
+  await page.fill("#alScu", "32");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0); // rien de persisté
+  await expect(page.locator(".fee-note")).toContainText("(k global)"); // ni annoncé comme relevé
+
+  // Confirmé, le relevé surprenant reste enregistrable : la borne coûte un clic, pas une mesure.
+  page.on("dialog", (d) => d.accept());
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toContainText("413,415");
+});

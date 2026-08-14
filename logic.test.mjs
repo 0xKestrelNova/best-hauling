@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, availabilityFactor, tighterVolume,
   normalizeScores, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
   profitPerHour, rawScoreOf, routePasses, loopPasses,
@@ -623,6 +623,45 @@ test("autoloadFee : à taille de caisse constante, le coût croît avec le volum
     prec = f;
   }
   assert.ok(autoloadFee(31, 32, 1) > autoloadFee(32, 32, 1), "31 SCU en 4 caisses > 32 SCU en 1");
+});
+
+// ---------- Relevé de station : du montant payé au coefficient ----------
+test("kFromReading : le relevé de Ruin redonne son coefficient", () => {
+  // La spec : 1 159 aUEC pour 32 SCU en une caisse de 32 -> 1 159 / 820 = 1,413.
+  assert.equal(autoloadFee(32, 32, 1), 820);
+  assert.equal(kFromReading(1159, 32, 32), 1.413);
+  // Le plafond de caisse du terminal compte : à 16, les mêmes 32 SCU font deux caisses (850 à k=1).
+  assert.equal(kFromReading(1159, 32, 16), 1.364);
+});
+
+test("kFromReading : une mesure qui ne dit rien ne rend pas un coefficient", () => {
+  assert.equal(kFromReading(1159, 0, 32), null);    // sans quantité, aucune référence
+  assert.equal(kFromReading(0, 32, 32), null);      // sans montant, aucune mesure
+  assert.equal(kFromReading(-500, 32, 32), null);
+  assert.equal(kFromReading(NaN, 32, 32), null);    // champ vide -> Number("") vaut 0, texte -> NaN
+});
+
+test("kPlausible : les deux stations mesurées passent, le décalage de virgule non (#27)", () => {
+  // Les seuls coefficients jamais mesurés : Endgame (l'ancrage) et Ruin.
+  assert.ok(kPlausible(1));
+  assert.ok(kPlausible(1.4));
+  assert.ok(kPlausible(kFromReading(1159, 32, 32)));
+  // Le bug : un zéro de trop dans le montant, et k passe à mille sans que rien ne le signale.
+  assert.equal(kFromReading(1159000, 32, 32), 1413.415);
+  assert.ok(!kPlausible(1413.415), "1 159 000 aUEC pour 32 SCU n'est pas un tarif de station");
+  // Ce que les bornes doivent attraper, exactement : le plus PETIT décalage de virgule possible
+  // depuis la plage mesurée — un zéro de trop sur la station la moins chère (1,0 -> 10), un dernier
+  // chiffre oublié sur la plus chère (1,4 -> 0,14). Toute borne entre les deux les rejette.
+  assert.ok(!kPlausible(10));
+  assert.ok(!kPlausible(0.14));
+  assert.ok(K_PLAUSIBLE.max < 10 && K_PLAUSIBLE.min > 0.14);
+  // Et elles restent larges : ×4 et ÷4 autour de l'ancrage, soit dix fois l'écart réellement
+  // observé entre les deux stations. Une plage resserrée sur [1 ; 1,4] ferait confirmer la moitié
+  // des relevés honnêtes, à commencer par le k global par défaut.
+  assert.equal(K_PLAUSIBLE.min * K_PLAUSIBLE.max, 1);
+  assert.ok(kPlausible(K_PLAUSIBLE.min) && kPlausible(K_PLAUSIBLE.max));
+  assert.ok(kPlausible(1.2), "le k global par défaut doit rester au-dessus de tout soupçon");
+  assert.ok(!kPlausible(null)); // une mesure inutilisable n'est pas un coefficient plausible
 });
 
 // ---------- addableUnits (suggestions) ----------
