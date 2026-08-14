@@ -4,7 +4,7 @@
 import {
   tripMinutes, ageDays, pairAge,
   normalizeScores, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet,
+  AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible,
   ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
@@ -231,15 +231,6 @@ function saveAutoloadK() { try { localStorage.setItem(AUTOLOAD_KEY, JSON.stringi
 const globalK = () => { const v = Number($("alk").value); return v > 0 ? v : K_DEFAULT; };
 const kFor = (terminal) => { const o = AUTOLOAD_K[alKey(terminal)]; return o && o.k > 0 ? o.k : globalK(); };
 
-// Déduit k d'un montant observé en jeu : personne ne lit un coefficient à l'écran, on lit une
-// facture. k = montant payé / montant que la formule prédirait au tarif d'ancrage (k = 1).
-// null quand la mesure ne dit rien (quantité nulle, montant absurde).
-function kFromReading(amount, scu, maxBox) {
-  const ref = autoloadFee(scu, maxBox, 1);
-  if (!(ref > 0) || !(amount > 0)) return null;
-  return Math.round((amount / ref) * 1000) / 1000;
-}
-
 // Ce qu'UNE extrémité facture. `point` est ce que consomme logic.mjs ; les autres champs servent à
 // EXPLIQUER le chiffre à l'écran — « cette station ne propose pas l'autoload » et « UEX ne nous a
 // pas dit si elle le propose » aboutissent au même 0 mais ne se racontent pas pareil, et aucun des
@@ -277,7 +268,8 @@ const feeResolver = (f) => (f.autoload ? (t) => autoloadPoint(t, kFor(t && t.nam
 // relevés à 2,8 % près, et `k` varie de 40 % entre les deux seules stations mesurées. Le « ≈ » le
 // dit, partout où le chiffre a été amputé.
 const fmtFee = (n, fees) => (fees > 0 ? "≈ " + fmt(n) : fmt(n));
-const kText = (e) => `×${e.k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} ${e.measured ? "(relevé)" : "(k global)"}`;
+const kFmt = (k) => k.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
+const kText = (e) => `×${kFmt(e.k)} ${e.measured ? "(relevé)" : "(k global)"}`;
 function feeEndText(e) {
   if (!e.known) return `${e.name} : autoload inconnu (donnée UEX absente) — rien facturé`;
   if (!e.available) return `${e.name} : pas d'autoload — rien facturé`;
@@ -2551,6 +2543,16 @@ function saveStationReading() {
   const scu = Math.floor(Number($("alScu").value));
   const k = kFromReading(amount, scu, t.maxBox);
   if (k == null) { showToast("⚠ Relevé inutilisable — indique le montant payé et la quantité chargée"); return; }
+  // Un montant tapé à côté (un zéro de trop) donne un k d'apparence honnête, qu'on persiste et
+  // qu'on réaffiche « (relevé) » — il se lit alors comme une mesure fiable tout en multipliant les
+  // frais de cette station dans toutes les vues. Hors des bornes plausibles on DEMANDE, on ne
+  // refuse pas : un relevé surprenant reste une mesure, et c'est l'utilisateur qui l'a faite.
+  // Le message montre le montant tel qu'il a été compris et le compare aux deux tarifs connus :
+  // sans ce repère, « k = 1 413 » ne dit pas à quel point c'est absurde.
+  if (!kPlausible(k) && !confirm(
+    `${fmt(amount)} aUEC pour ${fmt(scu)} SCU à ${t.name}, c'est ×${kFmt(k)} le tarif d'Endgame.\n` +
+    `Les deux seules stations mesurées valent ×1 et ×1,4. Un zéro de trop ?\n\nEnregistrer ce relevé quand même ?`
+  )) return;
   AUTOLOAD_K[alKey(t.name)] = { k, amount, scu };
   saveAutoloadK();
   refresh();
@@ -2585,7 +2587,7 @@ function stationFeeHTML(S) {
   const rec = AUTOLOAD_K[alKey(t.name)];
   const k = kFor(t.name);
   const scu = rec ? rec.scu : 32;
-  const note = `<div class="fee-note">Tarif retenu : <b>k = ${k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
+  const note = `<div class="fee-note">Tarif retenu : <b>k = ${kFmt(k)}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
   return wrap(
     `<div class="fee-row">
        <span>Montant observé</span>
@@ -2728,7 +2730,7 @@ function autoloadListHTML() {
   const items = keys.sort().map((key) => {
     const o = AUTOLOAD_K[key];
     const terminal = key.slice(key.indexOf("|") + 1);
-    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${o.k.toLocaleString("fr-FR", { maximumFractionDigits: 3 })}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
+    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${kFmt(o.k)}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
   }).join("");
   return `<div class="corr-list-head"><span>${keys.length} relevé${keys.length > 1 ? "s" : ""} d'autoload</span><button id="resetAllK" class="reset-ov">Tout oublier</button></div>${items}`;
 }

@@ -127,6 +127,17 @@ pour 32 SCU à Ruin → k = 1 159 / 820 = 1,41.
 Les stations non mesurées prennent le **k global**, réglable, **défaut 1,2** (milieu des deux
 mesures connues).
 
+**Plage plausible du relevé** (ajout du 2026-08-14, issue #27) : `k` accepté sans question de
+**0,25 à 4**, confirmation demandée au-delà. Ces bornes ne prétendent pas connaître le tarif des 159
+terminaux jamais mesurés — elles écartent le **décalage de virgule**, seule faute de saisie qui
+produise un coefficient d'apparence honnête : un zéro de trop (1 159 000 pour 1 159) multiplie `k`
+par dix, un dernier chiffre oublié le divise par dix. Depuis la plage mesurée, le plus petit
+décalage possible donne 10 d'un côté et 0,14 de l'autre ; toute borne située entre les deux les
+attrape. ×4 / ÷4 autour de l'ancrage laisse dix fois l'écart réellement observé entre les deux
+stations, et plus du double de marge avant le premier décalage. **On confirme, on ne refuse pas** :
+une borne qui perdrait un relevé véritablement surprenant serait pire que le tarif faux qu'elle
+corrige — et c'est parce qu'elle ne coûte qu'un clic qu'on peut la serrer autant.
+
 ### Application dans le moteur
 
 Les frais s'appliquent **deux fois par trajet** — chargement à l'achat, déchargement à la vente —

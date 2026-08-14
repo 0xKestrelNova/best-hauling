@@ -417,6 +417,30 @@ export function autoloadFee(scu, maxBox, k) {
   return Math.round(k * (AUTOLOAD.base + AUTOLOAD.perBox * boxes + AUTOLOAD.perScu * units));
 }
 
+// ---------- Relevé de station : du montant payé au coefficient ----------
+// Déduit `k` d'un montant observé en jeu : personne ne lit un coefficient à l'écran, on lit une
+// facture. k = montant payé / montant que la formule prédirait à l'ancrage (k = 1), au plafond de
+// caisse du terminal. null quand la mesure ne dit rien : sans quantité il n'y a pas de référence à
+// diviser, sans montant il n'y a rien de mesuré (un champ vide donne Number("") = 0, un texte NaN).
+export function kFromReading(amount, scu, maxBox) {
+  const ref = autoloadFee(scu, maxBox, 1);
+  if (!(ref > 0) || !(amount > 0)) return null;
+  return Math.round((amount / ref) * 1000) / 1000;
+}
+
+// Ce k est-il celui d'une station, ou d'une faute de frappe ? Ces bornes ne prétendent PAS connaître
+// le tarif des 159 terminaux jamais mesurés — elles écartent le DÉCALAGE DE VIRGULE, seule erreur de
+// saisie qui produise un coefficient d'apparence honnête : un zéro de trop (1 159 000 pour 1 159)
+// multiplie k par dix, un dernier chiffre oublié le divise par dix. Depuis la plage mesurée (1,0 à
+// Endgame, 1,4 à Ruin), le plus petit décalage possible donne 10 d'un côté, 0,14 de l'autre ; toute
+// borne entre ces deux valeurs les attrape. On prend ×4 et ÷4 autour de l'ancrage : dix fois l'écart
+// réellement observé entre les deux stations, et il reste plus du double de marge avant le premier
+// décalage. Hors bornes, l'appelant fait CONFIRMER, il ne refuse pas — une borne qui perdrait un
+// relevé véritablement surprenant serait pire que le tarif faux qu'elle corrige, et c'est justement
+// parce qu'elle ne coûte qu'un clic qu'on peut la serrer autant.
+export const K_PLAUSIBLE = { min: 0.25, max: 4 };
+export const kPlausible = (k) => k >= K_PLAUSIBLE.min && k <= K_PLAUSIBLE.max;
+
 // ---------- Contexte de frais : un point par terminal, une paire par chargement ----------
 // Tout le moteur reçoit ce contexte en PARAMÈTRE OPTIONNEL, et son absence (null) est le chemin
 // par défaut : sans lui, chaque fonction rend exactement les valeurs brutes qu'elle rendait avant

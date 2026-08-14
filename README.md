@@ -399,7 +399,11 @@ quand UEX renvoie 0** : ce repli sous-estime les frais plutôt que de les invent
 D'où le **`≈` sur tout montant** : l'app donne un ordre de grandeur fiable, pas un chiffre exact. Si tu
 relèves le tarif réel d'une station, tu peux **l'enregistrer** (montant observé pour une quantité donnée →
 `k` déduit) : c'est **local**, comme les corrections, jamais partagé ni mis dans l'URL — seuls
-l'interrupteur et le `k` global entrent dans le permalien.
+l'interrupteur et le `k` global entrent dans le permalien. Un relevé qui donne un `k` hors de la plage
+plausible (**0,25 à 4**, soit ×4 et ÷4 autour de l'ancrage — dix fois l'écart entre les deux stations
+mesurées) **demande confirmation** avant d'être retenu : un zéro de trop dans le montant produit un
+coefficient d'apparence honnête, ensuite affiché « (relevé) » comme s'il avait été mesuré. La question
+ne refuse rien — un tarif vraiment surprenant reste enregistrable en un clic.
 
 Deux hypothèses complètent le modèle, faute de mesures : le **nombre de caisses est fixé au chargement**
 (au déchargement on sort les caisses qu'on a, seul le tarif change) et **une transaction par commodité**
