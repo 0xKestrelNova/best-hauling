@@ -553,7 +553,7 @@ function multiRowHTML(t, i) {
 // (#30) : la carte 2D du parcours montre la même géographie. Ce dépliant-ci survit parce que la
 // carte, elle, n'affiche aucun chiffre — c'est le seul endroit qui dit ce que contient une ligne
 // « 3 commodités ». La durée du trajet, qui vivait dans le schéma, reste lisible dans l'infobulle
-// de la colonne « Profit/heure ».
+// de la colonne « Profit/h ».
 function multiCargoHTML(t) {
   const lines = t.lines.map((l) =>
     `<div class="sline">${commodityIcon(l.kind)}` +

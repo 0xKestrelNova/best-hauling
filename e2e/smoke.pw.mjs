@@ -2214,3 +2214,33 @@ test("score : le tableau n'écrit jamais une largeur hors [0, 100] (#39)", async
   const horsBornes = styles.filter((s) => !/^width:\s*(100|\d{1,2})%;?$/.test(s.trim()));
   expect(horsBornes).toEqual([]);
 });
+
+// #54 : les tableaux débordaient de leur cadre, et la barre pour rattraper les 21 px était collée
+// au bas de 316 lignes — 33 écrans à descendre, pousser, remonter. Le contrôle porte sur
+// `.table-shell`, JAMAIS sur documentElement : au niveau page le débordement est nul, puisque c'est
+// le conteneur qui défile tout seul. Un test au niveau page passerait à tort, et c'est exactement
+// pour ça que rien ne voyait le défaut. La tolérance de 1 px couvre `.table-shell::after`, dont le
+// crochet décoratif déborde en permanence (style.css:613) — même convention qu'à la ligne 219.
+for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 }]) {
+  test(`tableaux : aucune barre horizontale en ${largeur}×${hauteur} (#54)`, async ({ page }) => {
+    await page.setViewportSize({ width: largeur, height: hauteur });
+    const debord = (sel) => page.locator(sel).evaluate((e) => {
+      const cadre = e.closest(".table-shell");
+      return cadre.scrollWidth - cadre.clientWidth;
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(1);
+
+    await page.click("#viewLoops");
+    await expect(page.locator("#loopRows tr").first()).toBeVisible();
+    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(1);
+
+    // « En route » partage le rendu de Trajets ; il faut un terminal de départ pour qu'il peuple.
+    await page.click("#viewEnroute");
+    const depart = await page.locator("#originList option").first().getAttribute("value");
+    await page.fill("#origin", depart);
+    await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
+    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(1);
+  });
+}
