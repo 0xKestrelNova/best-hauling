@@ -1739,13 +1739,174 @@ test("sélecteur : quand la photo existe, la vignette de repli ne dépasse pas d
   // coups de marge négative, elles se décalaient de la valeur du `gap` flex et le code débordait —
   // on lisait « TA » derrière la photo de Nyx Gateway (Stanton), dont le code est NYXSTA.
   await ouvrePicker(page, "gate");
-  const avecPhoto = page.locator("#stationPickList li[data-i]:not(.no-shot)").filter({ has: page.locator("img.stn-shot") }).first();
-  await expect(avecPhoto).toBeVisible();
-  const boites = await avecPhoto.evaluate((li) => {
-    const img = li.querySelector("img.stn-shot").getBoundingClientRect();
-    const gen = li.querySelector(".stn-shot-gen").getBoundingClientRect();
-    return { img: [img.x, img.y, img.width, img.height], gen: [gen.x, gen.y, gen.width, gen.height] };
+  // La mesure est prise DANS le document, jamais via une poignée capturée à l'avance : chaque
+  // frappe réécrit la liste, et un élément détaché entre l'assertion de visibilité et la mesure
+  // rendait un rectangle [0,0,0,0]. On sonde donc jusqu'à obtenir une case réellement peinte.
+  const lis = () => page.evaluate(() => {
+    const li = [...document.querySelectorAll("#stationPickList li[data-i]")]
+      .find((e) => e.querySelector("img.stn-shot") && !e.classList.contains("no-shot"));
+    if (!li) return null;
+    const r = (s) => { const b = li.querySelector(s).getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
+    return { img: r("img.stn-shot"), gen: r(".stn-shot-gen") };
   });
+  await expect.poll(async () => ((await lis())?.img?.[2] ?? 0) > 0, { timeout: 8000 }).toBe(true);
+  const boites = await lis();
   // Exactement superposées : aucun pixel du repli n'est visible à côté de la photo.
   expect(boites.gen).toEqual(boites.img);
+});
+
+// ---------- Vue Corrections rangée par station (ADR-003, LOT 3) ----------
+// Choisit une station dans le sélecteur groupé et attend son panneau.
+async function ouvreStation(page, nom) {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  await page.locator("#station").fill(""); // sinon la 2e station s'AJOUTE à la première et rien ne résout
+  await page.locator("#station").pressSequentially(nom, { delay: 1 });
+  await page.locator("#station").press("Enter");
+  await expect(page.locator(".stn-hero-name")).toHaveText(nom);
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible();
+}
+// Corrige le premier chiffre éditable de la station affichée.
+async function corrigePremier(page, valeur) {
+  const cible = page.locator("#correctionsStation .editv").first();
+  const nom = await cible.getAttribute("data-c");
+  await cible.click();
+  const champ = page.locator("#correctionsStation input.editv-input").first();
+  await champ.fill(String(valeur));
+  await champ.press("Enter");
+  return nom;
+}
+
+test("corrections : la bande de stations remplace la liste plate (#38)", async ({ page }) => {
+  await ouvreStation(page, "Levski");
+  await corrigePremier(page, 4242);
+  // Une vignette par station, et non une ligne par correction.
+  await expect(page.locator("#correctionsIndex .stn-tile")).toHaveCount(1);
+  await expect(page.locator("#correctionsIndex .stn-tile").first()).toContainText("Levski");
+  // La liste plate n'existe plus.
+  await expect(page.locator("#correctionsList")).toHaveCount(0);
+  await expect(page.locator(".corr-item:not(.autoload)")).toHaveCount(0);
+});
+
+test("corrections : la bande est AU-DESSUS du panneau de station (#38)", async ({ page }) => {
+  // C'est le déplacement qui règle les coups de molette : la liste vivait sous 1 481 px de grille.
+  await ouvreStation(page, "Levski");
+  await corrigePremier(page, 4242);
+  const [yBande, yPanneau] = await Promise.all([
+    page.locator("#correctionsIndex").evaluate((e) => e.getBoundingClientRect().top),
+    page.locator("#correctionsStation").evaluate((e) => e.getBoundingClientRect().top),
+  ]);
+  expect(yBande).toBeLessThan(yPanneau);
+});
+
+test("corrections : la station affichée est épinglée en tête et en surbrillance (#38)", async ({ page }) => {
+  await ouvreStation(page, "Levski");
+  await corrigePremier(page, 4242);
+  await ouvreStation(page, "GrimHEX"); // station SANS correction : elle doit quand même s'épingler
+  const tuiles = page.locator("#correctionsIndex .stn-tile");
+  await expect(tuiles).toHaveCount(2);
+  await expect(tuiles.first()).toContainText("GrimHEX");
+  await expect(tuiles.first()).toHaveClass(/\bactive\b/);
+  await expect(tuiles.first()).toHaveAttribute("aria-current", "true");
+  // La surbrillance ne tient pas qu'à la couleur : le mot est écrit.
+  await expect(tuiles.first()).toContainText("en cours");
+});
+
+test("corrections : cliquer une vignette recharge sa station (#38)", async ({ page }) => {
+  await ouvreStation(page, "Levski");
+  await corrigePremier(page, 4242);
+  await ouvreStation(page, "GrimHEX");
+  await page.locator("#correctionsIndex .stn-tile", { hasText: "Levski" }).click();
+  await expect(page.locator("#station")).toHaveValue("Levski — Nyx");
+  await expect(page.locator("#correctionsIndex .stn-tile").first()).toContainText("Levski");
+});
+
+test("corrections : le retour arrière rend la valeur UEX, sur un contrôle dédié (#38)", async ({ page }) => {
+  await ouvreStation(page, "Levski");
+  const cible = page.locator("#correctionsStation .editv").first();
+  const avant = (await cible.innerText()).trim();
+  await corrigePremier(page, 4242);
+  await expect(page.locator("#correctionsStation .editv.ov").first()).toBeVisible();
+
+  // Le contrôle vit DANS la tuile, hors du .editv — qui porte déjà role="button" : un bouton dans
+  // un bouton est invalide en ARIA, et sortir le ✎ casserait la restauration de startEdit.
+  const retour = page.locator("#correctionsStation .scomm .scomm-undo").first();
+  await expect(retour).toBeVisible();
+  await expect(retour).toContainText(avant.replace(/\s+/g, " ")); // annonce la valeur de retour
+  const dansEditv = await retour.evaluate((el) => !!el.closest(".editv"));
+  expect(dansEditv, "le contrôle ne doit pas être imbriqué dans le .editv").toBe(false);
+
+  await retour.click();
+  await expect(page.locator("#correctionsStation .editv.ov")).toHaveCount(0);
+  await expect(page.locator("#correctionsIndex .stn-tile").first()).toContainText("0");
+});
+
+test("corrections : « Tout réinitialiser » survit au déménagement (#38)", async ({ page }) => {
+  await ouvreStation(page, "Levski");
+  await corrigePremier(page, 4242);
+  await expect(page.locator("#resetAll")).toBeVisible();
+  page.on("dialog", (d) => d.accept());
+  await page.locator("#resetAll").click();
+  await expect(page.locator("#correctionsStation .editv.ov")).toHaveCount(0);
+});
+
+test("corrections : le panneau de frais quitte le conteneur re-rendu (#24, #38)", async ({ page }) => {
+  // #24 : toute frappe dans le relevé d'autoload était effacée par un re-rendu de la vue, parce que
+  // renderCorrections réécrit #correctionsStation.innerHTML — qui contenait le panneau.
+  await ouvreStation(page, "Levski");
+  const panneau = page.locator("#correctionsFees .fee-panel");
+  await expect(panneau).toBeVisible();
+  const dedans = await panneau.evaluate((el) => !!el.closest("#correctionsStation"));
+  expect(dedans, "le panneau de frais ne doit plus vivre dans #correctionsStation").toBe(false);
+});
+
+test("corrections : le retour arrière ne comprime pas la ligne des valeurs (#38)", async ({ page }) => {
+  // Glissés parmi les valeurs, les boutons de retour écrasaient le texte de l'étiquette : « aUEC ·
+  // stock » se coupait en deux lignes, la tuile ne faisant que 236 px. Ils vivent sur leur propre
+  // ligne, et la hauteur de la ligne des valeurs ne bouge donc pas quand on corrige.
+  await ouvreStation(page, "Levski");
+  const ligne = page.locator("#correctionsStation .scomm").first().locator(".scomm-side").first();
+  const avant = await ligne.evaluate((e) => e.getBoundingClientRect().height);
+  await corrigePremier(page, 4242);
+  await expect(page.locator("#correctionsStation .scomm-undo").first()).toBeVisible();
+
+  const mesures = await page.locator("#correctionsStation .scomm").first().evaluate((tuile) => {
+    const v = tuile.querySelector(".scomm-side").getBoundingClientRect();
+    const u = tuile.querySelector(".scomm-undo").getBoundingClientRect();
+    return { hauteur: v.height, basValeurs: v.bottom, hautRetour: u.top };
+  });
+  // Le bouton est SOUS la ligne des valeurs, pas dedans : c'est la correction du défaut.
+  expect(mesures.hautRetour).toBeGreaterThanOrEqual(mesures.basValeurs);
+  // Et la ligne des valeurs n'a pas replié : elle gagne ~2 px, ceux du ✎ en vertical-align: super,
+  // là où un repli la faisait DOUBLER (17 -> 35 px mesurés avant correction du défaut).
+  expect(mesures.hauteur).toBeLessThan(avant * 1.4);
+});
+
+test("corrections : choisir une station ne rend pas l'écran deux fois (#24, #38)", async ({ page }) => {
+  // Le sélecteur rend immédiatement au choix ; le debounce du champ rendait une SECONDE fois ~300 ms
+  // plus tard. Un chiffre ouvert à l'édition entre les deux voyait son champ détaché du DOM.
+  await ouvreStation(page, "Levski");
+  await page.locator("#correctionsStation .editv").first().click();
+  const champ = page.locator("#correctionsStation input.editv-input").first();
+  await expect(champ).toBeVisible();
+  await page.waitForTimeout(600); // largement plus que le debounce
+  await expect(champ).toBeVisible(); // toujours là : aucun re-rendu gratuit ne l'a emporté
+  await champ.fill("4242");
+  await champ.press("Enter");
+  await expect(page.locator("#correctionsStation .editv.ov").first()).toBeVisible();
+});
+
+test("corrections : un relevé d'autoload en cours de saisie survit à un re-rendu (#24)", async ({ page }) => {
+  // Cause de #24 : renderCorrections réécrivait inconditionnellement le conteneur qui porte le
+  // panneau de frais. Le sortir de #correctionsStation ne suffit pas — encore faut-il ne pas
+  // réécrire son nouveau conteneur quand rien de ce qu'il affiche n'a changé.
+  await ouvreStation(page, "Seraphim"); // une des 45 stations qui proposent l’autoload
+  const montant = page.locator("#alAmount");
+  await expect(montant).toBeVisible();
+  await montant.fill("1159");
+  // Un re-rendu déclenché par autre chose que le panneau : le filtre par commodité.
+  await page.locator("#search").fill("aluminum");
+  await expect(page.locator("#correctionsStation .scomm")).toHaveCount(1);
+  await page.waitForTimeout(500); // le debounce du filtre est retombé
+  await expect(montant).toHaveValue("1159"); // la saisie n'a pas été effacée
 });

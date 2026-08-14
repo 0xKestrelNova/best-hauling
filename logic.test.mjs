@@ -23,7 +23,7 @@ import {
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
   cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
-  stationTree,
+  stationTree, groupOverridesByTerminal,
 } from "./logic.mjs";
 
 // ---------- Temps de trajet ----------
@@ -3436,4 +3436,82 @@ test("stationTree : les stations d'une même zone sont CONTIGUËS une fois l'arb
   const plates = stationTree(TERMINAUX_ARBRE()).flatMap((s) => s.zones.flatMap((z) => z.stations));
   const cles = plates.map((s) => `${s.system} › ${s.zone}`);
   assert.deepEqual(cles, [...new Set(cles)].flatMap((c) => cles.filter((x) => x === c)));
+});
+
+// ---------- groupOverridesByTerminal : les corrections rangées par station (ADR-003) ----------
+// Ce qui alimente la bande de vignettes. Deux exigences se cachent derrière l'apparente simplicité :
+// n'accepter que les clés à TROIS segments (les relevés d'autoload en ont deux et vivent dans un
+// store à part), et PURGER les volumes périmés avant de compter — sans quoi le compteur d'une
+// station qu'on n'a pas ouverte surcompte des corrections déjà mortes.
+const OV = (o) => JSON.parse(JSON.stringify(o));
+
+test("groupOverridesByTerminal réunit les corrections d'une même station en UNE entrée", () => {
+  const g = groupOverridesByTerminal(OV({
+    "Laranite|GrimHEX|sell": { price: 31200, base: 100 },
+    "Agricium|GrimHEX|sell": { price: 27400, base: 100 },
+    "Gold|Levski|buy": { price: 5000, base: 100 },
+  }), null);
+  assert.equal(g.length, 2);
+  assert.deepEqual(g.map((e) => [e.terminal, e.corrections]), [["GrimHEX", 2], ["Levski", 1]]);
+});
+
+test("groupOverridesByTerminal épingle la station active en tête, même à zéro correction", () => {
+  const g = groupOverridesByTerminal(OV({
+    "Laranite|GrimHEX|sell": { price: 31200, base: 100 },
+    "Agricium|GrimHEX|sell": { price: 27400, base: 100 },
+  }), "Levski");
+  assert.equal(g[0].terminal, "Levski");
+  assert.equal(g[0].corrections, 0);
+  assert.equal(g[0].actif, true);
+  assert.equal(g[1].terminal, "GrimHEX");
+  assert.equal(g[1].actif, false);
+});
+
+test("groupOverridesByTerminal : la station active n'apparaît jamais deux fois", () => {
+  const g = groupOverridesByTerminal(OV({ "Laranite|GrimHEX|sell": { price: 31200, base: 100 } }), "GrimHEX");
+  assert.equal(g.length, 1);
+  assert.equal(g[0].corrections, 1);
+  assert.equal(g[0].actif, true);
+});
+
+test("groupOverridesByTerminal ignore les clés à DEUX segments (relevés d'autoload)", () => {
+  // Le store des relevés `autoload|<terminal>` est séparé, mais rien n'empêche un appelant de
+  // passer le mauvais objet : la frontière est structurelle, pas déclarative. Un test E2E exige
+  // d'ailleurs que le badge « ✎ Corrections » reste SANS compteur quand seul un relevé existe.
+  const g = groupOverridesByTerminal(OV({
+    "autoload|GrimHEX": { k: 1.4 },
+    "Laranite|Levski|sell": { price: 100, base: 1 },
+  }), null);
+  assert.deepEqual(g.map((e) => e.terminal), ["Levski"]);
+});
+
+test("groupOverridesByTerminal trie par corrections décroissantes, puis par nom", () => {
+  const g = groupOverridesByTerminal(OV({
+    "A|Zeta|buy": { price: 1, base: 1 },
+    "A|Alpha|buy": { price: 1, base: 1 },
+    "A|Beta|buy": { price: 1, base: 1 },
+    "B|Beta|buy": { price: 1, base: 1 },
+  }), null);
+  assert.deepEqual(g.map((e) => e.terminal), ["Beta", "Alpha", "Zeta"]);
+});
+
+test("groupOverridesByTerminal purge les volumes périmés AVANT de compter", () => {
+  // Un volume corrigé meurt au bout de DUREE_VOL (3 h). La purge est un effet de bord d'effFromStore,
+  // déclenché par le rendu de la SEULE station affichée : les autres ne sont jamais interrogées.
+  // Sans purge ici, leur compteur annoncerait des corrections déjà mortes jusqu'au prochain clic.
+  const store = OV({
+    "Vieux|Levski|buy": { vol: 12, base: 1, pris: 0 },              // volume seul, périmé -> la clé part
+    "Prix|Levski|sell": { price: 900, base: 1 },                     // un prix ne périme jamais
+    "Mixte|GrimHEX|buy": { price: 50, vol: 7, base: 1, pris: 0 },    // le volume part, le prix reste
+  });
+  const g = groupOverridesByTerminal(store, null, 10 * 3600); // « maintenant » = 10 h après la saisie
+  assert.deepEqual(g.map((e) => [e.terminal, e.corrections]).sort(), [["GrimHEX", 1], ["Levski", 1]]);
+  assert.equal(store["Vieux|Levski|buy"], undefined, "la clé sans rien de vivant doit disparaître");
+  assert.equal(store["Mixte|GrimHEX|buy"].vol, undefined, "le volume périmé doit partir");
+  assert.equal(store["Mixte|GrimHEX|buy"].price, 50, "le prix, lui, survit");
+});
+
+test("groupOverridesByTerminal : une station dont tout a péri sort de la bande", () => {
+  const store = OV({ "Vieux|Levski|buy": { vol: 12, base: 1, pris: 0 } });
+  assert.deepEqual(groupOverridesByTerminal(store, null, 10 * 3600), []);
 });

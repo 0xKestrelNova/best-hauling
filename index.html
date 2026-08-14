@@ -237,9 +237,15 @@
           <p class="enroute-hint">Corrige les <b>prix et stocks</b> d'une station même hors trajet (clique un chiffre). Tes corrections sont <b>locales</b> (jamais partagées) et périment automatiquement dès qu'UEX publie un relevé plus récent. Utilise le champ <b>Commodité</b> pour filtrer la station.</p>
         </section>
 
+        <!-- L'ORDRE compte (ADR-003). La bande des stations corrigées passe AVANT le panneau :
+             c'est ce déplacement qui règle les coups de molette, la liste plate vivant jusqu'ici
+             sous 1 481 px de grille. Le panneau de frais sort en pied, dans son propre conteneur :
+             renderCorrections réécrit #correctionsStation à chaque rendu, et un relevé en cours de
+             saisie y était effacé (#24). -->
         <div id="corrections" class="corrections-wrap" hidden>
+          <div id="correctionsIndex"></div>
           <div id="correctionsStation"></div>
-          <div id="correctionsList"></div>
+          <div id="correctionsFees"></div>
         </div>
 
         <section id="commoditiesControls" class="enroute-controls" hidden>

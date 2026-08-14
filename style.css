@@ -861,6 +861,74 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 /* ---------- Vue Corrections ---------- */
 .corrections-wrap { margin: 20px 0 0; }
 .station-title { padding: 12px 2px; font-family: var(--display); font-weight: 600; color: #fff; }
+
+/* ---------- Bande des stations corrigées (ADR-003) ---------- */
+/* Elle passe naturellement à la ligne plutôt que de défiler : le nombre de STATIONS est petit par
+   construction — on corrige là où on s'amarre — et un défilement caché coûterait plus en
+   découvrabilité qu'il ne gagnerait en hauteur. */
+.stn-band { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.stn-tile {
+  position: relative; display: grid; gap: 3px; justify-items: start; width: 132px; padding: 8px 10px 9px;
+  text-align: left; cursor: pointer; color: var(--muted); background: var(--panel-solid);
+  border: 1px solid transparent; border-left: 2px solid transparent; border-radius: 3px;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.stn-tile:hover { color: var(--text); border-color: var(--line); }
+.stn-tile:disabled { cursor: not-allowed; opacity: 0.7; }
+/* Station affichée : même grammaire que .vbtn.active et .sort-modes button.active — c'est ainsi que
+   ce dépôt dit « actif », et il n'y a pas de raison d'en inventer une deuxième. */
+.stn-tile.active {
+  color: #fff; font-weight: 700;
+  border: 1px solid var(--line2); border-left: 2px solid var(--acc);
+  background: linear-gradient(180deg, rgba(255, 176, 32, 0.14), rgba(255, 176, 32, 0.02));
+  box-shadow: inset 0 0 22px rgba(255, 176, 32, 0.08);
+}
+/* Le focus clavier ne doit PAS se confondre avec la sélection. */
+.stn-tile:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
+.stn-tile-name { font-size: 12.5px; line-height: 1.2; }
+.stn-tile-meta { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; }
+/* « en cours » ÉCRIT, et pas seulement teinté : la règle maison veut qu'un état ne tienne jamais à
+   la seule couleur (cf. le commentaire de .scomm). */
+.stn-tile-flag {
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--acc);
+}
+/* Seule la PHOTO des tuiles inactives est estompée. Estomper la tuile entière ferait passer son
+   texte --muted (5,6:1 sur le fond) sous les 3:1, donc sous le seuil AA. */
+.stn-tile:not(.active) .stn-vign { opacity: 0.62; transition: opacity 0.12s; }
+.stn-tile:hover .stn-vign { opacity: 1; }
+.stn-tile .stn-vign { width: 100%; height: 42px; }
+@media (prefers-reduced-motion: reduce) { .stn-tile, .stn-tile .stn-vign { transition: none; } }
+
+/* ---------- Bandeau collant de la station affichée ---------- */
+/* Collant parce que .station-title sortait de l'écran au premier coup de molette : au milieu des
+   92 tuiles de GrimHEX, plus rien ne disait quelle station on éditait. */
+.stn-hero {
+  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px; margin-bottom: 14px;
+  background: var(--panel-solid); border: 1px solid var(--line); border-left: 2px solid var(--acc);
+}
+.stn-hero .stn-vign { width: 96px; height: 52px; }
+.stn-hero-txt { min-width: 0; flex: 1 1 auto; }
+.stn-hero-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.stn-hero-name { font-family: var(--display); font-size: 15px; font-weight: 600; color: #fff; }
+.stn-hero-zone { font-size: 11px; color: var(--muted); }
+.stn-hero-code { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.stn-hero-sub { display: flex; gap: 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.stn-hero-credit { font-size: 10px; opacity: 0.75; }
+.stn-hero .reset-ov { margin-left: 0; }
+
+/* Retour à la valeur UEX. Contrôle DÉDIÉ, hors du .editv qui porte déjà role="button" — et sur une
+   cible confortable, là où le ✎ ne fait que 9 × 9 px imbriqués dans un autre déclencheur. */
+.scomm-undos { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; padding-left: 41px; }
+.scomm-undo {
+  padding: 1px 6px; border-radius: 3px; cursor: pointer;
+  font-family: var(--mono); font-size: 10px; line-height: 1.5;
+  color: var(--muted); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line);
+  transition: color 0.12s, border-color 0.12s;
+}
+.scomm-undo:hover { color: var(--acc); border-color: var(--acc); }
+.scomm-undo:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .scomm-undo { transition: none; } }
 /* Les commodités d'une station : une GRILLE de tuiles, pas une colonne. GrimHEX en compte 92 —
    en liste, 4 546 px à parcourir pour corriger un chiffre, pendant que les trois colonnes du
    tableau faisaient 444 px chacune pour du contenu qui en demande 200. `auto-fill` rend cet espace
