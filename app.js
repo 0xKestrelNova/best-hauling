@@ -30,7 +30,7 @@ import { peindre } from "./pont.js";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
-import { vueGrilleCommodites, aideBoard } from "./vues/commodites.tsx";
+import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from "./vues/commodites.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -3435,38 +3435,32 @@ function lootValueHTML(p) {
 function paintCommodityDetail() {
   const box = $("commDetail");
   const loot = commBoard === "loot";
-  if (!commSelected) {
-    box.innerHTML = loot
-      ? '<p class="manifest-hint">Sélectionne une commodité pour savoir combien elle vaut au SCU et où l\'écouler.</p>'
-      : '<p class="manifest-hint">Sélectionne une commodité (ligne du tableau ou champ « Commodité ») pour voir tous ses points d\'achat et de vente.</p>';
-    return;
-  }
+  if (!commSelected) { peindre(box, inviteDetail(loot)); return; }
   // `effVals` : le détail affiche les valeurs CORRIGÉES, comme les tableaux. Et puisqu'elles le
-  // sont, elles passent par `editv` — le même composant qu'ailleurs : marqueur ✎ sur ce qui est
-  // corrigé, et clic pour corriger sur place. Le board devient ainsi le point d'entrée naturel
-  // pour rectifier un prix « chez toutes les stations qui vendent cette commodité ».
-  const p = commodityPoints(MARKET, commSelected, readFilters(), effVals); // avant-postes exclus si le filtre est actif
-  if (!p) { box.innerHTML = ""; return; }
-  const cell = (terminal, side, field, value, updated) =>
-    editv(p.name, terminal, side, field, value, isOv(p.name, terminal, side, field), updated);
-  const buyRow = (b) => `<tr><td class="loc"><div>${esc(b.terminal)}${sysBadge(b.system)}${outpostTag(b.outpost)}</div><div class="loc-sub">${esc(b.planet)}</div></td><td class="num">${cell(b.terminal, "buy", "price", b.price, b.updated)}</td><td class="num">${statusDot(b.status, "buy")} ${cell(b.terminal, "buy", "vol", b.stock, b.updated)}</td><td>${freshChip(b.updated)}</td></tr>`;
-  const sellRow = (s) => `<tr><td class="loc"><div>${esc(s.terminal)}${sysBadge(s.system)}${outpostTag(s.outpost)}</div><div class="loc-sub">${esc(s.planet)}</div></td><td class="num">${cell(s.terminal, "sell", "price", s.price, s.updated)}</td><td class="num">${statusDot(s.status, "sell")} ${cell(s.terminal, "sell", "vol", s.demand, s.updated)}</td><td>${freshChip(s.updated)}</td></tr>`;
-  const table = (rows, head, mapper) => rows.length
-    ? `<table class="comm-points"><thead><tr><th>Terminal</th><th class="num">Prix</th><th class="num">${head}</th><th>Relevé</th></tr></thead><tbody>${rows.map(mapper).join("")}</tbody></table>`
-    : '<p class="muted">Aucun point.</p>';
-  const cols = loot
-    ? `<div class="comm-cols one">
-         <div class="comm-col"><h4>◈ Où l'écouler <span class="muted">(${p.sells.length} · mieux payé d'abord)</span></h4>${table(p.sells, "Demande", sellRow)}</div>
-       </div>`
-    : `<div class="comm-cols">
-         <div class="comm-col"><h4>◈ Où acheter <span class="muted">(${p.buys.length} · moins cher d'abord)</span></h4>${table(p.buys, "Stock", buyRow)}</div>
-         <div class="comm-col"><h4>◈ Où vendre <span class="muted">(${p.sells.length} · mieux payé d'abord)</span></h4>${table(p.sells, "Demande", sellRow)}</div>
-       </div>`;
-  box.innerHTML =
-    `<div class="comm-detail-head">${commodityIcon(p.kind)}<span class="comm-detail-title">${p.code ? `<b class="comm-code">${esc(p.code)}</b> · ` : ""}${esc(p.name)}${illegalTag(p.illegal)}</span>${loot ? lootValueHTML(p) : ""}</div>
-     ${cols}`;
+  // sont, elles passent par une valeur éditable — clic pour corriger sur place. Le board est ainsi
+  // le point d'entrée naturel pour rectifier un prix « chez toutes les stations qui la vendent ».
+  const p = commodityPoints(MARKET, commSelected, readFilters(), effVals);
+  if (!p) { peindre(box, null); return; }
+  peindre(box, vueDetailCommodite({
+    points: p,
+    butin: loot,
+    fmt,
+    fmtVol,
+    estCorrige: (terminal, cote, champ) => isOv(p.name, terminal, cote, champ),
+    // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME doit d'abord figer les jambes déjà
+    // planifiées (avant d'écrire, pour capturer les SCU encore en vigueur), qu'un PRIX ne fige
+    // rien, et que le compteur de corrections doit suivre.
+    corriger: (terminal, cote, champ, valeur, releve) => {
+      if (champ === "vol") pinLegsForVolume(p.name, terminal, cote);
+      setOverride(p.name, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
+      updateOvBadge();
+      refresh();
+    },
+    legendeAchat: BUY_STATUS,
+    legendeVente: SELL_STATUS,
+    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
+  }));
 }
-
 // Textes d'aide : le board ne répond pas à la même question selon le mode.
 const COMM_HINT_MARKET = 'Le <b>board de marché</b> : chaque tuile = une commodité (code UEX) et sa <b>marge max</b>, colorée selon son intérêt. Clique une tuile — ou cherche via le champ <b>Commodité</b> — pour voir <b>tous ses points d\'achat / vente</b> (stock, demande, prix) et surtout <b>où l\'écouler</b> quand une station est saturée.';
 const COMM_HINT_LOOT = 'Tu as <b>trouvé</b> une ressource (minage, salvage, caisse abandonnée) ? Ce board liste <b>tout ce qui se vend</b>, y compris ce qui ne s\'achète nulle part, avec son <b>prix de revente max</b> au SCU. Clique une tuile pour voir <b>où l\'écouler</b>. Les tuiles en <b>pointillés</b> sont introuvables à l\'achat.';
@@ -3863,12 +3857,16 @@ async function init() {
     if (e.target.classList && e.target.classList.contains("jman-qty")) editLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target.value);
   });
   // Corrections locales : clic (ou Entrée/Espace) sur une valeur éditable ; bouton reset.
+  // `data-react` : le nœud est rendu par un îlot React, qui gère son édition PAR SON ÉTAT. Sans ce
+  // garde, `startEdit` viendrait le muter (`replaceChildren`) et React écraserait la saisie au
+  // rendu suivant, sans savoir qu'elle avait eu lieu — la classe de bug de #24, #28, #38 et #55.
   document.addEventListener("click", (e) => {
     const span = e.target.closest(".editv");
-    if (span && !span.querySelector("input")) startEdit(span);
+    if (span && !span.dataset.react && !span.querySelector("input")) startEdit(span);
   });
   document.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("editv")) {
+      if (e.target.dataset.react) return;
       e.preventDefault();
       startEdit(e.target);
     }

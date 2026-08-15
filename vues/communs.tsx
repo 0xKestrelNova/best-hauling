@@ -68,3 +68,110 @@ export function CelluleFiabilite({ f, age, part }: { f: number; age: number | nu
     </div>
   );
 }
+
+// ── L'édition sur place ────────────────────────────────────────────────────────────────────────
+// Le pendant React d'`editv` + `startEdit` (app.js). C'était le dernier mécanisme qui empêchait de
+// migrer une vue : `startEdit` MUTE le nœud (`span.replaceChildren(inp)`) depuis une délégation
+// posée sur `document`, et un nœud possédé par React et muté hors de React, c'est la seule
+// situation où les deux modèles se contredisent vraiment.
+//
+// Ici l'édition passe par l'ÉTAT, pas par la mutation — ce qui rend gratuit ce que la version
+// impérative devait organiser : elle mémorisait les enfants détachés pour pouvoir annuler sans
+// re-rendu global. React n'a qu'à repasser `enEdition` à false.
+//
+// TROIS COMPORTEMENTS À PRÉSERVER, chacun payé par un bug du dépôt :
+//   1. CONSULTER n'écrit rien. Sans la comparaison de valeur, cliquer un chiffre puis cliquer
+//      ailleurs créait une correction locale IDENTIQUE au relevé UEX — compteur, marqueur ✎, et
+//      plus tard un toast « correction périmée » à propos d'une correction fantôme.
+//   2. ANNULER ne re-rend pas globalement. Un refresh() détruirait le nœud entre le mousedown et
+//      le mouseup, ce qui avalait le clic suivant sur une autre cellule.
+//   3. Le `✎` reste DANS le span. Le sortir casserait la restauration (#30, cf. app.js).
+import { useState, useRef, useEffect } from "react";
+
+export type ProprietesValeurEditable = {
+  valeur: number | null;
+  /** true quand une correction locale porte déjà sur ce point : le ✎ s'affiche. */
+  corrige: boolean;
+  /** Rend « n.c. » pour une capacité qu'UEX ne publie pas — ni zéro, ni illimitée. */
+  fmtVol: (n: number | null) => string;
+  /** Appelé UNIQUEMENT si la valeur a changé. app.js écrit alors la correction et re-rend. */
+  onCorriger: (valeur: string) => void;
+  texteCapaciteInconnue: string;
+};
+
+export function ValeurEditable({ valeur, corrige, fmtVol, onCorriger, texteCapaciteInconnue }: ProprietesValeurEditable) {
+  const [enEdition, setEnEdition] = useState(false);
+  const champ = useRef<HTMLInputElement>(null);
+  const fini = useRef(false);
+
+  useEffect(() => {
+    if (enEdition && champ.current) { champ.current.focus(); champ.current.select(); }
+  }, [enEdition]);
+
+  const inconnue = valeur == null || !Number.isFinite(Number(valeur));
+  const v = inconnue ? "" : String(valeur);
+
+  const ouvrir = () => { fini.current = false; setEnEdition(true); };
+
+  const clore = (enregistrer: boolean) => {
+    if (fini.current) return;
+    fini.current = true;
+    const saisi = champ.current ? champ.current.value : v;
+    // On sort de l'édition DANS TOUS LES CAS, et avant d'écrire. React réutilise l'instance du
+    // composant au même emplacement : après `refresh()`, l'état local SURVIT au re-rendu, et le
+    // champ resterait ouvert sur l'ancienne valeur. La version impérative n'avait pas ce problème —
+    // elle recréait le DOM entier. Mesuré : sans cette ligne, la cellule corrigée gardait son
+    // <input> et son ✎ n'apparaissait jamais.
+    setEnEdition(false);
+    // Comportement 1 : rien n'a changé, rien ne s'écrit. Comportement 2 : l'annulation ne déclenche
+    // aucun re-rendu global — sortir de l'édition suffit.
+    if (enregistrer && saisi !== v) onCorriger(saisi);
+  };
+
+  if (enEdition) {
+    return (
+      <span className={"editv" + (inconnue ? " nc" : "") + (corrige ? " ov" : "")} data-react="1">
+        <input
+          ref={champ}
+          type="number"
+          min="0"
+          defaultValue={v}
+          className="editv-input"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); clore(true); }
+            else if (e.key === "Escape") { e.preventDefault(); clore(false); }
+          }}
+          onBlur={() => clore(true)}
+        />
+      </span>
+    );
+  }
+
+  return (
+    // `data-react` fait que les deux délégations d'app.js (clic et clavier) passent leur chemin :
+    // ce nœud gère son édition lui-même. Sans ce marqueur, `startEdit` viendrait le muter et React
+    // écraserait la saisie au rendu suivant, sans savoir qu'elle avait eu lieu.
+    <span
+      className={"editv" + (inconnue ? " nc" : "") + (corrige ? " ov" : "")}
+      data-react="1"
+      role="button"
+      tabIndex={0}
+      title={inconnue ? `${texteCapaciteInconnue}. Clic pour le corriger localement` : "Clic pour corriger localement ce chiffre"}
+      onClick={ouvrir}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ouvrir(); } }}
+    >
+      {fmtVol(valeur)}
+      {corrige ? <span className="ovmark" title="Corrigé localement">✎</span> : null}
+    </span>
+  );
+}
+
+// La pastille de statut d'inventaire UEX. Elle rend RIEN quand le code est absent — et l'espace qui
+// la sépare de la valeur reste alors seul en tête de cellule, comme dans la version d'origine.
+export function PastilleStatut({ code, cote, legende }: {
+  code: number; cote: "buy" | "sell"; legende: Record<number, [string, string]>;
+}) {
+  const s = legende[code];
+  if (!s) return null;
+  return <span className={"sdot s-" + s[1]} title={(cote === "buy" ? "Stock à l'achat" : "Demande à la vente") + " : " + s[0]} />;
+}
