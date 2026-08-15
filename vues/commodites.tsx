@@ -117,6 +117,8 @@ import type { DetailCommodite, PointAchatCommodite, PointVenteCommodite } from "
 
 export type ProprietesDetail = {
   points: DetailCommodite;
+  /** Le nom de la commodité, porté par `data-c` sur chaque valeur éditable. */
+  nomCommodite: string;
   butin: boolean;
   fmt: Fmt;
   fmtVol: (n: number | null) => string;
@@ -139,6 +141,7 @@ function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteComm
   const cellule = (champ: "price" | "vol", valeur: number | null | undefined) => (
     <ValeurEditable
       valeur={valeur ?? null}
+      commodite={r.nomCommodite} terminal={p.terminal} cote={cote} champ={champ} releve={p.updated}
       corrige={r.estCorrige(p.terminal, cote, champ)}
       fmtVol={r.fmtVol}
       texteCapaciteInconnue={r.texteCapaciteInconnue}
