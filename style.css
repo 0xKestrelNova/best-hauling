@@ -915,10 +915,30 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .chain-tot b { color: var(--text); }
 .chain-tot b.profit { color: var(--good); }
 .chain-legs { display: flex; flex-direction: column; }
-.chain-leg { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.chain-leg { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
 .chain-leg:last-child { border-bottom: none; }
+.chain-leg-main { min-width: 0; }
 .chain-step { width: 26px; height: 26px; flex-shrink: 0; display: grid; place-items: center; font-family: var(--mono); font-weight: 700; font-size: 12px; border-radius: 50%; color: #0a0410; background: var(--acc-2); }
 .chain-leg-profit { font-family: var(--mono); white-space: nowrap; color: var(--good); }
+/* Le chargement d'un saut, ligne par ligne (#56) : un saut transporte un manifeste, pas une
+   commodité. Mêmes colonnes que le manifeste d'« En route » — commodité, volume, prix, ce que la
+   ligne rapporte — pour qu'on lise les deux vues de la même façon.
+   La grille porte les LIGNES du saut (`.chain-line` passe en display:contents) et non chaque ligne
+   prise à part : sans ça chacune dimensionne ses colonnes toute seule, et volumes, prix et profits
+   d'un même saut ne s'alignent sur rien — trois colonnes de chiffres en escalier. */
+.chain-lines { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: baseline; gap: 4px 14px; margin-top: 6px; font-size: 12px; }
+.chain-line { display: contents; }
+.chain-line .commodity-cell { min-width: 0; }
+.chain-line-scu { font-family: var(--mono); white-space: nowrap; justify-self: end; }
+.chain-line-price { font-family: var(--mono); color: var(--text); white-space: nowrap; }
+.chain-line-profit { font-family: var(--mono); white-space: nowrap; justify-self: end; }
+/* Écran étroit : les trois colonnes de chiffres ne tiennent plus à côté du nom -> il passe seul
+   sur sa ligne, les chiffres dessous, plutôt que de pousser la carte en débordement horizontal. */
+@media (max-width: 720px) {
+  .chain-lines { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .chain-line .commodity-cell { grid-column: 1 / -1; }
+  .chain-line-scu { justify-self: start; }
+}
 
 /* ---------- Vue Corrections ---------- */
 .corrections-wrap { margin: 20px 0 0; }

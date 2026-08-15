@@ -541,20 +541,38 @@ export function lineNet(units, line, pair) {
 // payées. Exporté parce que buildChainAdjacency doit classer les candidates d'une paire sur le
 // profit que bestChain leur donnera vraiment : un autre plafond de volume et le classement
 // porterait sur un saut qui n'existe pas.
+// Le chargement mono se dit dans la MÊME forme qu'un manifeste — une liste de lignes : la vue
+// Chaîne et le voyage n'ont ainsi qu'un seul format de saut à lire, que l'arc porte le manifeste
+// pré-calculé par buildChainAdjacency ou ce repli à une commodité.
+const ligneDuSaut = (leg, units) => (units <= 0 ? [] : [{
+  name: leg.commodity, kind: leg.kind, illegal: leg.illegal,
+  buyPrice: leg.buyPrice, sellPrice: leg.sellPrice, margin: leg.margin,
+  stock: leg.stock, demand: leg.demand, demandKnown: leg.demandKnown,
+  buyUpdated: leg.buyUpdated || 0, sellUpdated: leg.sellUpdated || 0,
+  units, cap: units,
+}]);
 export function chainLegNet(leg, cargo) {
+  // Chargement PRÉ-CALCULÉ à la construction de l'adjacence : on le rend tel quel, c'est ce qui
+  // tient le coût du faisceau (cf. estampillerManifestes). La soute fait partie de la clé parce que
+  // rien n'oblige l'appelant à passer à bestChain celle qui a bâti le graphe : un chargement composé
+  // pour 96 SCU ne dit rien de ce qu'on emporte dans 32, et retomber sur le chiffrage mono vaut
+  // mieux qu'un chiffre faux rendu en silence.
+  if (leg.net && leg.net.cargo === cargo) return leg.net;
   let u = cargo;
   u = Math.min(u, leg.stock);                     // stock 0 = terminal vide -> saut exclu
   if (leg.demand != null || leg.demandKnown) u = Math.min(u, leg.demand); // null = inconnu ; 0 = saturé
   const units = isFinite(u) ? Math.max(0, u) : 0; // sans borne de volume : rien (chaîne = soute finie)
-  return { units, profit: units * leg.margin - haulFee(units, leg.fee) };
+  return { units, profit: units * leg.margin - haulFee(units, leg.fee), lines: ligneDuSaut(leg, units), cargo };
 }
 
 // Le faisceau tronque à chaque saut sur le profit CUMULÉ : un premier saut modeste qui ouvre sur un
 // circuit énorme est décapité avant d'avoir pu le montrer. Mesuré sur data/market.json (96 SCU,
 // 3 sauts) : à 40, 39 origines sur 107 rendaient plus de 5 % sous l'optimum du graphe, jusqu'à ×4,53
 // (Sunset Mesa, 582 816 -> 2 637 576). À 400, plus aucune. Le coût est payé une fois par action
-// utilisateur — l'app ne calcule qu'UNE chaîne — soit 7 ms sur le pire cas de l'UI (4 sauts) contre
-// 0,8 ms : imperceptible, là où la sous-optimalité, elle, se voyait.
+// utilisateur — l'app ne calcule qu'UNE chaîne — soit 8 à 12 ms sur le pire cas de l'UI (4 sauts)
+// contre 0,9 ms à faisceau 40 : imperceptible, là où la sous-optimalité, elle, se voyait. Depuis
+// #56 le chargement de chaque saut est pré-calculé (`leg.net`) : le prix du manifeste se paie une
+// fois, à la construction de l'adjacence, et le faisceau n'y touche plus.
 export function bestChain(adj, start, hops, { cargo = Infinity, beam = 400 } = {}) {
   let paths = [{ path: [start], visited: new Set([start]), profit: 0, legs: [] }];
   let best = null;
@@ -568,7 +586,7 @@ export function bestChain(adj, start, hops, { cargo = Infinity, beam = 400 } = {
         // les frais mangent la marge fait PERDRE de l'argent : on l'écarte, exactement comme un
         // saut de marge nulle plus haut — sans quoi l'invariant « chaque saut ajoute un profit
         // positif » tomberait et la meilleure chaîne pourrait être plus courte que la retenue.
-        const { units, profit: legProfit } = chainLegNet(leg, cargo);
+        const { units, profit: legProfit, lines } = chainLegNet(leg, cargo);
         if (units <= 0 || legProfit <= 0) continue;
         const visited = new Set(p.visited);
         visited.add(leg.to);
@@ -576,7 +594,10 @@ export function bestChain(adj, start, hops, { cargo = Infinity, beam = 400 } = {
           path: [...p.path, leg.to],
           visited,
           profit: p.profit + legProfit,
-          legs: [...p.legs, { ...leg, units, profit: legProfit }],
+          // `lines` = le chargement du saut, plusieurs commodités comprises. Les champs scalaires
+          // hérités du leg (commodity, margin…) restent ceux du REPLI mono : ils nomment l'arc et
+          // servent à le classer, ils ne décrivent plus à eux seuls ce qui voyage.
+          legs: [...p.legs, { ...leg, units, profit: legProfit, lines }],
         });
       }
     }
@@ -1073,9 +1094,56 @@ export function buildChainAdjacency(market, f, resolve, autoloadFor = null) {
       });
     });
   });
+  // Sans soute bornée il n'y a pas de remplissage à composer (manifestsFrom rend [] et chainLegNet
+  // ne chiffre aucun volume) : le graphe reste strictement celui d'avant, une commodité par arc.
+  if (isFinite(cargo)) estampillerManifestes(market, best, f, resolve, autoloadFor, cargo);
   const adj = new Map();
   for (const [u, m] of best) adj.set(u, [...m.values()]);
   return adj;
+}
+
+// Le CHARGEMENT de chaque arc, composé une fois pour toutes ici (#56). Un saut ne transportait
+// qu'une commodité et la soute repartait à moitié vide dès que son stock ou la demande à l'arrivée
+// ne suffisait pas à la remplir — 32 % des arcs de l'instantané, alors que « En route » sait déjà
+// combler la place sur le MÊME couple de terminaux.
+//
+// Pourquoi ici, et pas dans la boucle du faisceau : le chargement d'un saut ne dépend PAS du chemin
+// qui y mène. bestChain ne thread aucun budget (il se reconstitue à la vente) et passe `cargo`
+// inchangé à chaque saut, la soute se vidant à chaque arrivée — le manifeste de u -> v est donc
+// entièrement déterminé par (u, v, cargo, filtres). Composé par arc il coûte ≈ 6 ms sur
+// l'instantané ; appelé depuis les ≈ 33 000 expansions du faisceau, ≈ 1 s. Qui voudra un jour
+// suivre un budget le long de la chaîne devra d'abord renoncer à ce pré-calcul, et en payer le prix.
+//
+// On n'estampille QUE des arcs déjà retenus par le balayage mono ci-dessus, jamais l'inverse : la
+// clé `m.get(destIdx)` est ce qui réapplique les deux filtres que `pairEligible` ne pose pas —
+// `sameOnly`, et l'avant-poste d'ORIGINE (celui de vente, lui, est bien testé). Sans elle la chaîne
+// se remettrait à proposer des départs d'avant-poste et des sauts inter-systèmes.
+//
+// Un arc dont le manifeste est vide GARDE son chiffrage mono : `fillCargo` ne retient rien là où le
+// balayage produit encore un segment (demande publiée à 0, stock épuisé), 71 arcs sur 4 355 dans
+// l'instantané, 136 une fois les frais actifs. Remplacer l'arc par son manifeste les ferait
+// disparaître du graphe.
+//
+// Ce qu'on ne modélise toujours pas, et qu'il ne faut pas croire oublié : la DÉPLÉTION du stock
+// entre les sauts d'une même chaîne. Deux sauts peuvent acheter la même commodité à deux terminaux
+// différents, et le multi-commodités multiplie ces croisements — c'était déjà le cas avant #56, et
+// rien dans les données d'UEX ne dit à quel rythme un terminal se recharge.
+function estampillerManifestes(market, best, f, resolve, autoloadFor, cargo) {
+  // Budget neutralisé : la chaîne l'ignore par construction (README, matrice des filtres, note ¹),
+  // et le laisser borner le remplissage ferait dire à la vue l'inverse de ce qu'elle annonce.
+  const sansBudget = { ...f, useBudget: false };
+  for (const [u, m] of best) {
+    for (const trip of manifestsFrom(market, u, "", sansBudget, resolve, null, autoloadFor)) {
+      const leg = m.get(trip.destIdx);
+      if (!leg) continue;
+      // Le profit du saut est celui du manifeste : une base d'autoload PAR LIGNE (hypothèse 2 de la
+      // spec), là où `haulFee` n'en facturait qu'une par saut. Un saut de 4 lignes en paie 4, sans
+      // quoi bestChain arbitrerait entre les sauts sur des montants surévalués.
+      const { profit, scu } = manifestTotals(trip.lines, leg.fee);
+      leg.lines = trip.lines;
+      leg.net = { units: scu, profit, lines: trip.lines, cargo };
+    }
+  }
 }
 
 // ---------- Panneau « Commodités » : résumé global + points d'achat/vente ----------
@@ -1317,10 +1385,15 @@ export function legsFromLoop(l, startAt) {
   return startAt === l.b.terminal && startAt !== l.a.terminal ? [back, out] : [out, back];
 }
 // N jambes depuis une chaîne (bestChain) : `terminals` résout les index -> noms/systèmes.
+// Un saut transporte un MANIFESTE (#56) que le format de jambe ne sait pas porter — comme pour un
+// trajet multi-commodité (legFromTrip), la jambe ne retient donc que la ligne de TÊTE en libellé, et
+// la vue Voyage recompose le chargement complet à l'affichage (legManifest). Prendre la tête du
+// manifeste plutôt que le repli mono de l'arc est ce qui fait dire la même commodité aux deux vues.
 export function legsFromChain(chain, terminals) {
   return chain.legs.map((leg, i) => {
     const from = terminals[chain.path[i]], to = terminals[chain.path[i + 1]];
-    return { from: from.name, fromSystem: from.system, to: to.name, toSystem: to.system, commodity: leg.commodity, buyPrice: leg.buyPrice, sellPrice: leg.sellPrice, margin: leg.margin };
+    const tete = (leg.lines && leg.lines[0]) || { name: leg.commodity, buyPrice: leg.buyPrice, sellPrice: leg.sellPrice, margin: leg.margin };
+    return { from: from.name, fromSystem: from.system, to: to.name, toSystem: to.system, commodity: tete.name, buyPrice: tete.buyPrice, sellPrice: tete.sellPrice, margin: tete.margin };
   });
 }
 
