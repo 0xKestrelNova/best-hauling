@@ -30,7 +30,9 @@ async function tourneeDepuis(page, terminal = "Megumi") {
   await expect(page.locator("#tour .tour-arret").first()).toBeVisible({ timeout: 10_000 });
 }
 
-test("Tournée : une huitième entrée au rail, au clic comme au raccourci « 8 » (#57)", async ({ page }) => {
+// La Tournée est passée en SIXIÈME position au rail (#45) : elle lit la soute, elle appartient
+// donc à la famille « soute », entre le marché et la conclusion. Son raccourci a suivi son numéro.
+test("Tournée : une entrée au rail, au clic comme au raccourci « 6 » (#57, #45)", async ({ page }) => {
   await expect(page.locator("#viewTour")).toBeVisible();
   await page.click("#viewTour");
   await expect(page.locator("#tour")).toBeVisible();
@@ -41,7 +43,7 @@ test("Tournée : une huitième entrée au rail, au clic comme au raccourci « 8 
   await page.click("#viewRoutes");
   await expect(page.locator("#tour")).toBeHidden();
   await expect(page.locator("#tourControls")).toBeHidden(); // les contrôles ne fuient pas hors de leur vue
-  await page.keyboard.press("8");
+  await page.keyboard.press("6");
   await expect(page.locator("#tour")).toBeVisible();
 });
 

@@ -3175,7 +3175,15 @@ function startEdit(span) {
 // Met à jour le libellé du bouton de vue « Corrections » (compteur).
 function updateOvBadge() {
   const n = ovCount();
-  $("viewCorrections").textContent = n ? `✎ Corrections (${n})` : "✎ Corrections";
+  const libelle = n ? `✎ Corrections (${n})` : "✎ Corrections";
+  // On écrit DANS le .rl, au lieu d'écraser le bouton entier en textContent : cette écriture-là
+  // détruisait le <span class="rn">, et le numéro de Corrections n'a donc jamais existé à l'écran
+  // (#45). Le rail annonce une touche par numéro — il ne peut pas en manquer un sur huit.
+  $("viewCorrections").querySelector(".rl").textContent = libelle;
+  // Le libellé étant maintenant dans un .rl, il disparaît au rail rétracté : l'aria-label est le
+  // seul à porter le compteur à ce moment-là, et il doit donc suivre. Même geste que
+  // copyShareLink() sur #share.
+  $("viewCorrections").setAttribute("aria-label", libelle);
 }
 
 function resetAllOverrides() {
@@ -3930,14 +3938,17 @@ async function init() {
     if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ||
                el.getAttribute("role") === "button" || el.classList.contains("editv"))) return;
     if (e.key === "/") { e.preventDefault(); $("search").focus(); }
+    // L'ordre suit celui du rail (#45), et c'est le contrat : le numéro lu sur un bouton EST la
+    // touche qui l'ouvre. Quatre destinations changent de touche — le prix payé une fois pour que
+    // les deux se disent la même chose.
     else if (e.key === "1") switchView("routes");
-    else if (e.key === "2") switchView("loops");
-    else if (e.key === "3") switchView("enroute");
+    else if (e.key === "2") switchView("enroute");
+    else if (e.key === "3") switchView("loops");
     else if (e.key === "4") switchView("chain");
-    else if (e.key === "5") switchView("corrections");
-    else if (e.key === "6") switchView("commodities");
+    else if (e.key === "5") switchView("commodities");
+    else if (e.key === "6") switchView("tour");
     else if (e.key === "7") switchView("plan");
-    else if (e.key === "8") switchView("tour");
+    else if (e.key === "8") switchView("corrections");
   });
   loadOverrides();
   loadAutoloadK();

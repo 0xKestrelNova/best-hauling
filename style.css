@@ -147,6 +147,21 @@ a:hover { color: #ffcf6b; text-decoration: underline; }
 }
 .vbtn .rn { font-family: var(--mono); font-size: 10px; opacity: 0.7; }
 
+/* Sous-entrée du rail (#45) : « En route » est une lecture des trajets, pas une famille à part.
+   Le filet passe par ::before et NON par border-left — celui-ci est déjà pris par l'accent de
+   .vbtn.active juste au-dessus, et le marqueur de sous-niveau se serait évanoui pile quand la vue
+   est active, c'est-à-dire quand on la regarde. Posé en absolu, il se cale sur la boîte de padding :
+   il vient donc APRÈS le border, et les deux traits coexistent sans se recouvrir.
+   Le retrait, lui, ne survit à rien : .rail-collapsed .vbtn (plus bas, et plus spécifique) remet
+   padding-left à 0 sur les 68 px du rail replié, et sous 820 px le rail passe en ligne. Dans ces
+   deux états contraints c'est le filet seul qui dit la parenté — d'où le choix de ne pas s'en
+   remettre à l'indentation. */
+.vbtn-sub { position: relative; padding-left: 26px; }
+.vbtn-sub::before {
+  content: ""; position: absolute; left: 0; top: 9px; bottom: 9px;
+  width: 2px; background: var(--line2);
+}
+
 .share-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   margin-top: 6px; padding: 11px 14px;

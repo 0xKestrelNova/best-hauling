@@ -346,7 +346,8 @@ test("relevé de station : k déduit d'un montant observé, persistant, hors du 
   // Un relevé n'est PAS une correction de prix. Le compteur du bouton « ✎ Corrections » compte les
   // clés du store des corrections : si les relevés y atterrissaient, il afficherait « (1) » ici.
   // C'est exactement ce que garantit le choix d'un store localStorage séparé.
-  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections");
+  // Le libellé se lit dans son .rl : le bouton porte aussi son numéro de rail depuis #45.
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("✎ Corrections");
   // Ni dans le lien (il est local, comme les corrections).
   expect(await page.evaluate(() => location.hash)).not.toContain("1159");
 
