@@ -90,6 +90,15 @@ import { useState, useRef, useEffect } from "react";
 
 export type ProprietesValeurEditable = {
   valeur: number | null;
+  /** Les quatre `data-*` du contrat e2e : plusieurs tests visent une cellule PRÉCISE par
+   *  `[data-c][data-s][data-f]`, et lisent sa valeur dans `data-v`. Ce sont eux qui identifient un
+   *  chiffre parmi les 92 tuiles d'une station — les omettre rend ces tests inécrivables. */
+  commodite: string;
+  terminal: string;
+  cote: "buy" | "sell";
+  champ: "price" | "vol";
+  /** Date UEX du point, mémorisée comme base de fraîcheur de la correction. */
+  releve: number;
   /** true quand une correction locale porte déjà sur ce point : le ✎ s'affiche. */
   corrige: boolean;
   /** Rend « n.c. » pour une capacité qu'UEX ne publie pas — ni zéro, ni illimitée. */
@@ -99,13 +108,13 @@ export type ProprietesValeurEditable = {
   texteCapaciteInconnue: string;
 };
 
-export function ValeurEditable({ valeur, corrige, fmtVol, onCorriger, texteCapaciteInconnue }: ProprietesValeurEditable) {
+export function ValeurEditable({ valeur, commodite, terminal, cote, champ, releve, corrige, fmtVol, onCorriger, texteCapaciteInconnue }: ProprietesValeurEditable) {
   const [enEdition, setEnEdition] = useState(false);
-  const champ = useRef<HTMLInputElement>(null);
+  const saisie = useRef<HTMLInputElement>(null);
   const fini = useRef(false);
 
   useEffect(() => {
-    if (enEdition && champ.current) { champ.current.focus(); champ.current.select(); }
+    if (enEdition && saisie.current) { saisie.current.focus(); saisie.current.select(); }
   }, [enEdition]);
 
   const inconnue = valeur == null || !Number.isFinite(Number(valeur));
@@ -116,7 +125,7 @@ export function ValeurEditable({ valeur, corrige, fmtVol, onCorriger, texteCapac
   const clore = (enregistrer: boolean) => {
     if (fini.current) return;
     fini.current = true;
-    const saisi = champ.current ? champ.current.value : v;
+    const saisi = saisie.current ? saisie.current.value : v;
     // On sort de l'édition DANS TOUS LES CAS, et avant d'écrire. React réutilise l'instance du
     // composant au même emplacement : après `refresh()`, l'état local SURVIT au re-rendu, et le
     // champ resterait ouvert sur l'ancienne valeur. La version impérative n'avait pas ce problème —
@@ -130,9 +139,11 @@ export function ValeurEditable({ valeur, corrige, fmtVol, onCorriger, texteCapac
 
   if (enEdition) {
     return (
-      <span className={"editv" + (inconnue ? " nc" : "") + (corrige ? " ov" : "")} data-react="1">
+      <span className={"editv" + (inconnue ? " nc" : "") + (corrige ? " ov" : "")} data-react="1"
+            data-c={commodite} data-t={terminal} data-s={cote} data-f={champ}
+            data-v={inconnue ? "" : v} data-u={String(Number(releve) || 0)}>
         <input
-          ref={champ}
+          ref={saisie}
           type="number"
           min="0"
           defaultValue={v}
@@ -154,6 +165,8 @@ export function ValeurEditable({ valeur, corrige, fmtVol, onCorriger, texteCapac
     <span
       className={"editv" + (inconnue ? " nc" : "") + (corrige ? " ov" : "")}
       data-react="1"
+      data-c={commodite} data-t={terminal} data-s={cote} data-f={champ}
+      data-v={inconnue ? "" : v} data-u={String(Number(releve) || 0)}
       role="button"
       tabIndex={0}
       title={inconnue ? `${texteCapaciteInconnue}. Clic pour le corriger localement` : "Clic pour corriger localement ce chiffre"}
