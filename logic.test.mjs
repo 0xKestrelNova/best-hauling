@@ -2570,6 +2570,72 @@ test("journeyMap : un saut inter-système fait DEUX disques et une jambe marqué
   for (const a of c.arrets) assert.ok(dansLeCadre(a, c), `${a.nom} hors cadre`);
 });
 
+// ---------- L'ordre des systèmes est CANONIQUE, pas celui du parcours (#42) ----------
+// La carte plaçait les disques dans l'ordre où le parcours rencontre les systèmes : la même
+// géographie se dessinait donc en miroir selon le sens du trajet, et on ne reconnaissait jamais
+// la carte, on la relisait. Pour un panneau que l'ADR-001 dit DÉCORATIF — sa valeur est de se lire
+// d'un coup d'œil — c'était le seul repère spatial stable qui manquait.
+//
+// ATTENTION en relisant ces tests : le test ci-dessus va de Pyro vers Stanton, c'est-à-dire dans
+// le sens qui donnait DÉJÀ le bon résultat. Il restait vert avant comme après le correctif. Seul
+// le SENS INVERSE prouve quelque chose.
+
+test("journeyMap : le sens du voyage ne change PAS le côté des systèmes (#42)", () => {
+  const aller = journeyMap(st("Megumi", "New Babbage"), 0, STARMAP, infoT);
+  const retour = journeyMap(st("New Babbage", "Megumi"), 0, STARMAP, infoT);
+  // C'est l'assertion qui tombait : le retour rendait ["Stanton", "Pyro"].
+  assert.deepEqual(retour.systemes.map((s) => s.nom), ["Pyro", "Stanton"]);
+  assert.deepEqual(aller.systemes.map((s) => s.nom), retour.systemes.map((s) => s.nom));
+  // Et les abscisses sont les mêmes des deux côtés : la géographie ne bouge pas d'un pixel.
+  assert.deepEqual(aller.systemes.map((s) => s.cx), retour.systemes.map((s) => s.cx));
+});
+
+test("journeyMap : Nyx se lit à GAUCHE de Pyro et de Stanton (#42)", () => {
+  const c = journeyMap(st("New Babbage", "Levski"), 0, STARMAP, infoT);
+  assert.deepEqual(c.systemes.map((s) => s.nom), ["Nyx", "Stanton"]);
+  assert.ok(c.systemes[0].cx < c.systemes[1].cx);
+});
+
+test("journeyMap : un système non traversé ne laisse pas de case vide (#42)", () => {
+  // Nyx -> Stanton sans passer par Pyro : DEUX disques côte à côte, pas trois avec un trou au
+  // milieu. La carte trie ce qu'elle traverse, elle ne réserve pas de place.
+  //
+  // HONNÊTETÉ : celui-ci était VERT avant le correctif — dans ce sens, l'ordre du parcours donnait
+  // déjà le bon résultat. Ce n'est donc pas un test du bug de #42 mais un GARDE-FOU contre la
+  // mauvaise façon de le corriger : projeter sur les trois cases de l'ordre canonique et laisser
+  // un trou là où le parcours ne passe pas. Cette implémentation-là le ferait tomber.
+  const c = journeyMap(st("Levski", "New Babbage"), 0, STARMAP, infoT);
+  assert.equal(c.systemes.length, 2);
+  assert.deepEqual(c.systemes.map((s) => s.nom), ["Nyx", "Stanton"]);
+  // Les deux disques se partagent toute la largeur, comme n'importe quelle paire.
+  const paire = journeyMap(st("Megumi", "New Babbage"), 0, STARMAP, infoT);
+  assert.deepEqual(c.systemes.map((s) => s.cx), paire.systemes.map((s) => s.cx));
+});
+
+test("journeyMap : un système inconnu ne disparaît pas, il se range après les connus (#42)", () => {
+  // UEX peut publier un système que la liste canonique ignore. Le repli de teinte (app.js) a déjà
+  // ce contrat côté couleur ; l'ordre doit avoir le même — sinon la carte perdrait des escales.
+  const stations = [
+    { name: "Port Olisar", system: "Odin" },
+    { name: "New Babbage", system: "Stanton" },
+    { name: "Megumi", system: "Pyro" },
+  ];
+  const c = journeyMap(stations, 0, STARMAP, (n) => TERMS[n] || null);
+  assert.deepEqual(c.systemes.map((s) => s.nom), ["Pyro", "Stanton", "Odin"]);
+});
+
+test("journeyMap : entre inconnus, l'ordre du parcours est conservé (#42)", () => {
+  // Le tri est STABLE : à rang égal, deux systèmes hors liste gardent l'ordre où on les rencontre.
+  // Sans cette garantie, deux systèmes neufs se réordonneraient au gré du moteur.
+  const stations = [
+    { name: "A", system: "Odin" },
+    { name: "B", system: "Terra" },
+    { name: "C", system: "Pyro" },
+  ];
+  const c = journeyMap(stations, 0, STARMAP, () => null);
+  assert.deepEqual(c.systemes.map((s) => s.nom), ["Pyro", "Odin", "Terra"]);
+});
+
 test("journeyMap : un saut est ROUTÉ par les deux passerelles, pas tiré en ligne droite", () => {
   // On ne passe pas d'un système à l'autre n'importe où : le trajet réel emprunte la passerelle
   // d'ici puis celle de là-bas. Trois segments, dont un seul est le corridor.

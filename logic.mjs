@@ -2202,6 +2202,22 @@ export function takeFromStore(hold, entrepots, name, units, station) {
 // filtre, appliqué à la collecte, qui tient les systèmes du lore hors de la carte.
 export const CARTE = { largeur: 680, hauteur: 296, marge: 26 };
 
+// Ordre CANONIQUE des systèmes sur la carte, de gauche à droite (#42). Il ne vient pas de la
+// donnée : les clés de data/starmap.json sont dans l'ordre `Pyro, Stanton, Nyx`, et s'y fier
+// donnerait justement le mauvais. Il ne vient pas non plus du parcours — c'était le défaut : la
+// même géographie se dessinait en miroir selon le sens du voyage, et on ne reconnaissait jamais
+// la carte. Un système hors de cette liste n'est pas perdu, il se range après (voir rangCarte).
+//
+// À NE PAS CONFONDRE avec `ORDRE_SYSTEMES` (logic.mjs:1325), qui range le SÉLECTEUR de station par
+// volume de terminaux — `["Stanton", "Pyro", "Nyx"]`, soit exactement l'inverse. Les deux ordres
+// sont légitimes et ne fusionneront pas : une liste déroulante se parcourt du plus fourni au moins
+// fourni, une carte se lit dans l'ordre où les systèmes sont posés dans l'espace.
+const ORDRE_CARTE = ["Nyx", "Pyro", "Stanton"];
+const rangCarte = (nom) => {
+  const i = ORDRE_CARTE.indexOf(nom);
+  return i === -1 ? ORDRE_CARTE.length : i;
+};
+
 // Angle déterministe dérivé d'un nom : deux terminaux d'une même planète ne se superposent pas,
 // et la carte ne bouge pas d'un rendu à l'autre (aucun hasard, donc aucun scintillement).
 export function nameAngle(nom) {
@@ -2233,10 +2249,17 @@ export function journeyMap(stations, current, starmap, infoTerminal, enVol = fal
   if (!stations || !stations.length) return null;
   const { largeur, hauteur, marge } = CARTE;
 
-  // Un disque par système TRAVERSÉ, dans l'ordre où le parcours les rencontre.
+  // Un disque par système TRAVERSÉ — et seulement ceux-là : on collecte d'abord, on trie ensuite.
+  // Projeter sur les trois cases de l'ordre canonique laisserait un trou au milieu d'un parcours
+  // Nyx -> Stanton, et le corridor ⚡ traverserait un disque inutilisé.
   const ordre = [];
   for (const s of stations) if (s.system && !ordre.includes(s.system)) ordre.push(s.system);
   if (!ordre.length) return null;
+  // L'ordre de gauche à droite est CANONIQUE, jamais celui de la rencontre (#42) : sinon la même
+  // géographie se dessine en miroir selon le sens du voyage. Le tri est STABLE (garanti par la
+  // spec depuis ES2019), donc les systèmes inconnus — tous à rang égal — gardent entre eux
+  // l'ordre du parcours au lieu d'être réordonnés au gré du moteur.
+  ordre.sort((a, b) => rangCarte(a) - rangCarte(b));
   const n = ordre.length;
   const rayon = Math.min((largeur - marge * 2) / (n * 2.35), (hauteur - marge * 2) / 2);
   const systemes = ordre.map((nom, i) => ({
