@@ -1156,14 +1156,14 @@ test("Soute : « où écouler » répond à une soute DÉCLARÉE, sans le moindr
 test("Soute : déclarer un lot ne corrige AUCUN stock de station (#55)", async ({ page }) => {
   // `✓ chargé` vide le rayon parce qu'on vient d'y acheter. Un lot déclaré n'a été pris nulle part
   // que l'app connaisse : y déduire quoi que ce soit serait inventer un achat.
-  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections");
   await ouvrirDeclaration(page);
   const nom = (await commodites(page))[0];
   await page.fill("#holdAddName", nom);
   await page.fill("#holdAddScu", "9999");
   await page.locator("#holdAddOk").click();
 
-  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections"); // compteur inchangé
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections"); // compteur inchangé
   const ov = await page.evaluate(() => localStorage.getItem("best-hauling-overrides"));
   expect(JSON.parse(ov || "{}")).toEqual({});
 });
@@ -2038,7 +2038,7 @@ test("service worker : les données atterrissent vraiment dans le cache", async 
 // ---------- Corrections locales & réactivité des filtres (#39, #49) ----------
 
 test("consulter un chiffre ne crée aucune correction locale", async ({ page }) => {
-  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections"); // aucune au départ
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections"); // aucune au départ
   const cell = page.locator("#rows .editv").first();
   const avant = await cell.innerText();
 
@@ -2046,7 +2046,7 @@ test("consulter un chiffre ne crée aucune correction locale", async ({ page }) 
   await expect(cell.locator("input")).toBeVisible();
   await page.locator("h1").click(); // blur SANS rien modifier
 
-  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections"); // toujours aucune
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections"); // toujours aucune
   await expect(page.locator("#rows .editv.ov")).toHaveCount(0);
   await expect(cell).toHaveText(avant); // l'affichage d'origine est restauré, ✎ compris
 

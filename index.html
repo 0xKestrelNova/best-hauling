@@ -60,27 +60,48 @@
       <button class="rail-toggle" id="railToggle" title="Rétracter / déplier le menu" aria-label="Rétracter le menu" aria-expanded="true">«</button>
 
       <div class="rail-nav">
-        <!-- aria-label explicite sur chaque bouton : rail rétracté, le libellé .rl passe en display:none
-             et le nom accessible tomberait sinon au simple numéro (« 01 »…). Chaque libellé visible y
-             est REPRIS mot pour mot (SC 2.5.3 « Label in Name » : le pilotage vocal vise le texte lu
-             à l'écran). #viewCorrections fait exception et n'en porte PAS : updateOvBadge() réécrit
-             son textContent, compteur compris (« ✎ Corrections (3) »), et un aria-label figerait le
-             nom accessible en masquant ce compteur. Son texte n'a alors plus de .rl : il survit au
-             repli, c'est justement pourquoi il se passe d'aria-label. -->
+        <!-- L'ORDRE EST UNE DÉCISION (#45), pas l'historique des ajouts. Le rail se lit du général
+             au particulier, et les réglages ferment la marche :
+                 recherche de fret │ marché │ soute │ conclusion │ réglage
+             « En route » n'est pas une famille : c'est une lecture des trajets depuis un point de
+             départ donné, d'où la sous-entrée. Et « Plan de vol » quitte la dernière place que lui
+             donnait l'ADR-004 §7 — une conclusion se lit toujours après ce qui la produit, mais un
+             RÉGLAGE se lit après une conclusion.
+
+             Le numéro affiché désigne TOUJOURS la touche qui l'active, sous-entrée comprise : sinon
+             autant retirer les numéros. Les data-view et les id ne bougent pas — ce sont des clés
+             textuelles, les permaliens déjà partagés ouvrent la même vue qu'avant.
+
+             aria-label explicite sur chaque bouton : rail rétracté, le libellé .rl passe en
+             display:none et le nom accessible tomberait sinon au simple numéro (« 01 »…). Chaque
+             libellé visible y est REPRIS mot pour mot (SC 2.5.3 « Label in Name » : le pilotage
+             vocal vise le texte lu à l'écran). -->
         <button id="viewRoutes" class="vbtn active" data-view="routes" aria-label="Trajets simples" title="Trajets simples (raccourci : 1)"><span class="rn">01</span><span class="rl">Trajets</span></button>
-        <button id="viewLoops" class="vbtn" data-view="loops" aria-label="Boucles aller-retour" title="Boucles aller-retour (raccourci : 2)"><span class="rn">02</span><span class="rl">Boucles</span></button>
-        <button id="viewEnroute" class="vbtn" data-view="enroute" aria-label="En route" title="En route (raccourci : 3)"><span class="rn">03</span><span class="rl">En&nbsp;route</span></button>
+        <button id="viewEnroute" class="vbtn vbtn-sub" data-view="enroute" aria-label="En route" title="En route (raccourci : 2)"><span class="rn">02</span><span class="rl">En&nbsp;route</span></button>
+        <button id="viewLoops" class="vbtn" data-view="loops" aria-label="Boucles aller-retour" title="Boucles aller-retour (raccourci : 3)"><span class="rn">03</span><span class="rl">Boucles</span></button>
         <button id="viewChain" class="vbtn" data-view="chain" aria-label="Chaîne multi-sauts" title="Chaîne multi-sauts (raccourci : 4)"><span class="rn">04</span><span class="rl">Chaîne</span></button>
-        <button id="viewCorrections" class="vbtn" data-view="corrections" title="Corrections locales (raccourci : 5)"><span class="rn">05</span><span class="rl">Corrections</span></button>
-        <button id="viewCommodities" class="vbtn" data-view="commodities" aria-label="Commodités : tous les points d'achat/vente" title="Commodités : tous les points d'achat/vente (raccourci : 6)"><span class="rn">06</span><span class="rl">Commodités</span></button>
-        <!-- EN DERNIER, et c'est une décision (ADR-004 §7) : une conclusion se lit après ce qui la
-             produit, et la placer en tête renuméroterait des raccourcis déjà appris pour un gain
-             nul. Révisable par #45, qui refond la hiérarchie du rail dans le même jalon. -->
-        <button id="viewPlan" class="vbtn" data-view="plan" aria-label="Plan de vol" title="Plan de vol : le récapitulatif du voyage engagé (raccourci : 7)"><span class="rn">07</span><span class="rl">Plan&nbsp;de&nbsp;vol</span></button>
+        <button id="viewCommodities" class="vbtn" data-view="commodities" aria-label="Commodités : tous les points d'achat/vente" title="Commodités : tous les points d'achat/vente (raccourci : 5)"><span class="rn">05</span><span class="rl">Commodités</span></button>
         <!-- L'aria-label OUVRE le libellé visible plutôt que de le remplacer (même patron que
              #share) : « Tournée » y est repris mot pour mot, SC 2.5.3 tient, et le nom accessible
              dit en plus de quoi il s'agit une fois le rail rétracté. -->
-        <button id="viewTour" class="vbtn" data-view="tour" aria-label="Tournée d'écoulement" title="Tournée d'écoulement : vider la soute en un minimum d'arrêts (raccourci : 8)"><span class="rn">08</span><span class="rl">Tournée</span></button>
+        <button id="viewTour" class="vbtn" data-view="tour" aria-label="Tournée d'écoulement" title="Tournée d'écoulement : vider la soute en un minimum d'arrêts (raccourci : 6)"><span class="rn">06</span><span class="rl">Tournée</span></button>
+        <button id="viewPlan" class="vbtn" data-view="plan" aria-label="Plan de vol" title="Plan de vol : le récapitulatif du voyage engagé (raccourci : 7)"><span class="rn">07</span><span class="rl">Plan&nbsp;de&nbsp;vol</span></button>
+        <!-- Le libellé passe en .rl comme ses sept voisins, et le bouton gagne donc un aria-label —
+             ce qu'il n'avait volontairement PAS avant #45. La raison a changé de camp : tant que
+             updateOvBadge() écrasait tout le bouton en textContent, ce texte survivait au repli et
+             portait seul le nom accessible ; un aria-label statique y aurait figé le compteur. Il
+             est maintenant masqué au repli comme les autres, donc l'aria-label est le seul à porter
+             « Corrections (3) » à ce moment-là — et updateOvBadge() le tient à jour AVEC le
+             compteur, exactement comme copyShareLink() le fait pour #share. Le numéro, lui, cesse
+             d'être du balisage mort : il était détruit à chaque appel depuis toujours.
+
+             Le « ✎ » a disparu du libellé, et ce n'est pas de la coquetterie : MESURÉ, il coûte
+             20 px sur les 118 px que laisse le numéro, et « ✎ Corrections (12) » repartait à la
+             ligne — le bouton faisait deux fois la hauteur des sept autres. C'était d'ailleurs le
+             seul picto du rail, hérité de ce que ce libellé s'écrivait en JS au lieu d'être posé
+             ici comme les autres. Élargir le rail était l'autre voie : elle aggrave #86. -->
+
+        <button id="viewCorrections" class="vbtn" data-view="corrections" aria-label="Corrections" title="Corrections locales (raccourci : 8)"><span class="rn">08</span><span class="rl">Corrections</span></button>
       </div>
 
       <!-- Le libellé visible « Partager » OUVRE l'aria-label : sinon le nom accessible ne le

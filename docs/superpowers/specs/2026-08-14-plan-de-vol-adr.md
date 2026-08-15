@@ -126,6 +126,13 @@ Décision volontairement **révisable par #45**, qui refond la hiérarchie du me
 cet ADR ajoute une entrée, il ne réorganise pas le rail. Si #45 introduit des sous-entrées, le Plan
 de vol trouvera sa place dans cette hiérarchie plutôt qu'au bout d'une liste plate.
 
+> **Révisé par #45 (2026-08-15).** C'est arrivé : le Plan de vol est **septième sur huit**, devant
+> « ✎ Corrections ». Le principe tient — une conclusion se lit après ce qui la produit — mais il
+> s'arrête à ce qui produit quelque chose : un **réglage** se lit après une conclusion. La crainte
+> de renuméroter des raccourcis appris ne l'a pas emporté, pour une raison que cet ADR ne pouvait
+> pas voir depuis une seule entrée : le rail affiche un numéro par vue, et un numéro qui ne désigne
+> pas la touche qui l'active ne vaut rien. Le Plan de vol garde d'ailleurs sa touche `7`.
+
 ### 8. Le bouton de capture produit du **texte**, pas une image
 
 Le besoin : envoyer son voyage à un collègue.
