@@ -7,7 +7,7 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "build": "npm run build:data && npm run build:site",
@@ -16,10 +16,12 @@
     "e2e": "playwright test",
     "build:data": "node scripts/build-data.mjs",
     "build:site": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
+    "typescript": "^7.0.2",
     "vite": "^8.2.1"
   },
   "repository": {

@@ -1,0 +1,39 @@
+{
+  "//": [
+    "Vérification de types SEULEMENT — jamais d'émission. C'est Vite qui construit, et Node 24 qui",
+    "efface les types à l'exécution ; `tsc` ne sert ici qu'à dire si les annotations sont vraies.",
+    "Sans lui, annoter n'apporterait RIEN : l'effacement de types ne vérifie rien du tout, il retire.",
+    "",
+    "La sévérité est un ESCALIER, et chaque marche est mesurée. logic.ts vient d'être renommé depuis",
+    "du JavaScript : tout activer d'un coup produit des erreurs sur du code dont 475 tests prouvent",
+    "qu'il marche, et noie les vraies sous les artefacts de réglage. Mesuré le 2026-08-15 :",
+    "",
+    "    strictNullChecks: true   -> 152 erreurs, dont 125 du seul motif `never[]`",
+    "                                (TS cesse d'inférer un tableau vide en `any[]` évolutif)",
+    "    strictNullChecks: false  ->  27 erreurs, presque toutes le MÊME motif utile :",
+    "                                un paramètre d'options `= {}` inféré comme objet vide",
+    "",
+    "On prend donc la seconde marche d'abord : ces 27-là se règlent en ANNOTANT les signatures,",
+    "c'est-à-dire en faisant le travail, pas en le contournant. `strictNullChecks` puis",
+    "`noImplicitAny` viendront ensuite, chacun dans sa PR — sinon on ne saurait plus quelle marche",
+    "a cassé quoi.",
+    "",
+    "app.js et les scripts/ ne sont PAS inclus : ils restent du JavaScript tant que la migration ne",
+    "les a pas atteints, et `allowJs` les ferait entrer avec tout leur bruit."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["logic.ts", "types.ts"]
+}

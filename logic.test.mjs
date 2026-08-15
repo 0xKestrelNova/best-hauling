@@ -28,7 +28,7 @@ import {
   stationTree, groupOverridesByTerminal,
   isoUTC, secDepuisISO, FORMAT_EXPORT, migrerCorrections,
   exporterCorrections, relireCorrections, exporterEntrepots,
-} from "./logic.mjs";
+} from "./logic.ts";
 
 // ---------- Temps de trajet ----------
 test("tripMinutes : manutention + distance + saut inter-système", () => {
