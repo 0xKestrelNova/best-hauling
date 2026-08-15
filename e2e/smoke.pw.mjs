@@ -264,6 +264,84 @@ test("Chaîne : le filtre « même système » contraint la chaîne (régression
   expect(new Set(systems).size).toBe(1);
 });
 
+// Pose la vue Chaîne sur un terminal de départ dont AU MOINS UN saut charge plusieurs commodités,
+// et rend son rang. Balayer plutôt que prendre « le premier » : ce que la chaîne compose dépend du
+// relevé du jour, et un test adossé à une origine précise décrirait le jeu de données plutôt que la
+// propriété. Il échoue franchement si aucune des origines essayées ne convient.
+async function chaineAvecSautMultiCommodites(page, essais = 12) {
+  await page.click("#viewChain");
+  await expect(page.locator("#chainControls")).toBeVisible();
+  // `market.json` est chargé À LA DEMANDE : les contrôles de la vue sont visibles bien avant que la
+  // liste des terminaux ne soit peuplée. `evaluateAll` n'attend rien et rendrait `[]` — le balayage
+  // sortirait alors sans avoir essayé la moindre origine, sur une machine seulement plus chargée.
+  await page.locator("#originList option").first().waitFor({ state: "attached", timeout: 15000 });
+  const origines = await page.locator("#originList option").evaluateAll((os) => os.map((o) => o.value));
+  for (const origine of origines.slice(0, essais)) {
+    await page.fill("#chainOrigin", origine);
+    // Attendre que la carte parle bien de CETTE origine. Le rendu est débouncé et la carte de
+    // l'origine précédente reste à l'écran entre-temps : un simple `isVisible` ne retient rien et
+    // ferait compter les lignes de la chaîne d'avant. Sans chaîne rentable, le fil d'Ariane n'existe
+    // pas -> on passe à l'origine suivante.
+    const depart = page.locator("#chainOut .chain-path .snode").first();
+    const vue = await expect(depart).toHaveText(origine.split(" — ")[0], { timeout: 5000 }).then(() => true).catch(() => false);
+    if (!vue) continue;
+    const sauts = page.locator("#chainOut .chain-leg");
+    const n = await sauts.count();
+    for (let i = 0; i < n; i++) {
+      if ((await sauts.nth(i).locator(".chain-line").count()) > 1) return i;
+    }
+  }
+  throw new Error(`aucune des ${essais} premières origines ne donne un saut à plusieurs commodités`);
+}
+
+const nombreDe = (t) => Number(t.replace(/\D/g, ""));
+
+test("Chaîne : un saut détaille les commodités qu'il transporte (#56)", async ({ page }) => {
+  const i = await chaineAvecSautMultiCommodites(page);
+  const saut = page.locator("#chainOut .chain-leg").nth(i);
+  const lignes = saut.locator(".chain-line");
+  const n = await lignes.count();
+  expect(n).toBeGreaterThan(1);
+  // Chaque ligne dit sa commodité, son volume et ce qu'elle rapporte : un saut se lit comme un
+  // manifeste d'« En route », pas comme une commodité unique.
+  let scu = 0;
+  for (let l = 0; l < n; l++) {
+    await expect(lignes.nth(l).locator(".commodity-cell")).not.toBeEmpty();
+    const u = nombreDe(await lignes.nth(l).locator(".chain-line-scu").innerText());
+    expect(u).toBeGreaterThan(0);
+    await expect(lignes.nth(l).locator(".chain-line-profit")).not.toBeEmpty();
+    scu += u;
+  }
+  // Le total du saut annonce la somme de ses lignes : c'est ce volume-là qui dit que la soute ne
+  // repart plus avec la seule meilleure commodité.
+  expect(nombreDe(await saut.locator(".chain-leg-scu").innerText())).toBe(scu);
+});
+
+const aPlat = (t) => t.replace(/\s+/g, " ").trim();
+
+test("Chaîne : « ▶ Ajouter au voyage » pousse le chargement RÉEL du saut (#56)", async ({ page }) => {
+  // Le budget est coupé pour la durée du test : la chaîne l'ignore par construction (README, note ¹)
+  // là où la jambe de voyage le consomme, donc sous un budget bornant les deux chargements peuvent
+  // légitimement différer. C'est le seul écart connu, et il ne touche pas ce que ce test prouve.
+  await page.uncheck("#useBudget");
+  const i = await chaineAvecSautMultiCommodites(page);
+  const nSauts = await page.locator("#chainOut .chain-leg").count();
+  const saut = page.locator("#chainOut .chain-leg").nth(i);
+  const attendu = (await saut.locator(".chain-line").evaluateAll((ls) => ls.map((l) =>
+    `${l.querySelector(".commodity-cell").innerText} ${l.querySelector(".chain-line-scu").innerText}`))).map(aPlat);
+  const profitChaine = aPlat(await saut.locator(".chain-leg-profit").innerText());
+
+  await page.click("#chainToJourney");
+  await expect(page.locator("#journeyCard .jleg")).toHaveCount(nSauts);
+  const jambe = page.locator("#journeyCard .jleg").nth(i);
+  await expect(jambe.locator(".jcargo-item").first()).toBeVisible({ timeout: 8000 });
+  const obtenu = (await jambe.locator(".jcargo-item").evaluateAll((ls) => ls.map((l) => l.innerText))).map(aPlat);
+  // Mêmes commodités, mêmes SCU, même profit : la carte Chaîne et la vue Voyage chiffraient deux
+  // chargements différents pour le MÊME saut — l'une mono, l'autre multi — et l'affichaient.
+  expect(obtenu).toEqual(attendu);
+  expect(aPlat(await jambe.locator(".jleg-profit").innerText())).toBe(profitChaine);
+});
+
 // Pose la vue « En route » sur le premier terminal de départ proposé et rend la carte Manifeste.
 async function enrouteSurLePremierTerminal(page) {
   await page.click("#viewEnroute");
