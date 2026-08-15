@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -232,5 +233,11 @@ export default defineConfig({
   // L'ordre compte : `horsBundle` retire les assets à nom contractuel et rétablit leurs href, et
   // `precache` liste ensuite dist/ tel qu'il est réellement. Inverser produirait un manifeste qui
   // précache des fichiers hachés que plus personne ne référence.
-  plugins: [cspDev(), horsBundle(), precache()],
+  //
+  // Tailwind est écrit en tête pour que la lecture corresponde à l'exécution, mais sa position est
+  // COSMÉTIQUE : ses trois sous-plugins portent tous `enforce: "pre"`, donc Vite les trie devant les
+  // nôtres quoi qu'on écrive. Nos trois-là n'en souffrent pas — ils n'agissent qu'en
+  // generateBundle/closeBundle, soit après toute transformation, et `precache` liste dist/ tel
+  // qu'il est : le CSS retravaillé par Tailwind y entre seul, sous son nom haché.
+  plugins: [tailwindcss(), cspDev(), horsBundle(), precache()],
 });
