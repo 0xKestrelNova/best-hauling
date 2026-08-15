@@ -1192,13 +1192,23 @@ function copyManifest() {
 // première version de l'ADR affirmait, la CSP ne l'interdit pas — la mesure qui le prétendait ne
 // s'est pas reproduite en contre-lecture.
 // `libelle` est le texte à remettre après le retour visuel : chaque bouton a le sien.
+// Un échec de copie DOIT se voir. Il se taisait deux fois (#91) :
+//   - `navigator.clipboard` est absent hors contexte sécurisé (http:// sur un LAN). Le `?.` rendait
+//     alors `undefined`, et le `.then` qui suivait levait une TypeError — la copie ne se faisait pas
+//     et emportait au passage le reste du gestionnaire de clic ;
+//   - un refus de permission tombait dans un `.catch(() => {})` vide, donc sans un mot.
+// Dans les deux cas l'utilisateur repartait en croyant avoir son texte dans le presse-papiers, et
+// collait le contenu précédent. Deux causes, deux messages : « indisponible » et « refusé » ne
+// demandent pas la même chose à qui les lit.
 function copierTexte(texte, btn, libelle) {
-  navigator.clipboard?.writeText(texte).then(() => {
+  const copie = navigator.clipboard?.writeText(texte);
+  if (!copie) { showToast("⚠ Presse-papiers indisponible — copie impossible depuis cette page"); return; }
+  copie.then(() => {
     if (!btn) return;
     btn.textContent = "✓ Copié";
     btn.classList.add("copied");
     setTimeout(() => { btn.textContent = libelle; btn.classList.remove("copied"); }, 1500);
-  }).catch(() => {});
+  }).catch(() => showToast("⚠ Presse-papiers refusé — la copie n'a pas eu lieu"));
 }
 
 function renderManifest(origin, destSystem, f, destTerminal) {

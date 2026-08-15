@@ -248,3 +248,31 @@ test("Plan de vol : le bouton de capture copie le récapitulatif en texte (#61)"
   expect(texte).toContain("→"); // le parcours, étape par étape
   expect(texte).toMatch(/soute/i); // les hypothèses voyagent avec le récapitulatif
 });
+
+// Les deux causes d'échec de `copierTexte`, chacune la sienne (#91). Elles valent pour les trois
+// autres boutons de copie du dépôt : le point de sortie est partagé.
+test("Plan de vol : un presse-papiers INDISPONIBLE le dit, jamais en silence (#91)", async ({ page }) => {
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  // Le cas d'un contexte non sécurisé (http:// sur un LAN) : Chrome ne pose pas navigator.clipboard.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, get: () => undefined });
+  });
+  await page.click("#planCopy");
+  await expect(page.locator("#toast")).toContainText(/presse-papiers indisponible/i);
+  await expect(page.locator("#planCopy")).not.toHaveText(/Copié/); // surtout pas un faux succès
+});
+
+test("Plan de vol : un presse-papiers REFUSÉ le dit, jamais en silence (#91)", async ({ page }) => {
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      get: () => ({ writeText: () => Promise.reject(new Error("permission refusée")) }),
+    });
+  });
+  await page.click("#planCopy");
+  await expect(page.locator("#toast")).toContainText(/presse-papiers refusé/i);
+  await expect(page.locator("#planCopy")).not.toHaveText(/Copié/);
+});
