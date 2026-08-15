@@ -504,6 +504,35 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
 .hold-meta { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .hold-meta b { color: var(--text); }
 
+/* ---------- Déclarer « j'ai ça à bord » (#55) ---------- */
+/* Même bordure verte que la soute : c'est la même chose — du fret réel — par une autre porte. */
+.hold-declare { display: flex; flex-direction: column; gap: 9px; }
+.hold-add-open {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px; text-align: left;
+  color: var(--good); background: none; border: 1px dashed rgba(70, 229, 160, 0.4);
+  border-radius: 3px; padding: 6px 9px; cursor: pointer;
+}
+.hold-add-open:hover { color: #04120a; background: var(--good); border-style: solid; }
+.hold-add { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.hold-add input { min-width: 0; padding: 3px 7px; font-size: 11.5px; }
+#holdAddName { flex: 1 1 130px; }
+#holdAddScu { flex: 0 0 62px; font-family: var(--mono); text-align: center; }
+#holdAddPaid { flex: 0 0 96px; font-family: var(--mono); text-align: center; }
+.hold-add-hint { margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+.hold-add-hint b { color: var(--text); }
+/* « Coût nul » n'est pas une absence de donnée : c'est une donnée, et elle change le sens du
+   profit affiché juste au-dessus. Teinte ambre, celle de tout ce qui demande une lecture avertie. */
+.hold-butin {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--warn); border: 1px solid rgba(255, 176, 32, 0.35); border-radius: 2px;
+  padding: 0 4px; cursor: help;
+}
+/* « Je suis à » : sans voyage, c'est la seule façon de dire d'où l'on part — donc de vendre et de
+   classer « où écouler ». Le champ est le départ d'« En route », pas une seconde vérité. */
+.hold-ici { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; font-size: 11px; }
+.hold-ici label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.6px; color: var(--muted); }
+.hold-ici input { flex: 1 1 150px; min-width: 0; padding: 3px 7px; font-size: 11.5px; }
+
 /* ---------- Les entrepôts : le fret déposé ---------- */
 /* Mêmes classes de ligne que la soute : c'est le même objet (des lots), il se lit pareil. Seule la
    teinte change — violette, celle des panneaux qui ne décrivent pas ce qui est À BORD. Confondre

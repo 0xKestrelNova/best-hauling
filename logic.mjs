@@ -1758,6 +1758,34 @@ export function loadHold(hold, lignes, from, at) {
   return hold.concat(lots);
 }
 
+// La DEUXIÈME entrée de la soute, et la seule qui ne suppose ni voyage, ni jambe, ni manifeste :
+// « j'ai ça à bord ». C'est le repli que l'option D d'ADR-002 réservait aux cargaisons que l'app
+// n'a PAS calculées — butin ramassé, vaisseau rangé plein, achat fait hors du site.
+//
+// Le lot produit a exactement la forme de ceux de `loadHold`, à deux absences près, et ce sont
+// elles le contrat :
+//   - AUCUNE clé `leg`. Rien ne l'a chargé, donc aucune jambe ne peut s'en dire responsable :
+//     l'annulation d'une jambe (`l.leg !== k`) ne l'emporte pas, `detacherLotsDeJambe` et
+//     `reindexerRangsJambe` le rendent tel quel, et `migrerChargements` ne lui invente pas
+//     d'entrée au registre. `leg: null` aurait d'ailleurs fait l'affaire pour les quatre — vérifié,
+//     `null !== "0|A|B"` conserve bien le lot. On ne le pose pas pour être cohérent avec
+//     `sansEtiquette`, qui SUPPRIME la clé : un lot détaché de sa jambe n'en a déjà plus, un lot
+//     déclaré ne doit pas s'en distinguer par une clé vide.
+//   - `from` VIDE. Il n'a été pris à aucun rayon que l'app connaisse, et c'est ce qui interdit
+//     toute déduction de stock : les déductions se lisent dans le registre, que ce lot n'atteint
+//     jamais. Déduire ici serait inventer un achat.
+//
+// `paid` omis vaut 0 — du butin n'a rien coûté (ADR-002 : « butin offert d'un clic »). Un prix
+// NÉGATIF est ramené à 0 : un achat ne rapporte pas d'argent, le pire cas est le coût nul.
+// Sans nom ou sans quantité, on rend la MÊME soute : l'identité dit « rien n'a bougé », et
+// l'appelant y rend la main sans écrire — même convention que `storeFromHold`.
+export function declarerLot(hold, { name, units, paid } = {}, at = 0) {
+  const nom = typeof name === "string" ? name.trim() : "";
+  const scu = Math.floor(Number(units) || 0);
+  if (!nom || scu <= 0) return hold;
+  return hold.concat([{ name: nom, units: scu, paid: Math.max(0, Number(paid) || 0), from: "", at: at || 0 }]);
+}
+
 // SCU à bord, toutes commodités confondues — donc la place qu'il reste pour charger.
 export const holdScu = (hold) => hold.reduce((s, l) => s + (l.units || 0), 0);
 export const freeCargo = (hold, cargo) => Math.max(0, (cargo || 0) - holdScu(hold));

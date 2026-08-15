@@ -205,6 +205,41 @@ sans aucune saisie, en prenant le prix là où il est déjà : dans le manifeste
 calculée — déjà à bord avant d'ouvrir le site, ou obtenue autrement — une ligne ajoutée à la main
 propose de saisir son prix, « butin » restant offert d'un clic pour le vrai coût nul.
 
+#### Amendement (2026-08-15) — le repli est livré, et il n'a ni jambe ni rayon
+
+Le repli ci-dessus est resté **écrit et non câblé** pendant trois semaines : `manifestLine` acceptait
+bien un `paid` explicite, mais aucun appelant de production ne le posait, et la soute n'avait qu'une
+entrée — « ✓ chargé », au bout d'un entonnoir de six gestes qui exige un voyage, une jambe et un
+terminal qui vend la commodité. À vide, la carte Soute était même masquée : aucun bouton nulle part
+ne permettait de *découvrir* la fonctionnalité.
+
+La décision de l'option A n'est pas révisée : « ✓ chargé » reste la voie normale, celle qui prend le
+prix là où il est déjà. Ce qui est livré, c'est la porte que l'ADR promettait à côté —
+`declarerLot(hold, { name, units, paid }, at)` (`logic.mjs`), servie par un bouton **`+ déclarer ce
+que j'ai à bord`** présent dans les six vues, soute vide comprise.
+
+Deux points que l'ADR n'avait pas tranchés, et qui découlent du reste de l'architecture :
+
+- **Un lot déclaré n'a pas de clé `leg`** — pas même `leg: null`. Le registre des chargements
+  (`best-hauling-jambes-chargees`, posé par #21/#22) suppose une jambe : un lot qui n'en a pas n'y
+  entre jamais, `jambeChargee` reste donc faux et l'annulation d'une jambe (`l.leg !== k`) ne
+  l'emporte pas. `detacherLotsDeJambe` et `reindexerRangsJambe` le rendent tel quel.
+
+  *Correction du 2026-08-15 : une première rédaction justifiait l'absence de clé en affirmant que
+  `leg: null` « aurait trompé » le filtre d'annulation. C'est faux, et vérifié — `null !== "0|A|B"`
+  conserve le lot, les quatre chemins se comportent à l'identique. La vraie raison est la cohérence
+  avec `sansEtiquette`, qui **supprime** la clé : un lot détaché de sa jambe n'en a déjà plus.*
+- **Un lot déclaré ne corrige aucun stock.** `✓ chargé` vide le rayon parce qu'on vient d'y acheter ;
+  un lot déclaré n'a été pris à aucun point que l'app connaisse — son `from` est vide — et y déduire
+  quoi que ce soit serait inventer un achat. C'est la même règle que « on ne persiste que
+  l'intention », appliquée au stock.
+
+Corollaire d'interface : « où écouler » a besoin d'un point de départ, que le voyage fournissait
+seul. Sans voyage, la position vient du **terminal de départ d'« En route »** — déjà le repli de
+`stationCourante()`. Le champ **◈ Je suis à** de la carte de déclaration écrit dans ce champ-là, et
+non dans un second store : deux positions divergeraient au premier aller-retour entre les deux vues.
+Voir #55.
+
 ## Analyse des compromis
 
 Le vrai arbitrage n'est pas « quelle option », mais **dans quel ordre**, parce que les options ne
