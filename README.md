@@ -245,7 +245,10 @@ n'as pas touché n'est **pas** persisté — la jambe reste branchée sur le mar
 
 À côté du compagnon, une **troisième colonne** pose les arrêts **dans l'espace** : un disque par
 système traversé, le vaisseau sur l'escale courante, et un corridor violet `⚡` quand le parcours
-change de système. Elle ne reste à côté que si elle y garde une largeur lisible (≈ 460 px) —
+change de système. Les systèmes se lisent **toujours de gauche à droite dans le même ordre — Nyx,
+Pyro, Stanton** — quel que soit le sens du voyage : une carte qu'on doit relire à chaque trajet ne
+se lit pas d'un coup d'œil. Seuls les systèmes **traversés** ont un disque, sans case vide pour les
+autres ; un système qu'UEX publierait en plus se range après les trois connus. Elle ne reste à côté que si elle y garde une largeur lisible (≈ 460 px) —
 en dessous, elle repasse en **bandeau pleine largeur** sur sa propre ligne, ce qui vaut mieux qu'une
 colonne où les libellés d'escale tomberaient sous 5 px.
 Un saut est **routé par les deux passerelles** — on ne change pas de système n'importe où : le

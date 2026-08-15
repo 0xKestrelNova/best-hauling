@@ -1282,7 +1282,36 @@ test("Carte : un saut inter-système dessine deux disques et un corridor", async
   await expect(page.locator("#journeyMap .jm-sys")).toHaveCount(2); // Pyro et Stanton côte à côte
   // `allInnerTexts` rend `undefined` sur du <text> SVG : ces nœuds n'ont pas d'innerText.
   const noms = await page.locator("#journeyMap .jm-sysnom").allTextContents();
-  expect(noms).toEqual(["PYRO", "STANTON"]); // dans l'ordre du parcours
+  expect(noms).toEqual(["PYRO", "STANTON"]); // ordre canonique, cf. #42
+});
+
+test("Carte : le sens du voyage ne retourne PAS la géographie (#42)", async ({ page }) => {
+  // Le test ci-dessus va de Pyro vers Stanton, le sens qui donnait DÉJÀ le bon ordre : il restait
+  // vert avant comme après le correctif. Celui-ci part de Stanton, et c'est lui qui tombait —
+  // la carte rendait alors ["STANTON", "PYRO"], la même géographie en miroir.
+  // On pose le départ à la main plutôt que par un manifeste : depuis New Babbage le jeu de données
+  // n'offre pas toujours de fret rentable, et le test échouerait alors AVANT d'avoir rien prouvé.
+  await page.click("#viewEnroute");
+  // #journeyStart reste inerte tant que le marché n'est pas chargé (garde `enrouteReady`) : sans
+  // cette attente le test échouerait sur un champ mort, bien avant de regarder la carte.
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  // Le libellé est celui de la datalist, au caractère près : « New Babbage » seul n'y existe pas,
+  // UEX y publie deux comptoirs (« MTP … » et « TDD … ») et le champ résout par égalité exacte.
+  await page.fill("#journeyStart", "TDD New Babbage — Stanton");
+  await page.click("#journeyStartBtn");
+  await expect(page.locator("#journeyAddStop")).toBeVisible();
+
+  await page.fill("#journeyAddStop", "Pyro Gateway (Stanton) — Stanton");
+  await page.click("#journeyAddBtn");
+  await page.fill("#journeyAddStop", "Stanton Gateway (Pyro) — Pyro");
+  await page.click("#journeyAddBtn");
+  await page.fill("#journeyAddStop", "Megumi — Pyro");
+  await page.click("#journeyAddBtn");
+
+  await auPlanDeVol(page);
+  await expect(page.locator("#journeyMap .jm-sys")).toHaveCount(2);
+  const noms = await page.locator("#journeyMap .jm-sysnom").allTextContents();
+  expect(noms).toEqual(["PYRO", "STANTON"]); // Pyro reste à gauche, quel que soit le sens
 });
 
 test("Carte : un saut est routé par les passerelles, et chaque jambe porte son sens", async ({ page }) => {
