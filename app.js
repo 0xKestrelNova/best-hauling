@@ -1649,11 +1649,19 @@ function renderDeclaration(force = false) {
            title="D'où tu pars. Ce terminal fixe le prix d'une vente et le classement de « où écouler » — c'est le même que le départ d'« En route »." />
        </div>`
     : "";
+  // Les valeurs tapées sont RELUES avant le repeint et réémises, comme le fait déjà `holdWhere`
+  // juste au-dessus. La garde de focus ne suffisait pas : elle protège tant que le curseur est dans
+  // la carte, mais un geste fait AILLEURS — toucher la soute, changer de vue — repeignait des
+  // champs sans `value` et effaçait la saisie en silence, le formulaire restant ouvert et vide.
+  // C'est la classe de bug que ce dépôt a déjà rencontrée deux fois (#24, et le champ #journeyStart
+  // commenté plus bas) : ici on ne se contente pas de ne pas repeindre, on rend le repeint inoffensif.
+  const saisi = (id) => esc($(id)?.value ?? "");
+  const [nomSaisi, scuSaisi, paidSaisi] = ["holdAddName", "holdAddScu", "holdAddPaid"].map(saisi);
   const corps = declarationOuverte
     ? `<div class="hold-add">
-         <input id="holdAddName" list="commodityList" type="text" autocomplete="off" placeholder="Commodité (nom ou code UEX)" aria-label="Commodité à déclarer" />
-         <input id="holdAddScu" type="number" min="1" step="1" placeholder="SCU" aria-label="SCU à bord" />
-         <input id="holdAddPaid" type="number" min="0" step="1" placeholder="prix payé /SCU" aria-label="Prix payé au SCU"
+         <input id="holdAddName" list="commodityList" type="text" autocomplete="off" value="${nomSaisi}" placeholder="Commodité (nom ou code UEX)" aria-label="Commodité à déclarer" />
+         <input id="holdAddScu" type="number" min="1" step="1" value="${scuSaisi}" placeholder="SCU" aria-label="SCU à bord" />
+         <input id="holdAddPaid" type="number" min="0" step="1" value="${paidSaisi}" placeholder="prix payé /SCU" aria-label="Prix payé au SCU"
            title="Laisse vide pour du butin : minage, salvage, caisse trouvée — un coût réellement nul." />
          <button id="holdAddOk" class="hold-sell-ok" title="Ajouter ce lot à la soute">✓ à bord</button>
          <button id="holdAddNo" class="hold-sell-no" title="Annuler" aria-label="Annuler">✕</button>

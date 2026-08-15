@@ -2616,3 +2616,22 @@ test.describe("version déployée", () => {
   });
 });
 
+
+test("Soute : une déclaration en cours de saisie survit à un geste fait ailleurs (#55)", async ({ page }) => {
+  // La garde de focus de `renderDeclaration` ne protégeait que tant que le curseur restait dans la
+  // carte. Toucher la soute ou changer de vue repeignait des champs sans `value` : le texte tapé
+  // disparaissait en silence, le formulaire restant ouvert et vide. Deux gestes ordinaires.
+  await page.click("#holdAddOpen");
+  await page.fill("#holdAddName", "Titanium");
+  await page.fill("#holdAddScu", "42");
+
+  await page.fill("#cargo", "120");        // un geste ailleurs, qui déclenche un rendu
+  await page.locator("#cargo").blur();
+  await expect(page.locator("#holdAddName")).toHaveValue("Titanium");
+  await expect(page.locator("#holdAddScu")).toHaveValue("42");
+
+  await page.click("#viewLoops");          // et un changement de vue
+  await page.click("#viewRoutes");
+  await expect(page.locator("#holdAddName")).toHaveValue("Titanium");
+  await expect(page.locator("#holdAddScu")).toHaveValue("42");
+});

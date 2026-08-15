@@ -224,6 +224,11 @@ Deux points que l'ADR n'avait pas tranchés, et qui découlent du reste de l'arc
   (`best-hauling-jambes-chargees`, posé par #21/#22) suppose une jambe : un lot qui n'en a pas n'y
   entre jamais, `jambeChargee` reste donc faux et l'annulation d'une jambe (`l.leg !== k`) ne
   l'emporte pas. `detacherLotsDeJambe` et `reindexerRangsJambe` le rendent tel quel.
+
+  *Correction du 2026-08-15 : une première rédaction justifiait l'absence de clé en affirmant que
+  `leg: null` « aurait trompé » le filtre d'annulation. C'est faux, et vérifié — `null !== "0|A|B"`
+  conserve le lot, les quatre chemins se comportent à l'identique. La vraie raison est la cohérence
+  avec `sansEtiquette`, qui **supprime** la clé : un lot détaché de sa jambe n'en a déjà plus.*
 - **Un lot déclaré ne corrige aucun stock.** `✓ chargé` vide le rayon parce qu'on vient d'y acheter ;
   un lot déclaré n'a été pris à aucun point que l'app connaisse — son `from` est vide — et y déduire
   quoi que ce soit serait inventer un achat. C'est la même règle que « on ne persiste que

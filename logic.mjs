@@ -1730,7 +1730,10 @@ export function loadHold(hold, lignes, from, at) {
 //   - AUCUNE clé `leg`. Rien ne l'a chargé, donc aucune jambe ne peut s'en dire responsable :
 //     l'annulation d'une jambe (`l.leg !== k`) ne l'emporte pas, `detacherLotsDeJambe` et
 //     `reindexerRangsJambe` le rendent tel quel, et `migrerChargements` ne lui invente pas
-//     d'entrée au registre. Poser `leg: null` aurait suffi à tromper le premier de ces quatre.
+//     d'entrée au registre. `leg: null` aurait d'ailleurs fait l'affaire pour les quatre — vérifié,
+//     `null !== "0|A|B"` conserve bien le lot. On ne le pose pas pour être cohérent avec
+//     `sansEtiquette`, qui SUPPRIME la clé : un lot détaché de sa jambe n'en a déjà plus, un lot
+//     déclaré ne doit pas s'en distinguer par une clé vide.
 //   - `from` VIDE. Il n'a été pris à aucun rayon que l'app connaisse, et c'est ce qui interdit
 //     toute déduction de stock : les déductions se lisent dans le registre, que ce lot n'atteint
 //     jamais. Déduire ici serait inventer un achat.
