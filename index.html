@@ -77,6 +77,10 @@
              produit, et la placer en tête renuméroterait des raccourcis déjà appris pour un gain
              nul. Révisable par #45, qui refond la hiérarchie du rail dans le même jalon. -->
         <button id="viewPlan" class="vbtn" data-view="plan" aria-label="Plan de vol" title="Plan de vol : le récapitulatif du voyage engagé (raccourci : 7)"><span class="rn">07</span><span class="rl">Plan&nbsp;de&nbsp;vol</span></button>
+        <!-- L'aria-label OUVRE le libellé visible plutôt que de le remplacer (même patron que
+             #share) : « Tournée » y est repris mot pour mot, SC 2.5.3 tient, et le nom accessible
+             dit en plus de quoi il s'agit une fois le rail rétracté. -->
+        <button id="viewTour" class="vbtn" data-view="tour" aria-label="Tournée d'écoulement" title="Tournée d'écoulement : vider la soute en un minimum d'arrêts (raccourci : 8)"><span class="rn">08</span><span class="rl">Tournée</span></button>
       </div>
 
       <!-- Le libellé visible « Partager » OUVRE l'aria-label : sinon le nom accessible ne le
@@ -289,6 +293,27 @@
           <div id="correctionsStation"></div>
           <div id="correctionsFees"></div>
         </div>
+
+        <!-- ===================== TOURNÉE D'ÉCOULEMENT (ADR-007) =====================
+             L'autre question que celle d'« où écouler » : non pas « combien puis-je en tirer »,
+             mais « comment me débarrasser d'une soute que je ne veux plus porter ». La vue a son
+             PROPRE point de départ : stationCourante() rend null sans voyage ni terminal « En
+             route », et une tournée sans origine n'a pas de premier arrêt. -->
+        <section id="tourControls" class="enroute-controls" hidden>
+          <div class="field">
+            <label for="tourFrom">Je suis à</label>
+            <input id="tourFrom" list="stationList" type="text" placeholder="Tape un terminal (ex : Checkmate)" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="tourScope">Portée</label>
+            <select id="tourScope" title="Par défaut la tournée reste dans le système où tu te trouves. L'ouvrir aux autres systèmes fait apparaître le saut comme une ligne de coût visible — c'est le seul palier de distance que les données permettent de tenir.">
+              <option value="">Système courant</option>
+              <option value="all">Tous les systèmes</option>
+            </select>
+          </div>
+          <p class="enroute-hint">Vide ta soute en un <b>minimum d'arrêts</b> — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'inverse de <b>« où écouler »</b>, qui classe par ce que ça rapporte : <b>les deux questions sont différentes</b>, et cette vue-ci répond à « je ne veux plus porter ça ».</p>
+        </section>
+        <div id="tour" class="tour-wrap" hidden></div>
 
         <section id="commoditiesControls" class="enroute-controls" hidden>
           <div class="field">

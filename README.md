@@ -23,7 +23,7 @@ reconstruites/redéployées **quand UEX a réellement changé** — et le site e
 
 ## Fonctionnalités
 
-Sept vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage, profit/heure) :
+Huit vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage, profit/heure) :
 
 | Vue | Ce qu'elle fait |
 |-----|-----------------|
@@ -34,6 +34,7 @@ Sept vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût
 | **Corrections ✎** | Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 | **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
+| **Tournée 📦** | **Vider la soute en un minimum d'arrêts**, l'argent n'arbitrant qu'à nombre d'arrêts égal — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'**inverse** de « où écouler », qui classe par ce que ça rapporte : les deux questions sont différentes, et celle-ci répond à « je ne veux plus porter ça » (le cas d'une sortie butin). La tournée est un **plancher** — un point de vente sur six seulement publie sa capacité — et se recalcule après chaque arrêt réel. La meilleure tournée **à un arrêt de plus** s'affiche à côté, avec son écart chiffré : l'app ne sait pas si tu as le temps ([ADR-007](docs/superpowers/specs/2026-08-15-tournee-ecoulement-adr.md)) |
 
 Autres éléments :
 
@@ -57,7 +58,7 @@ signe et **en rouge**, jamais dans le vert des gains.
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
-- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`7` vues) ; tout ce qui s'active
+- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`8` vues) ; tout ce qui s'active
   au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
   corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
@@ -69,6 +70,11 @@ Tous les filtres ne s'appliquent pas à toutes les vues — comportement **garan
 Le **Plan de vol** n'a pas de colonne : il n'affiche aucun filtre (ADR-004). Les chiffres qu'il
 récapitule restent ceux calculés sous les réglages en cours — c'est précisément pourquoi il les
 énonce en tête, en toutes lettres.
+
+La **Tournée** n'en a pas non plus, mais pour une autre raison : elle ne part d'aucun budget ni
+d'aucune soute à remplir — le fret est déjà à bord. Elle honore en revanche exactement les mêmes
+filtres qu'« où écouler » (avant-postes, commodités légales, fraîcheur, système), plus **sa propre
+portée** : le système courant par défaut, ouvrable aux autres d'un menu.
 
 | Filtre | Trajets | Boucles | En route | Chaîne | Corrections | Commodités |
 |--------|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -391,7 +397,7 @@ Deux gestes, deux sens :
 | **`✓ chargé`** | « c'est payé et à bord » — ce ne sont plus des SCU prévus, ce sont des faits | elle **fige ses SCU** et prend `🔒`. Une correction du stock de départ **postérieure** ne la rétrécit plus |
 
 Une jambe figée continue de suivre les **prix** ; seules ses quantités sont gelées. Tout ce qui est
-calculé **ensuite** — les autres jambes, les sept vues, un arrêt ajouté plus tard — voit le stock tel
+calculé **ensuite** — les autres jambes, les huit vues, un arrêt ajouté plus tard — voit le stock tel
 que tu l'as corrigé, déduction du chargement comprise. `↺ optimal` lève le gel.
 
 Conséquence utile : charger la jambe 1 ne fige plus la jambe 3 qui rachètera la même commodité au
