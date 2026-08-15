@@ -21,6 +21,7 @@ import {
   reindexerRangsJambe, detacherLotsDeJambe,
   soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   encodeJourney, decodeJourney,
+  migrerCorrections, exporterCorrections, exporterEntrepots,
 } from "./logic.mjs";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -174,6 +175,10 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 
 function loadOverrides() {
   try { OVERRIDES = JSON.parse(localStorage.getItem(OV_KEY)) || {}; } catch { OVERRIDES = {}; }
+  // Mise à niveau des corrections déjà posées (logic.mjs) : `ts` devient `base`, et AUCUNE date de
+  // saisie n'est inventée pour les prix d'avant `saisiPrix` — ils s'exportent « date inconnue ».
+  // On n'écrit que s'il y avait vraiment quelque chose à normaliser.
+  if (migrerCorrections(OVERRIDES).migres) saveOverrides();
 }
 function saveOverrides() {
   try { localStorage.setItem(OV_KEY, JSON.stringify(OVERRIDES)); } catch {}
@@ -1177,12 +1182,22 @@ function copyManifest() {
     `Total : ${fmt(scu)}/${fmt(m.cargo)} SCU · profit ${fmtFee(profit, fees)} aUEC · investissement ${fmt(invest)} aUEC` +
       (fees > 0 ? ` · frais d'autoload ≈ ${fmt(fees)} aUEC (estimation)` : ""),
   ].join("\n");
-  const btn = $("copyManifest");
-  navigator.clipboard?.writeText(text).then(() => {
+  copierTexte(text, $("copyManifest"), "⧉ Copier");
+}
+
+// Le SEUL chemin de sortie de l'app, pour les trois boutons de copie (manifeste, entrepôts,
+// corrections). Un fichier téléchargé était l'autre candidat, écarté parce que les deux issues
+// demandaient une liste à ENVOYER et que ce chemin-ci existait déjà, éprouvé par « ⧉ Copier » et
+// par « Partager » (ADR-006 §3). Il reste techniquement possible : contrairement à ce qu'une
+// première version de l'ADR affirmait, la CSP ne l'interdit pas — la mesure qui le prétendait ne
+// s'est pas reproduite en contre-lecture.
+// `libelle` est le texte à remettre après le retour visuel : chaque bouton a le sien.
+function copierTexte(texte, btn, libelle) {
+  navigator.clipboard?.writeText(texte).then(() => {
     if (!btn) return;
     btn.textContent = "✓ Copié";
     btn.classList.add("copied");
-    setTimeout(() => { btn.textContent = "⧉ Copier"; btn.classList.remove("copied"); }, 1500);
+    setTimeout(() => { btn.textContent = libelle; btn.classList.remove("copied"); }, 1500);
   }).catch(() => {});
 }
 
@@ -1527,7 +1542,9 @@ function deposerIci(nom, units, idxFige) {
   const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
   if (idx == null || !MARKET) return;
   const t = MARKET.terminals[idx];
-  const r = storeFromHold(SOUTE, DEPOTS, nom, units, stationLabel(t.name, t.system));
+  // L'heure du dépôt est fournie ICI : `storeFromHold` est pure et ne lit pas d'horloge. Sans elle,
+  // la liste exportée dirait « 170 SCU d'or à Ruin Station » sans dire si c'était hier ou l'an passé.
+  const r = storeFromHold(SOUTE, DEPOTS, nom, units, stationLabel(t.name, t.system), nowSec());
   if (r.hold === SOUTE) return;
   SOUTE = r.hold; DEPOTS = r.entrepots;
   saveSoute(); saveDepots();
@@ -1575,10 +1592,20 @@ function renderEntrepots() {
       </div>`).join("");
     return `<div class="depot-station"><div class="depot-lieu">${esc(name)}${sysBadge(system)} <span class="muted">${fmt(holdScu(lots))} SCU</span></div>${lignes}</div>`;
   }).join("");
+  // Le bouton de sortie vit dans l'en-tête, sur le modèle exact du `⧉ Copier` du manifeste. Il
+  // n'existe donc que quand la carte est visible — inutile de le masquer à part : la carte entière
+  // sort dès qu'il ne dort plus rien nulle part.
   box.innerHTML =
-    `<div class="hold-head"><span class="hold-title">⬓ Entrepôts</span></div>
+    `<div class="hold-head"><span class="hold-title">⬓ Entrepôts</span>
+       <button id="copyDepots" class="copy-btn" title="Copier la liste du fret déposé, dates comprises">⧉ Copier</button></div>
      <div class="depot-stations">${blocs}</div>
      <div class="hold-meta"><b>${fmt(holdScu(tous))}</b> SCU déposés · capital immobilisé <b>${fmt(invest)}</b> aUEC</div>`;
+}
+
+// La liste de ce qui dort en entrepôt, en texte, dans le presse-papiers : elle ne quittait jamais
+// l'app, et il fallait rouvrir le navigateur qui porte le localStorage pour la relire.
+function copierEntrepots() {
+  copierTexte(exporterEntrepots(DEPOTS, nowSec()), $("copyDepots"), "⧉ Copier");
 }
 
 // « Où écouler ce qui reste ? » — le détour manuel par la vue Commodités, en un panneau.
@@ -2920,10 +2947,20 @@ function correctionsIndexHTML() {
       `<b>${g.corrections}</b></span>` +
       `${g.actif ? '<span class="stn-tile-flag">en cours</span>' : ""}</button>`;
   }).join("");
+  // Le bouton d'export précède « Tout réinitialiser » — c'est l'ordre des gestes : on emporte ses
+  // relevés avant de les effacer. Comme la bande, il n'existe que s'il y a quelque chose à sortir.
   return `<div class="corr-list-head">
       <span>◈ ${autres.length ? `${autres.length} autre${autres.length > 1 ? "s" : ""} station${autres.length > 1 ? "s" : ""} · ` : ""}${total} correction${total > 1 ? "s" : ""}</span>
+      <button id="exportCorrections" class="copy-btn" title="Copier toutes les corrections locales, avec leur date de saisie et leur date UEX">⧉ Exporter</button>
       <button id="resetAll" class="reset-ov">Tout réinitialiser</button>
     </div><div class="stn-band">${tuiles}</div>`;
+}
+
+// Les corrections, en JSON daté, dans le presse-papiers. Du JSON et non du texte libre — celui-ci
+// est fait pour être RELU (cf. relireCorrections), et une correction qu'on ne peut pas dater est
+// une correction qu'on réappliquerait aveuglément des semaines plus tard.
+function copierCorrections() {
+  copierTexte(JSON.stringify(exporterCorrections(OVERRIDES, nowSec()), null, 2), $("exportCorrections"), "⧉ Exporter");
 }
 
 // Liste des relevés d'autoload, à côté des corrections locales et sur le même modèle : ils sont de
@@ -3263,6 +3300,8 @@ async function init() {
     }
     if (e.target.closest("#alSave")) { saveStationReading(); return; }
     if (e.target.closest("#resetAllK")) { resetAllReadings(); return; }
+    // Avant « Tout réinitialiser » ici aussi : rien ne doit s'effacer sans qu'on ait pu l'emporter.
+    if (e.target.closest("#exportCorrections")) { copierCorrections(); return; }
     if (e.target.closest("#resetAll")) resetAllOverrides();
   });
   // Validation du relevé d'autoload à la touche Entrée (les deux champs sont dans le même panneau).
@@ -3333,6 +3372,7 @@ async function init() {
   // reprend ce qu'on a laissé ; une reprise partielle se ferait en redéposant. La fonction pure,
   // elle, accepte déjà des SCU : l'UI pourra suivre sans la toucher.
   $("depotsCard").addEventListener("click", (e) => {
+    if (e.target.closest("#copyDepots")) { copierEntrepots(); return; }
     const b = e.target.closest(".depot-take");
     if (b) reprendreIci(b.dataset.station, b.dataset.name, Number(b.dataset.units));
   });
