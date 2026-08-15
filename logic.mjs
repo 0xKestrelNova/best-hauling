@@ -2272,12 +2272,7 @@ export function decodeJourney(str) {
 // dépôt, et une correction périme ici PAR SA DATE — deux façons de l'écrire, c'est deux façons de
 // se tromper en la relisant.
 //
-// Les deux exports partent au PRESSE-PAPIERS, jamais dans un fichier, et c'est une contrainte
-// mesurée : la CSP d'index.html pose `default-src 'self'` sans `blob:`, et sous elle un
-// `<a download href="blob:…">` ne déclenche RIEN — pas d'erreur console, pas de téléchargement,
-// juste un bouton qui ne fait rien. La même page servie sans la CSP télécharge normalement.
-// Relâcher la politique pour un bouton de copie serait la payer très cher ; scripts/csp.test.mjs
-// la verrouille, et à raison.
+// Le format seulement : où va le texte ne regarde pas ce module. Voir ADR-006 §3.
 export const FORMAT_EXPORT = 1;
 
 // Une date, écrite pour être relue sur une autre machine, dans un autre fuseau, des mois plus tard.

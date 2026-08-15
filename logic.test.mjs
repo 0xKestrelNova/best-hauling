@@ -761,7 +761,7 @@ test("effFromStore : SUPPRIME du store la correction périmée par un relevé pl
   assert.equal("k" in store, false);   // effet de bord : périmée -> supprimée
 });
 
-test("setInStore : un volume enregistre l'heure de saisie, un prix non", () => {
+test("setInStore : un volume est daté sous `pris`, un prix sous `saisiPrix` — jamais l'un sous l'autre", () => {
   const store = {};
   setInStore(store, "A|T|buy", "vol", 12, 111, MAINTENANT);
   assert.equal(store["A|T|buy"].pris, MAINTENANT);

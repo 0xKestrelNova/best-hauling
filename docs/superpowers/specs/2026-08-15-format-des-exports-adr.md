@@ -48,24 +48,24 @@ Sans numéro de format, la première évolution casse tous les fichiers déjà �
 entrepôts, qui est du texte, porte le même en-tête sur sa première ligne :
 `# Best Hauling — entrepôts · format v1 · émis 2026-08-15T09:12:00Z`.
 
-### 3. Presse-papiers, jamais de fichier téléchargé — et c'est une contrainte, pas un goût
+### 3. Presse-papiers, jamais de fichier téléchargé
 
-`index.html` pose `default-src 'self'` **sans `blob:`**, verrouillé par `scripts/csp.test.mjs`.
+Parce que c'est ce que les deux issues demandent — #46 veut « exporter sous forme de liste » pour
+l'envoyer, #47 veut emporter ses corrections — et parce que `copierTexte` (app.js) existe déjà,
+éprouvé par le `⧉ Copier` du manifeste et par `Partager`. Les trois boutons passent donc par un
+unique chemin.
 
-Mesuré, sous Chromium, sur la page réellement servie :
+**Correction du 2026-08-15.** Une première version de cet ADR justifiait ce choix par une contrainte
+de CSP, tableau de mesure à l'appui : sous `default-src 'self'` sans `blob:`, un
+`<a download href="blob:…">` aurait été « mort en silence ». **Cette mesure ne se reproduit pas.**
+Refaite en contre-lecture, dans les mêmes conditions — Chromium Playwright, page servie par
+`scripts/serve.mjs`, vrai clic souris — avec un témoin prouvant que la CSP est bien active (elle
+bloque un fetch cross-origine et le dit en console), **le fichier se télécharge**, exactement comme
+sur une page sans CSP.
 
-| page | `URL.createObjectURL` | clic sur `<a download href="blob:…">` | erreur console |
-|---|---|---|---|
-| `index.html` (avec la CSP) | rend bien un `blob:` | **aucun téléchargement** | **aucune** |
-| même origine, page sans CSP | rend bien un `blob:` | `essai.txt` téléchargé | aucune |
-
-Le bouton serait donc **mort en silence** : pas d'exception, pas de message, rien à déboguer pour
-l'utilisateur. Relâcher `default-src` pour un bouton de copie paierait la politique bien trop cher —
-c'est le seul vecteur de sécurité disponible sous GitHub Pages, et `scripts/csp.test.mjs` la
-verrouille à raison.
-
-Les trois boutons de copie passent donc par un unique chemin, `copierTexte` (app.js), déjà éprouvé
-par `⧉ Copier` du manifeste et par `Partager`.
+Le choix retenu ne change pas : il était le bon pour la raison ci-dessus. Mais un fichier téléchargé
+reste **techniquement possible**, et si le besoin s'en présente ce sera une décision à prendre, pas
+une porte fermée par la politique de sécurité. La CSP n'a rien à voir avec cette question.
 
 ### 4. Texte pour les entrepôts, JSON pour les corrections
 

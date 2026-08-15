@@ -1186,10 +1186,11 @@ function copyManifest() {
 }
 
 // Le SEUL chemin de sortie de l'app, pour les trois boutons de copie (manifeste, entrepôts,
-// corrections). Un fichier téléchargé était l'autre candidat : sous la CSP d'index.html
-// (`default-src 'self'`, sans `blob:`), un `<a download href="blob:…">` ne déclenche RIEN — pas
-// d'erreur console, juste un bouton mort. Mesuré : la même page servie sans la CSP télécharge.
-// Relâcher la politique pour un bouton de copie la paierait bien trop cher (cf. ADR-006).
+// corrections). Un fichier téléchargé était l'autre candidat, écarté parce que les deux issues
+// demandaient une liste à ENVOYER et que ce chemin-ci existait déjà, éprouvé par « ⧉ Copier » et
+// par « Partager » (ADR-006 §3). Il reste techniquement possible : contrairement à ce qu'une
+// première version de l'ADR affirmait, la CSP ne l'interdit pas — la mesure qui le prétendait ne
+// s'est pas reproduite en contre-lecture.
 // `libelle` est le texte à remettre après le retour visuel : chaque bouton a le sien.
 function copierTexte(texte, btn, libelle) {
   navigator.clipboard?.writeText(texte).then(() => {
