@@ -3733,25 +3733,36 @@ test("chaîne : sur les 4 355 arcs réels, aucun ne rapporte moins qu'avant et a
 });
 
 test("chaîne : garde de performance — le manifeste se compose par ARC, jamais dans le faisceau", () => {
-  // Composer un manifeste par arc coûte ≈ 6 ms sur l'instantané ; l'appeler depuis les ≈ 33 000
-  // expansions du faisceau, ≈ 1 s — un gel visible sous le clic. Les plafonds sont donc LARGES
-  // devant la mesure locale (8,5 ms pour l'adjacence, 8,2 ms pour 4 sauts, contre 2,4 et 9,9 avant
-  // #56) et étroits devant la version naïve : ils attrapent le facteur 100, pas les 30 % d'écart
-  // d'une machine à l'autre. Ne pas les resserrer sur la mesure d'un poste : la CI est plus lente.
-  const t0 = performance.now();
+  // Composer un manifeste par arc coûte ≈ 6 ms sur l'instantané ; le composer depuis les ≈ 33 000
+  // expansions du faisceau, ≈ 1 s — un gel visible sous le clic.
+  // La garde est un RAPPORT, mesuré dans le même processus, et pas un plafond en millisecondes : le
+  // runner de la CI est ~20× plus lent que le poste où ceci s'écrit (190 ms contre 8 pour 4 sauts),
+  // si bien qu'un plafond calé sur l'un est soit rouge sur l'autre, soit trop lâche pour rien voir.
+  // Le meilleur de deux tours, parce qu'un runner partagé se fait désordonnancer, jamais accélérer.
+  const meilleurDe = (fn, n = 2) => {
+    let min = Infinity;
+    for (let i = 0; i < n; i++) { const t = performance.now(); fn(); min = Math.min(min, performance.now() - t); }
+    return min;
+  };
+  // L'adjacence contre elle-même sans soute bornée : même balayage du marché, zéro manifeste à
+  // composer. Mesuré ×4 à ×11 selon les tours ; au-delà de ×20, `manifestsFrom` n'est plus appelé
+  // une fois par ORIGINE mais une fois par arc (ce serait ×40) — l'erreur que ce rapport attrape.
+  const tSans = meilleurDe(() => buildChainAdjacency(REAL, { ...F_REEL, useCargo: false }, idResolve, fraisReels));
+  const tAvec = meilleurDe(() => buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels));
+  assert.ok(tAvec < 20 * tSans, `adjacence : ${tAvec.toFixed(1)} ms avec manifestes contre ${tSans.toFixed(1)} ms sans`);
+
+  // Le faisceau sur chargements pré-calculés contre le MÊME faisceau sur la même adjacence privée de
+  // ses manifestes — le chiffrage mono, O(1) par expansion, celui d'avant #56. Mesuré ×0,5 à ×0,8 :
+  // lire `leg.net` coûte moins que recalculer. Composer le manifeste dans la boucle donnerait ×100.
   const adj = buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels);
-  const tAdjacence = performance.now() - t0;
-  // Les origines les plus chargées du graphe, choisies sur leur degré SORTANT — c'est lui qui décide
-  // du nombre d'expansions. Prendre « la première » désignerait une ligne de données, pas un pire cas.
-  const lourdes = [...adj.keys()].sort((a, b) => adj.get(b).length - adj.get(a).length).slice(0, 3);
-  let tChaine = 0;
-  for (const u of lourdes) {
-    const t = performance.now();
-    assert.ok(bestChain(adj, u, 4, { cargo: 96 }), "une origine à fort degré doit rendre une chaîne");
-    tChaine = Math.max(tChaine, performance.now() - t);
-  }
-  assert.ok(tAdjacence < 100, `buildChainAdjacency : ${tAdjacence.toFixed(1)} ms`);
-  assert.ok(tChaine < 100, `bestChain 4 sauts : ${tChaine.toFixed(1)} ms`);
+  const mono = new Map([...adj].map(([u, legs]) => [u, legs.map((l) => ({ ...l, lines: undefined, net: undefined }))]));
+  // L'origine la plus chargée du graphe, choisie sur son degré SORTANT — c'est lui qui décide du
+  // nombre d'expansions. Prendre « la première » désignerait une ligne de données, pas un pire cas.
+  const u = [...adj.keys()].sort((a, b) => adj.get(b).length - adj.get(a).length)[0];
+  const quatreSauts = (graphe) => meilleurDe(() => assert.ok(bestChain(graphe, u, 4, { cargo: 96 }), "une origine à fort degré doit rendre une chaîne"), 1);
+  quatreSauts(mono); quatreSauts(adj);              // chauffe : on mesure le code, pas la compilation
+  const tMono = quatreSauts(mono), tManifeste = quatreSauts(adj);
+  assert.ok(tManifeste < 3 * tMono, `4 sauts : ${tManifeste.toFixed(1)} ms sur chargements pré-calculés contre ${tMono.toFixed(1)} ms en mono`);
 });
 
 // Chaîne : deux itinéraires A->…->D aux profits BRUTS proches, dont le mieux payé transite par une
