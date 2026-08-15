@@ -30,6 +30,7 @@ import { peindre } from "./pont.js";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
+import { vueGrilleCommodites, aideBoard } from "./vues/commodites.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -3419,30 +3420,7 @@ function marginTier(m) {
 // Une tuile du board : code UEX + valeur compacte (K/M), colorée par palier.
 // En Marché la valeur est la marge (heatmap linéaire) ; en Butin le prix de revente
 // (heatmap par rang, cf. valueTiers — les prix s'étalent sur cinq ordres de grandeur).
-function commodityTileHTML(c) {
-  const loot = commBoard === "loot";
-  const val = loot ? c.bestSell : c.margin;
-  const tier = loot ? commTiers.get(c.name) || "t-none" : marginTier(c.margin);
-  const carried = commCarried.has(c.name);
-  const cls = [
-    "comm-tile", tier,
-    c.name === commSelected ? "selected" : "",
-    c.illegal ? "illegal" : "",
-    carried ? "carried" : "",
-    loot && c.sellOnly ? "sell-only" : "",
-  ].filter(Boolean).join(" ");
-  const title = loot
-    ? `${c.name}${c.illegal ? " (illégal)" : ""} — revente max ${fmt(c.bestSell)} aUEC/SCU · ${c.nSell} point(s) de vente${c.sellOnly ? " · introuvable à l'achat — butin / minage" : ""}`
-    : `${c.name}${c.illegal ? " (illégal)" : ""}${carried ? " — transportée dans ton voyage" : ""} — marge max ${fmt(c.margin)} aUEC/SCU · ${c.nBuy} achat(s) / ${c.nSell} vente(s)`;
-  // Le code ne sert d'étiquette que s'il identifie SA commodité ; sinon on retombe sur le nom
-  // (tronqué par CSS), seul moyen de distinguer deux tuiles qui partagent un code UEX.
-  const label = c.code && !commDupCodes.has(c.code) ? c.code : c.name;
-  return `<button class="${cls}" data-name="${esc(c.name)}" title="${esc(title)}">
-      <span class="tile-code">${carried ? '<span class="tile-carried" title="Dans ton voyage">◆</span>' : ""}${esc(label)}</span>
-      <span class="tile-val">${val == null ? "—" : compactValue(val)}</span>
-    </button>`;
-}
-
+// `commodityTileHTML` a été remplacé par vues/commodites.tsx.
 // Mode Butin : la réponse directe à « ça vaut combien ». `p.sells` est déjà trié par prix
 // décroissant, le meilleur point est donc en tête. Prix au SCU seulement — le joueur multiplie
 // par ce qu'il a trouvé, on ne suppose pas une soute pleine.
@@ -3500,7 +3478,7 @@ function syncCommBoardUI() {
   document.querySelectorAll("#commBoardModes button").forEach((b) => b.classList.toggle("active", b.dataset.board === commBoard));
   const first = document.querySelector('#commSortModes button[data-sort="margin"]');
   if (first) first.textContent = loot ? "Revente" : "Marge";
-  $("commHint").innerHTML = loot ? COMM_HINT_LOOT : COMM_HINT_MARKET;
+  peindre($("commHint"), aideBoard(loot));
 }
 
 function setCommBoard(board) {
@@ -3509,6 +3487,24 @@ function setCommBoard(board) {
   commBoard = board;
   renderCommodities(); // la sélection courante est revalidée par le rendu (elle peut disparaître)
   saveState();
+}
+
+// La grille, peinte à part : la sélection d'une tuile la repeint SANS tout recalculer. Avant React,
+// la délégation basculait la classe `selected` à la main sur les nœuds — une mutation qu'un arbre
+// React ne voit pas, et qu'il écraserait au rendu suivant sans savoir qu'elle avait eu lieu.
+function peindreGrilleCommodites() {
+  peindre($("commGrid"), vueGrilleCommodites({
+    lignes: shownCommodities,
+    butin: commBoard === "loot",
+    selection: commSelected,
+    transportees: commCarried,
+    codesAmbigus: commDupCodes,
+    // La heatmap est calculée par app.js : celle du Marché lit une globale (commMaxMargin), celle
+    // du Butin vient de logic.ts (valeurTiers, par rang). L'îlot ne connaît ni l'une ni l'autre.
+    palier: (c) => (commBoard === "loot" ? commTiers.get(c.name) || "t-none" : marginTier(c.margin)),
+    valeurCompacte: compactValue,
+    fmt,
+  }));
 }
 
 function renderCommodities() {
@@ -3535,7 +3531,7 @@ function renderCommodities() {
   // Sélection : garde la commodité choisie si toujours visible, sinon prend la 1re.
   if (commSelected && !rows.some((r) => r.name === commSelected)) commSelected = null;
   if (!commSelected && rows.length) commSelected = rows[0].name;
-  $("commGrid").innerHTML = rows.map(commodityTileHTML).join("");
+  peindreGrilleCommodites();
   // Bouton de mode de tri actif.
   document.querySelectorAll("#commSortModes button").forEach((b) => b.classList.toggle("active", b.dataset.sort === commMode));
   syncCommBoardUI();
@@ -3613,7 +3609,7 @@ async function init() {
     const tile = e.target.closest(".comm-tile");
     if (!tile) return;
     commSelected = tile.dataset.name;
-    document.querySelectorAll("#commGrid .comm-tile").forEach((t) => t.classList.toggle("selected", t.dataset.name === commSelected));
+    peindreGrilleCommodites();
     paintCommodityDetail();
     saveState();
   });
