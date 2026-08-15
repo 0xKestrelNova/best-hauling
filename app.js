@@ -23,6 +23,11 @@ import {
   encodeJourney, decodeJourney,
   migrerCorrections, exporterCorrections, exporterEntrepots,
 } from "./logic.ts";
+// Le premier îlot React (ADR-008, #96). `peindre` remplace `innerHTML` sur le conteneur de la
+// Tournée, et RIEN d'autre ne change : app.js reste le seul écrivain de l'état, refresh() reste
+// l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
+import { peindre } from "./pont.js";
+import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
 // `maxBox` = plafond de caisse du terminal de CHARGEMENT, quand on le connaît : c'est une propriété
@@ -2536,20 +2541,17 @@ function renderTour() {
   const box = $("tour");
   if (!box) return;
   if (!SOUTE.length) {
-    box.innerHTML = `<div class="tour-vide"><p class="muted">Ta soute est vide — il n'y a rien à écouler.
-      Déclare ce que tu transportes avec <b>« + déclarer ce que j'ai à bord »</b> depuis une vue de recherche,
-      ou charge le manifeste d'une jambe avec <b>« ✓ chargé »</b>.</p></div>`;
+    peindre(box, messageSouteVide());
     return;
   }
   // Le graphe d'échange porte les débouchés. On passe `refresh` et non `renderTour` : c'est la règle
   // de withMarket — le fetch dure, et l'utilisateur peut avoir changé de vue entre-temps.
-  if (!MARKET) { withMarket(refresh); box.innerHTML = '<p class="muted tour-vide">Chargement du marché…</p>'; return; }
+  if (!MARKET) { withMarket(refresh); peindre(box, messageChargement()); return; }
   // Le champ de la vue prime sur la position du voyage : on peut vouloir simuler depuis ailleurs.
   const saisi = $("tourFrom").value.trim();
   const ici = saisi ? resolveStationLabel(saisi) : stationCourante();
   if (ici == null) {
-    box.innerHTML = `<div class="tour-vide"><p class="muted">Dis d'abord <b>où tu es</b> : une tournée part d'un terminal.
-      Le champ <b>Je suis à</b>, juste au-dessus, l'attend.</p></div>`;
+    peindre(box, messageOuEsTu());
     return;
   }
   const f = readFilters();
@@ -2559,7 +2561,7 @@ function renderTour() {
   // sur 114). L'ouvrir est un geste explicite, et le saut apparaît alors comme une ligne de coût.
   const ft = { ...f, sysFilter: toutSysteme ? f.sysFilter : systeme };
   const { tournee, alternative } = tourneesEcoulement(MARKET, SOUTE, ici, ft, effVals, feeResolver(f));
-  box.innerHTML = tourHTML(tournee, alternative, systeme, toutSysteme);
+  peindre(box, vueTournee({ tournee, alternative, systeme, toutSysteme, fmt }));
 }
 
 // ---------- Plan de vol : la vue de conclusion (ADR-004) ----------

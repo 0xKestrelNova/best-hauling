@@ -15,8 +15,24 @@ import { join, sep } from "node:path";
 // Un plafond qu'on relève sciemment dans une PR est une décision. Une coquille qui grossit sans que
 // personne ne le voie n'en est pas une. Ce test transforme la seconde en la première.
 
-const PLAFOND_OCTETS = 420_000;  // mesuré à 392 707 le 2026-08-15 (thème posé, avant Tailwind)
-const PLAFOND_ENTREES = 24;      // mesuré à 20
+// RELEVÉ LE 2026-08-15, et c'est une décision, pas une dérive — c'est très exactement ce que le
+// message d'échec ci-dessous réclamait.
+//
+//   avant React   394 683 o  (plafond 420 000)
+//   après React   586 751 o  → +192 068 o, dont 334 404 o de JS au total
+//
+// Ce que ça coûte VRAIMENT au visiteur : 119 596 o de JS+CSS gzippés sur le réseau. Le poste
+// dominant de la coquille reste les polices. Le coût est payé UNE fois — le service worker
+// précache atomiquement, puis sert depuis le cache.
+//
+// Pourquoi ne pas découper le bundle pour n'apporter React qu'aux vues migrées : le plugin de
+// précache ramasse TOUS les fragments émis, donc le visiteur télécharge l'ensemble de toute façon,
+// et chaque fragment de plus est une URL supplémentaire qu'un seul 404 suffirait à faire rejeter
+// en bloc. Le découpage se rediscutera quand la migration sera finie et `app.js` retiré.
+//
+// Le plafond garde sa marge : toute hausse ULTÉRIEURE redevient une décision à écrire.
+const PLAFOND_OCTETS = 620_000;  // mesuré à 586 751 le 2026-08-15 (React 19 + première vue migrée)
+const PLAFOND_ENTREES = 24;      // mesuré à 20 — inchangé, React n'ajoute aucun fragment
 
 const dist = join(process.cwd(), "dist");
 

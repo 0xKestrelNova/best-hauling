@@ -22,6 +22,9 @@
   "devDependencies": {
     "@playwright/test": "^1.48.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.1"
@@ -29,5 +32,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/0xkestrelnova/best-hauling.git"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }
