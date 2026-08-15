@@ -28,6 +28,8 @@ import {
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { peindre } from "./pont.js";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
+import { vueBoucles } from "./vues/boucles.tsx";
+import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
 // `maxBox` = plafond de caisse du terminal de CHARGEMENT, quand on le connaît : c'est une propriété
@@ -98,15 +100,9 @@ function outpostTag(isOutpost) {
   return isOutpost ? ' <span class="outpost" title="Avant-poste : élévateur de fret parfois en panne">⚠ avant-poste</span>' : "";
 }
 
-// Icône emoji par catégorie de commodité (repère visuel).
-const KIND_ICON = {
-  metal: "🔩", alloy: "⛓️", mineral: "💎", raw: "⛏️", nonmetal: "🪨",
-  gas: "💨", halogen: "⚗️", fuel: "⛽",
-  agricultural: "🌾", food: "🍎", natural: "🌿", organic: "🧬",
-  drug: "☠️", vice: "🍸", medical: "⚕️",
-  scrap: "♻️", waste: "🗑️", manmade: "⚙️", explosive: "💥",
-  temporary: "⏳", other: "📦",
-};
+// Icône emoji par catégorie de commodité (repère visuel). La table vit désormais dans
+// vues/communs.tsx, importée en tête : une seule source, sans quoi les deux copies divergeraient
+// sans qu'aucun test ne le voie.
 function commodityIcon(kind) {
   const k = kind || "other";
   const emoji = KIND_ICON[k] || KIND_ICON.other;
@@ -650,37 +646,16 @@ function renderLoops() {
   }
   shownLoops = rows;
 
-  $("loopRows").innerHTML = rows
-    .map((l, i) => {
-      // Quatre opérations par boucle : on charge et on décharge à chacun des deux bouts.
-      const fc = feeCell(l.feeInfo, l.fees, () => `${fmt(l.unitsOut)} + ${fmt(l.unitsBack)} SCU, 4 opérations (charge et décharge à chaque bout)`, l.units > 0);
-      return `
-      <tr data-row="${i}"${l._fromHere ? ' class="from-here"' : ""}>
-        <td class="loc loop-cell">
-          <button class="journey-pick" data-row="${i}" title="Ajouter cette boucle au voyage" aria-label="Ajouter au voyage">▶</button>
-          <div class="loop-ends">
-            <div class="loop-end"><span class="term-name">${esc(l.a.terminal)}</span>${sysBadge(l.a.system)}${outpostTag(l.a.outpost)}</div>
-            <div class="loop-mid"><span class="loop-arrow">⇄</span>${l.cross ? '<span class="cross">⚡ inter-système</span>' : ""}</div>
-            <div class="loop-end"><span class="term-name">${esc(l.b.terminal)}</span>${sysBadge(l.b.system)}${outpostTag(l.b.outpost)}</div>
-            <div class="loc-fresh">${freshChip(l.out.updated && l.back.updated ? Math.min(l.out.updated, l.back.updated) : l.out.updated || l.back.updated || 0)}</div>
-          </div>
-        </td>
-        <td>
-          <div class="commodity-cell">${commodityIcon(l.out.kind)}<span>${esc(l.out.commodity)}${illegalTag(l.out.illegal)}</span></div>
-          <div class="loc-sub">${fmt(l.out.buyPrice)} → ${fmt(l.out.sellPrice)} · marge ${fmt(l.out.margin)}</div>
-        </td>
-        <td>
-          <div class="commodity-cell">${commodityIcon(l.back.kind)}<span>${esc(l.back.commodity)}${illegalTag(l.back.illegal)}</span></div>
-          <div class="loc-sub">${fmt(l.back.buyPrice)} → ${fmt(l.back.sellPrice)} · marge ${fmt(l.back.margin)}</div>
-        </td>
-        <td>${fiabiliteCell(l.fiabilite, l.age, l.partVolume)}</td>
-        <td class="num">${fmt(l.loopMargin)}</td>
-        <td class="num">${l.units == null ? "—" : fmt(l.unitsOut) + " + " + fmt(l.unitsBack)}</td>
-        <td class="num profit"${fc.attr}>${fmtFee(l.profit, l.fees)}${fc.mark}</td>
-        <td class="num profit" title="${withFeeText(`Estimation ${Math.round(l.minutes)} min/boucle`, fc)}">${fmtFee(l.profitHour, l.fees)}</td>
-      </tr>`;
-    })
-    .join("");
+  // Le <tbody> passe à React ; le <thead> et ses `th[data-sort-loop]` restent dans index.html,
+  // câblés par setupLoopSort. `data-row` reproduit le rang dans `shownLoops`, que la délégation
+  // posée sur document lit au clic sur `.journey-pick` — c'est un contrat, pas un détail.
+  peindre($("loopRows"), vueBoucles({
+    lignes: rows,
+    fmt,
+    celluleFrais: (l) => feeCell(l.feeInfo, l.fees, () => `${fmt(l.unitsOut)} + ${fmt(l.unitsBack)} SCU, 4 opérations (charge et décharge à chaque bout)`, l.units > 0),
+    fmtFee,
+    avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
+  }));
 
   $("empty").hidden = rows.length > 0;
   notifySuperseded();
