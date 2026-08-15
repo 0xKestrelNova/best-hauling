@@ -17,7 +17,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
-  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
+  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
   refusActif, migrerRefus, DUREE_VOL,
   refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -1978,6 +1978,54 @@ test("loadHold : recharger la même commodité crée un SECOND lot, sans fondre 
   assert.equal(g[0].paidMoyen, 1200); // affichage seulement — les ventes consomment lot par lot
 });
 
+// ---------- La DEUXIÈME entrée de la soute : déclarer « j'ai ça à bord » (#55) ----------
+// Le repli de l'option D d'ADR-002 : une cargaison que l'app n'a PAS calculée — butin ramassé,
+// vaisseau rangé plein, achat fait hors du site.
+test("declarerLot : la forme exacte d'un lot, mais sans jambe ni terminal d'achat", () => {
+  const h = declarerLot([], { name: "Titanium", units: 2200, paid: 1000 }, 42);
+  assert.equal(h.length, 1);
+  assert.deepEqual(h[0], { name: "Titanium", units: 2200, paid: 1000, from: "", at: 42 });
+  // LE contrat : rien ne l'a chargé, donc aucune jambe ne doit pouvoir s'en dire responsable.
+  assert.equal("leg" in h[0], false);
+  // `from` vide : il n'a été pris à AUCUN rayon, et c'est ce qui interdit toute déduction de stock.
+  assert.equal(h[0].from, "");
+});
+
+test("declarerLot : prix omis = butin, donc capital engagé nul", () => {
+  const h = declarerLot([], { name: "Titanium", units: 2200 }, 1);
+  assert.equal(h[0].paid, 0);
+  const g = holdByCommodity(h);
+  assert.equal(g[0].invest, 0);   // du butin n'a rien coûté — tout l'encaissement sera du profit
+  assert.equal(g[0].paidMoyen, 0);
+});
+
+test("declarerLot : un lot déclaré et un lot chargé fusionnent, à la moyenne PONDÉRÉE", () => {
+  let h = loadHold([], [ligne(100, 1000, 1400, { name: "Titanium" })], "Megumi", 1);
+  h = declarerLot(h, { name: "Titanium", units: 300, paid: 200 }, 2);
+  const g = holdByCommodity(h);
+  assert.equal(g.length, 1);                                 // une seule ligne à l'écran
+  assert.equal(g[0].lots.length, 2);                         // deux lots dessous, prix distincts
+  assert.equal(g[0].units, 400);
+  assert.equal(g[0].invest, 100 * 1000 + 300 * 200);
+  assert.equal(g[0].paidMoyen, 400);
+  assert.equal(holdScu(h), 400);                             // la place libre reste juste
+  assert.equal(freeCargo(h, 1000), 600);
+});
+
+test("declarerLot : sans nom ou sans quantité, la soute ne bouge pas (identité)", () => {
+  const h = [{ name: "Gold", units: 10, paid: 5, from: "", at: 1 }];
+  assert.equal(declarerLot(h, { name: "   ", units: 10 }, 1), h);
+  assert.equal(declarerLot(h, { name: "Gold", units: 0 }, 1), h);
+  assert.equal(declarerLot(h, { name: "Gold", units: -5 }, 1), h);
+  assert.equal(declarerLot(h), h); // l'appelant peut rendre la main sur cette égalité, comme storeFromHold
+});
+
+test("declarerLot : ni SCU fractionnaires, ni prix négatif", () => {
+  const h = declarerLot([], { name: "Gold", units: 12.7, paid: -50 }, 1);
+  assert.equal(h[0].units, 12);
+  assert.equal(h[0].paid, 0); // un achat ne rapporte pas d'argent : le pire cas est le coût nul
+});
+
 test("sellFromHold : FIFO — le lot le plus ancien part en premier", () => {
   let h = loadHold([], [ligne(100, 1000, 1400)], "A", 1);
   h = loadHold(h, [ligne(100, 1400, 1800)], "B", 2);
@@ -2827,6 +2875,25 @@ test("detacherLotsDeJambe : effacer le voyage délie les lots sans les débarque
   assert.equal(r.length, 2);
   assert.equal("leg" in r[0], false);
   assert.equal(r[0].units, 100); // le fret payé survit à l'effacement du parcours (ADR-002)
+});
+
+test("declarerLot : un lot sans jambe TRAVERSE la comptabilité de jambe sans y entrer (#21, #22)", () => {
+  // Poser une catégorie de fret sans `leg` sur le terrain que #21/#22 viennent de réparer : chacun
+  // des quatre chemins qui manipulent une étiquette de jambe doit le laisser strictement intact.
+  const h = declarerLot([lotDe("0|A|B")], { name: "Titanium", units: 50 }, 9);
+  const manuel = h[1];
+
+  // 1. Annuler la jambe (app.js : `SOUTE.filter((l) => l.leg !== k)`) n'emporte que SES lots.
+  assert.deepEqual(h.filter((l) => l.leg !== "0|A|B"), [manuel]);
+  // 2. Effacer le parcours : rien à délier, l'objet ne bouge pas.
+  assert.equal(detacherLotsDeJambe(h)[1], manuel);
+  // 3. Renuméroter les jambes : idem, il n'a pas de rang à décaler.
+  const r = reindexerRangsJambe({ lots: h }, removeJourneyStop(parcours(["A", "B", "C"], 0), 0));
+  assert.equal(r.lots[1], manuel);
+  // 4. La migration du registre ne lui invente aucune entrée — donc aucune jambe ne se dira chargée.
+  assert.deepEqual(Object.keys(migrerChargements({}, h).chargements), ["0|A|B"]);
+  // Et il ne pèse sur AUCUN rayon : le registre est la seule source des déductions de stock.
+  assert.deepEqual(soldeDuPoint(migrerChargements({}, h).chargements, "Titanium", ""), { ref: null, pris: 0 });
 });
 
 // ---------- Le registre des chargements : quelle jambe a pris quoi, et où (#21, #22) ----------

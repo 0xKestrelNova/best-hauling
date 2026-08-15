@@ -252,6 +252,28 @@ Le bouton **`✓ chargé`** sur une jambe dit à l'app « j'ai payé ce manifest
 en prend l'instantané **au prix qu'elle venait d'afficher** — donc sans rien ressaisir. Le panneau
 **Soute** liste alors ce que tu transportes, avec le capital engagé. Re-cliquer annule.
 
+**Deux entrées, pas une.** `✓ chargé` suppose un voyage, une jambe et un terminal qui vend la
+commodité : rien n'y rentre du butin ramassé au sol, d'un vaisseau rangé plein la semaine dernière,
+ni d'une cargaison achetée hors du site. Le bouton **`+ déclarer ce que j'ai à bord`** — présent
+dans **les six vues**, y compris soute vide — ouvre trois champs : la commodité (nom ou code UEX),
+les SCU, et le **prix payé au SCU**. Ce dernier est facultatif : laissé vide, c'est du **butin** au
+coût nul, et la ligne porte alors l'étiquette `butin`, parce que ce zéro fait compter *tout*
+l'encaissement comme profit dans « où écouler ».
+
+Un lot déclaré se comporte ensuite comme n'importe quel autre : il occupe la soute, se vend, se
+dépose, se retire par son ✕, et le manifeste ne remplit que la place qui reste. Deux choses le
+distinguent, et ce sont elles le contrat :
+
+- **il n'appartient à aucune jambe** — aucun `✓ chargé` ne se déclenche pour lui, annuler un
+  chargement ne l'emporte pas, effacer le voyage ne le touche pas ;
+- **il ne vide aucun rayon** — `✓ chargé` déduit le stock de la station parce qu'on vient d'y
+  acheter ; un lot déclaré n'a été pris nulle part que l'app connaisse, et y déduire quoi que ce
+  soit serait inventer un achat.
+
+**Sans voyage, dis où tu es.** Vendre et classer « où écouler » partent d'un terminal. Le champ
+**◈ Je suis à**, sous la soute, le pose — c'est le **même** que le terminal de départ d'« En route »,
+pas une seconde position qui divergerait de la première.
+
 Pourquoi ça compte : jusque-là, une commodité ajoutée depuis un terminal qui ne la vend pas était
 classée **butin**, donc à **coût nul**. Sur 2 200 SCU achetés 1 000 et revendus 1 400, le profit
 annoncé était de 3 038 000 aUEC au lieu de 868 000 — **250 % de surestimation**, et le classement

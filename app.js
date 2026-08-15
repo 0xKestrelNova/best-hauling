@@ -13,7 +13,7 @@ import {
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
-  loadHold, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
+  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
@@ -1568,8 +1568,14 @@ function renderEntrepots() {
 // « Où écouler ce qui reste ? » — le détour manuel par la vue Commodités, en un panneau.
 let ecoulerOuvert = false;
 function ecoulerHTML() {
+  if (!ecoulerOuvert || !MARKET) return "";
   const idx = stationCourante();
-  if (!ecoulerOuvert || idx == null || !MARKET) return "";
+  // Une soute DÉCLARÉE peut exister sans le moindre voyage : le panneau n'a alors pas de point de
+  // départ. Rendre "" laissait le clic sans effet visible — on dit ce qui manque, et où le saisir.
+  if (idx == null) {
+    return `<div class="hold-ecouler"><p class="muted">Dis d'abord <b>où tu es</b> : le classement part d'un terminal.
+      Le champ <b>◈ Je suis à</b>, juste dessous, l'attend.</p></div>`;
+  }
   const f = readFilters();
   const dest = offloadPlan(MARKET, SOUTE, idx, f, effVals, feeResolver(f), 5);
   if (!dest.length) {
@@ -1595,6 +1601,94 @@ function ecoulerHTML() {
   return `<div class="hold-ecouler"><div class="ec-head">Où écouler — classé par ce que ça rapporte, prix d'achat déduit</div>${lignes}</div>`;
 }
 
+// ---------- Déclarer « j'ai ça à bord » : la deuxième entrée de la soute (#55) ----------
+// Le repli que l'ADR-002 réservait (option D) et n'avait jamais câblé. Jusqu'ici rien n'entrait en
+// soute sans une jambe de voyage et son « ✓ chargé » : ni le butin ramassé au sol, ni un vaisseau
+// rangé plein la semaine dernière, ni une cargaison achetée hors du site.
+//
+// Carte SÉPARÉE de #holdCard, et c'est tout le point : celle-ci se masque dès que la soute est
+// vide — un bouton posé dedans serait invisible au moment exact où il sert. Elle vit dans
+// #voyageLeft, que switchView ne touche jamais : les six vues l'ont donc, y compris Trajets et
+// Commodités, qui n'ont aucun rapport avec un voyage.
+let declarationOuverte = false;
+
+// `force` : repeindre malgré un champ en cours de saisie. Sans lui, cette carte — rendue à CHAQUE
+// rafraîchissement, donc à chaque frappe ailleurs et à chaque arrivée du marché — détruirait le
+// texte tapé et son focus. Les gestes qui changent VRAIMENT son état (ouvrir, annuler, valider)
+// forcent ; les rendus de passage s'abstiennent.
+function renderDeclaration(force = false) {
+  const box = $("holdDeclare");
+  if (!box) return;
+  if (!force && box.contains(document.activeElement)) return;
+  box.hidden = false;
+  // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà le
+  // repli de stationCourante(). On ne crée pas un second store, on rend le premier atteignable
+  // d'ici : deux positions divergeraient au premier aller-retour entre les deux vues. Avec un
+  // voyage, l'étape courante la dit déjà, et un champ ici mentirait.
+  const position = !JOURNEY && (SOUTE.length || declarationOuverte)
+    ? `<div class="hold-ici">
+         <label for="holdWhere">◈ Je suis à</label>
+         <input id="holdWhere" list="originList" type="text" autocomplete="off" value="${esc($("origin").value)}"
+           placeholder="Tape un terminal (ex : Megumi — Pyro)"
+           title="D'où tu pars. Ce terminal fixe le prix d'une vente et le classement de « où écouler » — c'est le même que le départ d'« En route »." />
+       </div>`
+    : "";
+  const corps = declarationOuverte
+    ? `<div class="hold-add">
+         <input id="holdAddName" list="commodityList" type="text" autocomplete="off" placeholder="Commodité (nom ou code UEX)" aria-label="Commodité à déclarer" />
+         <input id="holdAddScu" type="number" min="1" step="1" placeholder="SCU" aria-label="SCU à bord" />
+         <input id="holdAddPaid" type="number" min="0" step="1" placeholder="prix payé /SCU" aria-label="Prix payé au SCU"
+           title="Laisse vide pour du butin : minage, salvage, caisse trouvée — un coût réellement nul." />
+         <button id="holdAddOk" class="hold-sell-ok" title="Ajouter ce lot à la soute">✓ à bord</button>
+         <button id="holdAddNo" class="hold-sell-no" title="Annuler" aria-label="Annuler">✕</button>
+       </div>
+       <p class="hold-add-hint">Prix vide = <b>butin</b>, coût nul : « où écouler » comptera alors tout l'encaissement comme profit.</p>`
+    : `<button id="holdAddOpen" class="hold-add-open" title="Déclarer du fret déjà à bord : butin ramassé, vaisseau rangé plein, cargaison achetée hors de l'app">+ déclarer ce que j'ai à bord</button>`;
+  // L'en-tête n'apparaît QU'à vide : au-dessus d'une carte Soute déjà titrée, un second « ◈ Soute »
+  // ferait lire deux panneaux là où il n'y en a qu'un.
+  const tete = SOUTE.length ? "" : `<div class="hold-head"><span class="hold-title">◈ Soute</span><span class="muted">vide</span></div>`;
+  box.innerHTML = tete + position + corps;
+}
+
+function ouvrirDeclaration() {
+  // La vue par défaut ne lit que routes.json : sans le graphe, ni autocomplétion ni résolution du
+  // nom saisi. On l'attend plutôt que d'ouvrir un formulaire inerte.
+  if (!MARKET) { withMarket(ouvrirDeclaration); return; }
+  declarationOuverte = true;
+  renderDeclaration(true);
+  $("holdAddName")?.focus();
+}
+function fermerDeclaration() { declarationOuverte = false; renderDeclaration(true); }
+
+// Le geste : cette commodité, ce nombre de SCU, à ce prix. Le prix est FACULTATIF et vaut 0 — du
+// butin n'a rien coûté (ADR-002). Une commodité que le marché ne connaît pas est refusée : l'app ne
+// saurait ni la classer, ni dire où l'écouler, et une ligne muette en soute ne vaut pas mieux que rien.
+function declarerABord() {
+  const c = MARKET && findCommodity($("holdAddName").value);
+  if (!c) { showToast("⚠ Commodité inconnue — choisis-la dans la liste (nom ou code UEX)"); return; }
+  const units = Math.floor(Number($("holdAddScu").value) || 0);
+  if (units <= 0) { showToast(`⚠ Indique combien de SCU de ${c.name} tu as à bord`); return; }
+  const saisi = $("holdAddPaid").value.trim();
+  const prix = saisi === "" ? 0 : Number(saisi);
+  const avant = SOUTE;
+  SOUTE = declarerLot(SOUTE, { name: c.name, units, paid: prix }, nowSec());
+  if (SOUTE === avant) return; // la fonction pure a refusé : rien à persister
+  saveSoute();
+  declarationOuverte = false;
+  renderDeclaration(true);
+  refresh();
+  showToast(`◈ ${fmt(units)} SCU de ${c.name} déclarés à bord — ` +
+    (prix > 0 ? `${fmt(prix)} aUEC/SCU payés` : "butin, coût nul"));
+}
+
+// Poser la position revient à écrire dans le champ de départ d'« En route » : c'est lui que
+// stationCourante() lit sans voyage, et lui que le permalien transporte déjà.
+function poserPosition(v) {
+  $("origin").value = v;
+  resolveOrigin();
+  refresh();
+}
+
 // Débarquer le fret n'est pas le remettre en rayon : le registre des chargements n'est pas touché,
 // donc les jambes restent chargées (🔒 « ⬢ à bord ») et leur déduction reste posée. C'est ce qui
 // garde le chemin « annuler » atteignable — le seul qui rende vraiment son stock à la station.
@@ -1604,8 +1698,16 @@ function retirerLot(i) { SOUTE = SOUTE.filter((_, j) => j !== i); saveSoute(); r
 function renderSoute() {
   const box = $("holdCard");
   if (!box) return;
+  // AVANT le retour anticipé : le point d'entrée « déclarer », lui, doit exister précisément quand
+  // la carte n'existe pas. C'est le seul rendu appelé depuis tous les chemins qui repeignent la soute.
+  renderDeclaration();
   if (!SOUTE.length) { box.hidden = true; return; }
   box.hidden = false;
+  // Du fret à bord et pas de graphe : la vue par défaut ne lit que routes.json, et sans marché la
+  // carte ne sait ni nommer une icône, ni proposer une vente, ni classer « où écouler ». Ça se
+  // voyait peu tant qu'on ne pouvait charger que depuis « En route » — qui le charge ; une soute
+  // déclarée, elle, peut naître sur Trajets et y rester.
+  if (!MARKET) withMarket(renderSoute);
   const groupes = holdByCommodity(SOUTE);
   const ici = stationCourante();
   const scu = holdScu(SOUTE);
@@ -1619,10 +1721,19 @@ function renderSoute() {
     return c ? commodityIcon(c.kind) : "";
   };
   const lignes = groupes.map((g) => {
+    // Un lot DÉCLARÉ n'a pas de terminal d'achat (`from` vide) : le dire, plutôt qu'afficher « ? »
+    // qui laisse croire à une donnée perdue. C'est un fait, pas un trou.
+    const ouCharge = (l) => (l.from ? `Chargé à ${esc(l.from)}` : "Déclaré à la main — aucun terminal d'achat");
     // Le détail des lots n'apparaît que s'il y en a plusieurs : sinon c'est du bruit.
     const lots = g.lots.length > 1
-      ? `<div class="hold-lots">${g.lots.map((l) => `<span class="hold-lot" title="Chargé à ${esc(l.from || "?")}">${fmt(l.units)} SCU @ ${fmt(l.paid)}<button class="hold-del" data-i="${l.i}" title="Retirer ce lot" aria-label="Retirer">✕</button></span>`).join("")}</div>`
+      ? `<div class="hold-lots">${g.lots.map((l) => `<span class="hold-lot" title="${ouCharge(l)}">${fmt(l.units)} SCU @ ${fmt(l.paid)}<button class="hold-del" data-i="${l.i}" title="Retirer ce lot" aria-label="Retirer">✕</button></span>`).join("")}</div>`
       : `<button class="hold-del solo" data-i="${g.lots[0].i}" title="Retirer ce lot" aria-label="Retirer">✕</button>`;
+    // Coût nul : « où écouler » comptera tout l'encaissement comme profit. C'est juste — du butin
+    // n'a rien coûté — mais ça change le sens du chiffre, et ça ne doit pas se deviner.
+    const butin = g.invest === 0
+      ? ` <span class="hold-butin" title="Rien payé pour ce fret : « où écouler » compte donc tout l'encaissement comme profit">butin</span>`
+      : "";
+    const sansAchat = g.lots.every((l) => !l.from) ? " — déclaré à la main, aucun terminal d'achat" : "";
     // Vendre suppose de savoir OÙ l'on est, et que le comptoir reprenne la commodité.
     const pt = ici != null && MARKET ? sellableAt(MARKET, ici, g.name, effVals) : null;
     // Vendre suppose que le comptoir reprenne la commodité ; DÉPOSER, non — c'est justement la
@@ -1643,7 +1754,7 @@ function renderSoute() {
     return `<div class="hold-line">
         <span class="hold-name">${icone(g.name)}${esc(g.name)}</span>
         <span class="hold-scu"><b>${fmt(g.units)}</b> SCU</span>
-        <span class="hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}">@ ${fmt(Math.round(g.paidMoyen))}</span>
+        <span class="hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}${sansAchat}">@ ${fmt(Math.round(g.paidMoyen))}</span>${butin}
         ${vente}
         ${lots}
       </div>`;
@@ -3312,6 +3423,26 @@ async function init() {
     // Entrée doit encaisser à la même station que le bouton ✓ : même index figé, lu sur le conteneur.
     if (e.key === "Enter") { e.preventDefault(); vendreIci(venteEnCours, Number(e.target.value), Number(e.target.closest(".hold-sell")?.dataset.idx)); }
     else if (e.key === "Escape") { e.preventDefault(); venteEnCours = null; renderSoute(); }
+  });
+  // Déclarer « j'ai ça à bord » (#55) : le seul chemin qui fait entrer du fret sans jambe.
+  $("holdDeclare").addEventListener("click", (e) => {
+    if (e.target.closest("#holdAddOpen")) { ouvrirDeclaration(); return; }
+    if (e.target.closest("#holdAddNo")) { fermerDeclaration(); return; }
+    if (e.target.closest("#holdAddOk")) declarerABord();
+  });
+  // Entrée valide depuis n'importe lequel des trois champs, Échap abandonne — même patron que la
+  // vente inline de la soute et que les corrections.
+  $("holdDeclare").addEventListener("keydown", (e) => {
+    if (!e.target.closest(".hold-add")) return;
+    if (e.key === "Enter") { e.preventDefault(); declarerABord(); }
+    else if (e.key === "Escape") { e.preventDefault(); fermerDeclaration(); }
+  });
+  // La position se résout à la frappe, DÉBOUNCÉE comme le champ de départ d'« En route » : c'est le
+  // même champ derrière, et une résolution par caractère repeindrait toute la page à chaque lettre.
+  // On capture la valeur tout de suite : l'événement, lui, sera périmé quand le timer se déclenchera.
+  const poserPositionDifferee = debounce(poserPosition);
+  $("holdDeclare").addEventListener("input", (e) => {
+    if (e.target.id === "holdWhere") poserPositionDifferee(e.target.value);
   });
   // Entrepôts : « reprendre » remet le lot en soute. Un seul geste, pas de champ de quantité — on
   // reprend ce qu'on a laissé ; une reprise partielle se ferait en redéposant. La fonction pure,

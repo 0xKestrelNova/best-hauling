@@ -175,6 +175,12 @@
                  tant qu'elle n'est pas vide — c'est ce rappel qui remplace une date de péremption. -->
             <aside id="holdCard" class="hold-card" hidden></aside>
 
+            <!-- La DEUXIÈME entrée de la soute (#55) : « j'ai ça à bord », sans voyage ni jambe.
+                 Carte à part, et c'est délibéré : #holdCard se masque dès que la soute est vide —
+                 le point d'entrée y serait donc invisible exactement quand il sert. Elle porte
+                 aussi le « je suis à » sans lequel « où écouler » n'a pas de point de départ. -->
+            <aside id="holdDeclare" class="hold-card hold-declare" hidden></aside>
+
             <!-- Les entrepôts : le fret DÉPOSÉ à une station. Sous la soute et dans la même
                  colonne, pour la même raison qu'elle : ce n'est pas un plan, c'est du fret réel
                  déjà payé. Masquée tant qu'aucun dépôt n'existe — sinon elle occuperait la colonne

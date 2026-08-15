@@ -944,6 +944,202 @@ test("Soute : reculer d'une étape ne revend rien", async ({ page }) => {
 });
 
 // ---------- Carte 2D du parcours (ADR-001) ----------
+// ---------- Déclarer « j'ai ça à bord » sans passer par une jambe (#55) ----------
+// L'ADR-002 réservait ce repli (option D) sans jamais le câbler : la soute n'avait qu'un robinet,
+// au bout d'un entonnoir de six gestes, et rien n'y entrait sans voyage, jambe et marché chargé.
+
+// Les milliers sont séparés par une espace insécable étroite en fr-FR : on tolère n'importe quelle
+// espace plutôt que de coder en dur le caractère qu'ICU a choisi ce mois-ci.
+const fr = (n) => new RegExp(String(n).replace(/\B(?=(\d{3})+$)/g, "\\s*"));
+
+async function ouvrirDeclaration(page) {
+  await page.locator("#holdAddOpen").click();
+  await expect(page.locator("#holdAddName")).toBeVisible();
+  // Le marché n'est chargé qu'à la demande (la vue par défaut ne lit que routes.json) : c'est le
+  // clic lui-même qui le réclame, et l'autocomplétion arrive avec lui.
+  await expect.poll(() => page.locator("#commodityList option").count()).toBeGreaterThan(0);
+}
+
+async function declarer(page, nom, scu, prix = null) {
+  await ouvrirDeclaration(page);
+  await page.fill("#holdAddName", nom);
+  await page.fill("#holdAddScu", String(scu));
+  if (prix != null) await page.fill("#holdAddPaid", String(prix));
+  await page.locator("#holdAddOk").click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+}
+
+// « Je suis à » : sans voyage, c'est le terminal de départ d'« En route » qui fait office de
+// position — un seul champ pour les deux, pas deux vérités.
+async function positionner(page, label) {
+  await page.fill("#holdWhere", label);
+  await expect(page.locator("#origin")).toHaveValue(label);
+}
+
+// Les commodités proposées par l'autocomplétion, dans l'ordre du marché.
+const commodites = (page) =>
+  page.locator("#commodityList option").evaluateAll((o) => o.map((x) => x.value));
+
+test("Soute : déclarer du fret à bord sans voyage, sans jambe et sans manifeste (#55)", async ({ page }) => {
+  // À vide, la carte Soute est masquée : sans point d'entrée ailleurs, la fonctionnalité était
+  // littéralement indécouvrable — zéro bouton dans la page pour ouvrir quoi que ce soit.
+  await expect(page.locator("#holdCard")).toBeHidden();
+  await expect(page.locator("#holdAddOpen")).toBeVisible();
+
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.fill("#holdAddName", nom);
+  await page.fill("#holdAddScu", "220");
+  await page.fill("#holdAddPaid", "1000");
+  await page.locator("#holdAddOk").click();
+
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await expect(page.locator("#holdCard .hold-line")).toContainText(nom);
+  await expect(page.locator("#holdCard .hold-meta")).toContainText(fr(220));
+  await expect(page.locator("#holdCard .hold-meta")).toContainText(fr(220000)); // capital engagé
+
+  // La place libre compte le lot déclaré comme n'importe quel autre : c'est le même fret.
+  await page.fill("#cargo", "1000");
+  await expect(page.locator("#holdCard .hold-meta")).toContainText(/780 libres/);
+
+  const ls = await lots(page);
+  expect(ls.length).toBe(1);
+  expect(ls[0]).toMatchObject({ name: nom, units: 220, paid: 1000, from: "" });
+  // Le contrat du lot manuel : pas de jambe, donc aucune jambe ne prétend l'avoir chargé.
+  expect("leg" in ls[0]).toBe(false);
+  const registre = await page.evaluate(() => localStorage.getItem("best-hauling-jambes-chargees"));
+  expect(JSON.parse(registre || "{}")).toEqual({});
+});
+
+test("Soute : la déclaration est atteignable depuis les SIX vues (#55)", async ({ page }) => {
+  const vues = ["viewRoutes", "viewLoops", "viewEnroute", "viewChain", "viewCorrections", "viewCommodities"];
+  for (const v of vues) {
+    await page.click(`#${v}`);
+    await expect(page.locator("#holdAddOpen"), `point d'entrée soute absent de #${v}`).toBeVisible();
+  }
+  // Et le geste marche vraiment là où rien ne parle de voyage : Commodités, puis Trajets.
+  await page.click("#viewCommodities");
+  await ouvrirDeclaration(page);
+  const noms = await commodites(page);
+  await page.fill("#holdAddName", noms[0]);
+  await page.fill("#holdAddScu", "40");
+  await page.locator("#holdAddOk").click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await expect(page.locator("#commodities")).toBeVisible(); // déclarer n'a pas changé de vue
+
+  await page.click("#viewRoutes");
+  await declarer(page, noms[1], 60, 500);
+  expect(holdScuDe(await lots(page))).toBe(100);
+});
+
+test("Soute : prix laissé vide = BUTIN, et l'écran le dit (#55)", async ({ page }) => {
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.fill("#holdAddName", nom);
+  await page.fill("#holdAddScu", "150");
+  await page.locator("#holdAddOk").click(); // prix laissé vide
+
+  const ls = await lots(page);
+  expect(ls[0].paid).toBe(0); // du butin n'a rien coûté
+  // Ce zéro change le sens du profit de « où écouler » : il ne doit pas passer inaperçu.
+  const ligne = page.locator("#holdCard .hold-line", { hasText: nom });
+  await expect(ligne.locator(".hold-butin")).toBeVisible();
+  await expect(ligne.locator(".hold-butin")).toHaveAttribute("title", /profit|coût nul|rien payé/i);
+});
+
+test("Soute : « où écouler » répond à une soute DÉCLARÉE, sans le moindre voyage (#55)", async ({ page }) => {
+  // Le vrai bénéfice : « j'ai 2 200 SCU de X, qui les reprend ? » — la question à laquelle l'app ne
+  // savait répondre qu'après un manifeste, un voyage et un « ✓ chargé ».
+  await ouvrirDeclaration(page);
+  const noms = (await commodites(page)).slice(0, 12);
+  await page.locator("#holdAddNo").click();
+
+  // Aucune ligne « bien connue » en dur : on balaie jusqu'à une commodité qui a un débouché depuis
+  // ce quai, et on échoue franchement si aucune des douze n'en a.
+  let trouve = null;
+  for (const nom of noms) {
+    await declarer(page, nom, 2200, 1000);
+    await positionner(page, "Megumi — Pyro");
+    if (!(await page.locator("#holdCard .ec-head").count())) await page.locator("#holdOffload").click();
+    await expect(page.locator("#holdCard .hold-ecouler")).toBeVisible();
+    if ((await page.locator("#holdCard .ec-dest").count()) > 0) { trouve = nom; break; }
+    await page.locator("#holdClear").click();
+  }
+  expect(trouve, "aucune des douze commodités balayées n'a de débouché : le test ne prouverait rien").toBeTruthy();
+
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(0); // aucun voyage n'a été créé
+  const dest = page.locator("#holdCard .ec-dest");
+  const profits = (await dest.locator(".ec-profit").allTextContents())
+    .map((t) => Number(t.replace(/\s/g, "").replace(/[^\d+-]/g, "")));
+  for (const v of profits) expect(Number.isFinite(v)).toBe(true);
+  for (let i = 1; i < profits.length; i++) expect(profits[i - 1]).toBeGreaterThanOrEqual(profits[i]);
+});
+
+test("Soute : déclarer un lot ne corrige AUCUN stock de station (#55)", async ({ page }) => {
+  // `✓ chargé` vide le rayon parce qu'on vient d'y acheter. Un lot déclaré n'a été pris nulle part
+  // que l'app connaisse : y déduire quoi que ce soit serait inventer un achat.
+  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections");
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.fill("#holdAddName", nom);
+  await page.fill("#holdAddScu", "9999");
+  await page.locator("#holdAddOk").click();
+
+  await expect(page.locator("#viewCorrections")).toHaveText("✎ Corrections"); // compteur inchangé
+  const ov = await page.evaluate(() => localStorage.getItem("best-hauling-overrides"));
+  expect(JSON.parse(ov || "{}")).toEqual({});
+});
+
+test("Soute : un lot déclaré survit au rechargement et sort par les sorties existantes (#55)", async ({ page }) => {
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.fill("#holdAddName", nom);
+  await page.fill("#holdAddScu", "300");
+  await page.locator("#holdAddOk").click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator("#holdCard")).toBeVisible({ timeout: 8000 }); // aucune péremption
+  expect(holdScuDe(await lots(page))).toBe(300);
+
+  // Le ✕ du lot d'abord : c'est la sortie fine, elle doit connaître le lot manuel.
+  await page.locator("#holdCard .hold-del").first().click();
+  await expect(page.locator("#holdCard")).toBeHidden();
+  expect(await lots(page)).toEqual([]);
+});
+
+test("Soute : un lot déclaré ne rend AUCUNE jambe « à bord » (#55)", async ({ page }) => {
+  // Un lot manuel n'a pas de jambe : le registre des chargements (#21, #22) ne doit pas le voir
+  // passer, sans quoi le bouton d'une jambe prétendrait avoir chargé un fret qu'elle n'a pas pris —
+  // et l'annuler rendrait à une station un stock qu'elle n'a jamais cédé.
+  await jambeChargeable(page);
+  const bouton = page.locator("#journeyCard .jleg-load").first();
+  await expect(bouton).toHaveText(/chargé/i);
+  const stockAvant = await page.locator("#viewCorrections").innerText();
+
+  await page.click("#viewRoutes");
+  await ouvrirDeclaration(page);
+  await page.fill("#holdAddName", (await commodites(page))[0]);
+  await page.fill("#holdAddScu", "120");
+  await page.locator("#holdAddOk").click();
+  await expect(page.locator("#holdCard")).toBeVisible();
+
+  await page.click("#viewEnroute");
+  await expect(bouton).toHaveText(/chargé/i);      // toujours pas « ⬢ à bord »
+  await expect(bouton).not.toHaveText(/à bord/i);
+  expect(await page.locator("#viewCorrections").innerText()).toBe(stockAvant); // aucun rayon touché
+});
+
+test("Soute : une commodité inconnue ne crée pas un lot que l'app ne saurait pas écouler (#55)", async ({ page }) => {
+  await ouvrirDeclaration(page);
+  await page.fill("#holdAddName", "Kryptonite");
+  await page.fill("#holdAddScu", "100");
+  await page.locator("#holdAddOk").click();
+  await expect(page.locator("#toast")).toContainText(/inconnue/i);
+  await expect(page.locator("#holdCard")).toBeHidden();
+  expect(await lots(page)).toEqual([]);
+});
+
 test("Carte : absente sans voyage, dessinée dès qu'il y en a un", async ({ page }) => {
   await expect(page.locator("#journeyMap")).toBeHidden();
   await page.locator("#rows tr").first().locator(".journey-pick").click();
