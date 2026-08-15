@@ -2342,3 +2342,98 @@ test.describe("version déployée", () => {
   });
 });
 
+// ---------- Exports datés : entrepôts (#46) et corrections (#47) ----------
+// Les deux tests vivent côte à côte parce que les deux exports partagent leur format de date, et
+// que c'est précisément ce qu'on les empêche de laisser diverger.
+const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+test("Entrepôts : « ⧉ Copier » sort la liste du fret déposé, station et date comprises (#46)", async ({ page, context }) => {
+  // Le dépôt ne quittait jamais l'app : pour relire ce qu'on avait laissé quelque part, il fallait
+  // rouvrir le navigateur qui porte le localStorage.
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await jambeChargeable(page);
+  await page.locator("#journeyCard .jleg-load").first().click();
+  const nom = (await lots(page))[0].name;
+
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+  await page.locator("#holdCard .hold-sell-qty").fill("5");
+  await page.locator("#holdCard .hold-store").click();
+  await expect(page.locator("#depotsCard")).toBeVisible();
+
+  // Le bouton n'existe que quand la carte est là — elle est `hidden` tant que rien n'y dort.
+  const bouton = page.locator("#depotsCard #copyDepots");
+  await expect(bouton).toBeVisible();
+  await bouton.click();
+  await expect(bouton).toHaveText("✓ Copié");
+
+  const copie = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copie).toMatch(/^# Best Hauling — entrepôts · format v1 · émis \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
+  // La station où le fret dort, telle que la carte la nomme, et non un index de terminal.
+  const station = Object.keys(JSON.parse(await page.evaluate(() => localStorage.getItem("best-hauling-depots"))))[0];
+  expect(copie).toContain(`## ${station}`);
+  expect(copie).toContain(`5 SCU · ${nom} @`);
+  // La date du dépôt : posée à l'instant, donc connue, et écrite en ISO 8601 UTC.
+  const depose = copie.match(/déposé (\S+)/);
+  expect(depose, "aucune date de dépôt dans l'export").not.toBeNull();
+  expect(depose[1]).toMatch(ISO_Z);
+  expect(copie).toMatch(/Total : 5 SCU déposés · [\d ]+ aUEC immobilisés/);
+});
+
+test("Corrections : « ⧉ Exporter » emporte prix ET stock, chacun avec sa date de saisie (#47)", async ({ page, context }) => {
+  // Vider son cache effaçait des dizaines de relevés faits comptoir par comptoir, et un prix corrigé
+  // ne portait AUCUNE date de saisie : `setInStore` ne posait `pris` que pour les volumes.
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.click("#viewCorrections");
+  await page.fill("#station", "Megumi — Pyro");
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible({ timeout: 8000 });
+
+  // Une case ne convient que si elle porte une DATE UEX (`data-u` > 0) : c'est elle qui doit
+  // ressortir en `base`. On balaie jusqu'à en trouver une, plutôt que de parier sur un rang — et la
+  // valeur saisie doit DIFFÉRER de celle d'UEX, sinon `startEdit` n'écrit rien (consulter n'est pas
+  // corriger) et le test passerait pour de mauvaises raisons.
+  async function corriger(field) {
+    const cases = page.locator(`#correctionsStation .editv[data-s="buy"][data-f="${field}"]`);
+    for (let i = 0; i < (await cases.count()); i++) {
+      const c = cases.nth(i);
+      const [u, v, commodite] = await Promise.all(
+        ["data-u", "data-v", "data-c"].map((a) => c.getAttribute(a)));
+      if (!(Number(u) > 0) || v === "") continue; // ni date UEX, ni valeur d'origine : rien à prouver
+      const valeur = Number(v) + 1;
+      await c.click();
+      const champ = c.locator("input");
+      if (!(await champ.count())) continue;
+      await champ.fill(String(valeur));
+      await champ.press("Enter");
+      return { commodite, valeur };
+    }
+    throw new Error(`aucune case « ${field} » datée par UEX sur cette station : le test ne peut rien prouver`);
+  }
+  const prixSaisi = await corriger("price");
+  const volSaisi = await corriger("vol");
+
+  const bouton = page.locator("#exportCorrections");
+  await expect(bouton).toBeVisible();
+  await bouton.click();
+  await expect(bouton).toHaveText("✓ Copié");
+
+  const sortie = JSON.parse(await page.evaluate(() => navigator.clipboard.readText()));
+  expect(sortie.v).toBe(1);
+  expect(sortie.type).toBe("corrections");
+  expect(sortie.emis).toMatch(ISO_Z);
+
+  const prix = sortie.corrections.find((c) => c.commodite === prixSaisi.commodite && c.champ === "prix");
+  const vol = sortie.corrections.find((c) => c.commodite === volSaisi.commodite && c.champ === "volume");
+  expect(prix, "le prix corrigé manque à l'export").toBeTruthy();
+  expect(vol, "le stock corrigé manque à l'export").toBeTruthy();
+  expect(prix.valeur).toBe(prixSaisi.valeur);
+  expect(vol.valeur).toBe(volSaisi.valeur);
+  // Les DEUX dates, sur les DEUX corrections, toutes en Z — c'est tout l'objet de l'issue : sans
+  // `saisi`, un prix exporté ne peut plus être daté, donc plus jamais périmé à la relecture.
+  for (const c of [prix, vol]) {
+    expect(c.terminal).toBe("Megumi");
+    expect(c.cote).toBe("achat");
+    expect(c.saisi, `${c.champ} : aucune date de saisie`).toMatch(ISO_Z);
+    expect(c.base, `${c.champ} : aucune date UEX`).toMatch(ISO_Z);
+  }
+});
+

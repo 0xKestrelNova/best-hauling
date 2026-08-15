@@ -318,6 +318,15 @@ contrôle de position — l'app ne sait pas où ton vaisseau se trouve vraiment,
 « tu n'y es pas » bloquerait le geste au moment précis où il est vrai ; la station est écrite en
 toutes lettres sur la ligne. La carte disparaît dès qu'il ne reste rien nulle part.
 
+Un **⧉ Copier** dans l'en-tête de la carte met la liste dans le presse-papiers, en texte, lisible
+telle quelle sur un second écran ou dans un canal Discord. Elle est rangée par station, **une ligne
+par lot** — les SCU, la commodité, le prix payé au SCU, la **date du dépôt** et la station où le fret
+avait été chargé — avec un sous-total par station et, en pied, le SCU total et le capital immobilisé.
+Les dates sont en **ISO 8601 UTC** (`2026-08-15T09:12:00Z`), le même format que l'export des
+corrections ([ADR-006](docs/superpowers/specs/2026-08-15-format-des-exports-adr.md)). Un lot déposé
+avant que les dépôts ne soient datés s'affiche « déposé à une date inconnue » : on ne lui invente pas
+celle du jour, ce serait pire que rien.
+
 **Où écouler ?** Le panneau classe les destinations par **ce que ça rapporte, prix d'achat déduit** —
 `min(résidu, capacité) × prix`, net des frais, moins ce que les lots consommés ont coûté. Le chiffre
 descend **sous zéro** quand une destination te ferait vendre à perte : c'est une information, pas
@@ -365,6 +374,32 @@ jamais partagé ni mis dans l'URL) et **intelligent** :
 - Un **volume** (stock, demande, et la déduction d'un `✓ chargé`) périme **aussi au bout de 3 h**, même si UEX n'a rien republié. Un **prix**, non : les deux ne vieillissent pas pareil, [voir plus bas](#pourquoi-un-volume-périme-en-3-h-et-pas-un-prix).
 - Sémantique respectée : un **stock d'achat à 0 = terminal vide** (plafonne à 0), et une **demande que _tu_ corriges fait autorité** — y compris un 0, qui vaut « pas de demande » et plafonne à 0 même là où UEX ne renseignait rien. Les valeurs UEX brutes, elles, gardent leur sémantique propre (`null` = capacité inconnue, `0` = terminal saturé) : [voir le piège des volumes UEX](#sémantique-des-volumes-uex-piège).
 - **Retour arrière par chiffre** : un chiffre corrigé porte, sous lui, un bouton `↺` qui annonce la valeur UEX vers laquelle il ramène. On défait là où on regarde.
+
+### Emporter ses corrections
+
+Le bandeau de la vue Corrections porte un **⧉ Exporter**, juste avant « Tout réinitialiser » — rien
+ne doit s'effacer sans qu'on ait pu l'emporter. Il met dans le presse-papiers un JSON versionné
+(`{ "v": 1, "type": "corrections", "emis": "…Z", "corrections": [ … ] }`), une entrée **par champ
+corrigé** : la commodité, le terminal, le côté (achat / vente), le champ (prix / volume), la valeur,
+et **deux dates qui ne disent pas la même chose** :
+
+- **`saisi`** — quand *tu* l'as corrigée ;
+- **`base`** — la date UEX du point *contre* laquelle la correction vaut.
+
+Les deux en **ISO 8601 UTC** (`2026-08-15T09:12:00Z`), jamais un epoch nu ni un format qui dépend de
+la locale du navigateur : un export se relit sur une autre machine, dans un autre fuseau, des mois
+plus tard. Les **relevés de tarif d'autoload** n'y entrent pas — store séparé, sans date UEX de
+référence et sans péremption par conception.
+
+À la relecture, chaque correction reçoit un verdict, avec les règles déjà en vigueur et pas des
+règles parallèles : `périmée-uex` (UEX a republié le point depuis), `périmée-âge` (un volume de plus
+de 3 h), `date-inconnue` (correction d'un format antérieur — signalée, **jamais** réappliquée en
+silence) ou `appliquer`.
+
+Une correction posée **avant** que les prix ne soient datés n'a pas de date de saisie et n'en reçoit
+pas une fausse : elle sort « inconnue ». Rien n'est encore réinjecté automatiquement — l'export sert
+d'abord à ne plus perdre ce qu'on a relevé. Le détail du format, et pourquoi c'est le presse-papiers
+et pas un fichier : [ADR-006](docs/superpowers/specs/2026-08-15-format-des-exports-adr.md).
 
 ### La vue Corrections se range par station
 
