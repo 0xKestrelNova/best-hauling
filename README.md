@@ -23,7 +23,7 @@ reconstruites/redéployées **quand UEX a réellement changé** — et le site e
 
 ## Fonctionnalités
 
-Six vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage, profit/heure) :
+Sept vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage, profit/heure) :
 
 | Vue | Ce qu'elle fait |
 |-----|-----------------|
@@ -33,6 +33,7 @@ Six vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût,
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
 | **Corrections ✎** | Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
+| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
 
 Autres éléments :
 
@@ -56,7 +57,7 @@ signe et **en rouge**, jamais dans le vert des gains.
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
-- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`6` vues) ; tout ce qui s'active
+- **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`7` vues) ; tout ce qui s'active
   au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
   corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
@@ -64,6 +65,10 @@ signe et **en rouge**, jamais dans le vert des gains.
 ### Portée des filtres par vue
 
 Tous les filtres ne s'appliquent pas à toutes les vues — comportement **garanti par des tests** ([voir Tests](#tests)) :
+
+Le **Plan de vol** n'a pas de colonne : il n'affiche aucun filtre (ADR-004). Les chiffres qu'il
+récapitule restent ceux calculés sous les réglages en cours — c'est précisément pourquoi il les
+énonce en tête, en toutes lettres.
 
 | Filtre | Trajets | Boucles | En route | Chaîne | Corrections | Commodités |
 |--------|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -257,7 +262,7 @@ en prend l'instantané **au prix qu'elle venait d'afficher** — donc sans rien 
 **Deux entrées, pas une.** `✓ chargé` suppose un voyage, une jambe et un terminal qui vend la
 commodité : rien n'y rentre du butin ramassé au sol, d'un vaisseau rangé plein la semaine dernière,
 ni d'une cargaison achetée hors du site. Le bouton **`+ déclarer ce que j'ai à bord`** — présent
-dans **les six vues**, y compris soute vide — ouvre trois champs : la commodité (nom ou code UEX),
+dans **les six vues de recherche**, y compris soute vide — ouvre trois champs : la commodité (nom ou code UEX),
 les SCU, et le **prix payé au SCU**. Ce dernier est facultatif : laissé vide, c'est du **butin** au
 coût nul, et la ligne porte alors l'étiquette `butin`, parce que ce zéro fait compter *tout*
 l'encaissement comme profit dans « où écouler ».
@@ -381,7 +386,7 @@ le plus souvent constater qu'on vient soi-même de vider la station — le traje
 décidé. Les jambes qui **touchent ce point** (le terminal corrigé est leur départ pour un stock,
 leur arrivée pour une demande, et leur chargement porte cette commodité) **figent donc leurs SCU**
 et prennent le marqueur `🔒`. Elles continuent de suivre les prix ; seules leurs quantités sont
-gelées. Tout ce qui est calculé **ensuite** — les autres jambes, les six vues, un arrêt ajouté plus
+gelées. Tout ce qui est calculé **ensuite** — les autres jambes, les sept vues, un arrêt ajouté plus
 tard — voit le stock tel que tu l'as corrigé. `↺ optimal` lève le gel.
 
 `🔒` et `✎` se distinguent : le premier vient d'une correction, le second de ta main. Toucher au

@@ -39,12 +39,22 @@
 
     <!-- ===================== NAV RAIL ===================== -->
     <nav class="rail">
+      <!-- La marque RAMÈNE À TRAJETS (ADR-004, décision 5) : « retour au début » doit mener à la vue
+           principale, jamais à la conclusion qu'est le Plan de vol. Le bouton est un ENFANT de
+           .brand et non .brand elle-même : #62 y posera son « rejouer le tuto » en FRÈRE, et deux
+           éléments interactifs imbriqués sont invalides en ARIA — c'est la règle que le dépôt vient
+           d'appliquer en sortant .scomm-undo du .editv (#38).
+           Contenu en <span> et non en <div> : le modèle de contenu d'un <button> est du contenu de
+           phrasé, et .brand-name / .brand-sub reprennent leur passage à la ligne en CSS. -->
       <div class="brand">
-        <div class="logo" aria-hidden="true"><span class="logo-diamond"></span></div>
-        <div class="brand-text">
-          <div class="brand-name">HAULR</div>
-          <div class="brand-sub">Flight&nbsp;Ops</div>
-        </div>
+        <button id="brandHome" class="brand-home" type="button"
+                aria-label="HAULR Flight Ops — retour aux Trajets simples" title="Retour aux Trajets simples">
+          <span class="logo" aria-hidden="true"><span class="logo-diamond"></span></span>
+          <span class="brand-text">
+            <span class="brand-name">HAULR</span>
+            <span class="brand-sub">Flight&nbsp;Ops</span>
+          </span>
+        </button>
       </div>
 
       <button class="rail-toggle" id="railToggle" title="Rétracter / déplier le menu" aria-label="Rétracter le menu" aria-expanded="true">«</button>
@@ -63,6 +73,10 @@
         <button id="viewChain" class="vbtn" data-view="chain" aria-label="Chaîne multi-sauts" title="Chaîne multi-sauts (raccourci : 4)"><span class="rn">04</span><span class="rl">Chaîne</span></button>
         <button id="viewCorrections" class="vbtn" data-view="corrections" title="Corrections locales (raccourci : 5)"><span class="rn">05</span><span class="rl">Corrections</span></button>
         <button id="viewCommodities" class="vbtn" data-view="commodities" aria-label="Commodités : tous les points d'achat/vente" title="Commodités : tous les points d'achat/vente (raccourci : 6)"><span class="rn">06</span><span class="rl">Commodités</span></button>
+        <!-- EN DERNIER, et c'est une décision (ADR-004 §7) : une conclusion se lit après ce qui la
+             produit, et la placer en tête renuméroterait des raccourcis déjà appris pour un gain
+             nul. Révisable par #45, qui refond la hiérarchie du rail dans le même jalon. -->
+        <button id="viewPlan" class="vbtn" data-view="plan" aria-label="Plan de vol" title="Plan de vol : le récapitulatif du voyage engagé (raccourci : 7)"><span class="rn">07</span><span class="rl">Plan&nbsp;de&nbsp;vol</span></button>
       </div>
 
       <!-- Le libellé visible « Partager » OUVRE l'aria-label : sinon le nom accessible ne le
@@ -94,7 +108,12 @@
       </header>
 
       <main>
-        <section class="controls">
+        <!-- L'`id` n'est pas décoratif : cette section était la SEULE section de contrôles que
+             switchView ne basculait pas, donc permanente par construction. Le Plan de vol la masque
+             (ADR-004 §6) — on n'y change rien au voyage, et une barre de filtres y laisserait croire
+             qu'agir dessus modifie ce qu'on regarde. Masquer n'est pas désactiver : les valeurs
+             survivent au passage et au retour. -->
+        <section class="controls" id="controls">
           <div class="field ship-field">
             <label for="ship">◈ Vaisseau</label>
             <input id="ship" type="text" placeholder="Tape un nom (ex : Railen)" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="shipList" />
@@ -189,15 +208,27 @@
           </div>
 
           <aside id="journeyCard" class="journey-card" hidden></aside>
-
-          <!-- Carte 2D du parcours : TROISIÈME COLONNE, à côté du voyage en cours (ADR-001).
-               Elle vivait en bandeau pleine largeur, où le dessin plafonné à 760 px laissait deux
-               bandes vides sur un grand écran. Purement décorative — absente tant qu'il n'y a pas
-               de voyage, et son échec de chargement ne doit rien casser d'autre. La géométrie
-               vient de data/starmap.json. Sous ~1100 px, `flex-wrap` la renvoie sur sa
-               propre ligne : c'est le repli, et il redonne exactement l'ancien bandeau. -->
-          <aside id="journeyMap" class="journey-map" hidden></aside>
         </div>
+
+        <!-- ===================== PLAN DE VOL (ADR-004) =====================
+             La septième vue, et la seule qui soit une CONCLUSION : on y arrive une fois tout
+             paramétré, pour regarder le résultat. On n'y change rien — d'où les filtres masqués,
+             les réglages repris en texte, et un récapitulatif sans un seul bouton d'action.
+             Le bandeau du haut (#shipJourneyRow) est masqué ICI et seulement ici : il reste dans
+             les six vues de recherche, c'est la décision 3. -->
+        <section id="plan" class="plan-view" hidden>
+          <div class="plan-head" id="planHead"></div>
+
+          <!-- Carte 2D du parcours (ADR-001), qui ne vit plus QUE là (ADR-004, décision 4) : si
+               elle restait partout, la conclusion ne montrerait rien qu'on n'ait déjà sous les yeux.
+               ÉLÉMENT PERSISTANT, frère de #planHead et #planBody et jamais leur enfant :
+               ses écouteurs sont posés en direct et une seule fois (cf. app.js), et la loger dans un
+               conteneur réécrit par innerHTML reproduirait #24 — un geste qui cesse de répondre
+               après un rendu. Purement décorative : son échec de chargement ne casse rien d'autre. -->
+          <aside id="journeyMap" class="journey-map" hidden></aside>
+
+          <div class="plan-body" id="planBody"></div>
+        </section>
 
         <section id="enrouteControls" class="enroute-controls" hidden>
           <div class="field">
