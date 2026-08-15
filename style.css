@@ -539,6 +539,16 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
    les deux serait recompter le fret déposé dans la place disponible. */
 .depots-card { border-left-color: var(--acc-2); }
 .depots-card .hold-title { color: var(--acc-2); }
+/* Le bouton de copie tient dans une carte de colonne, pas dans un bandeau pleine largeur comme
+   celui du manifeste : même style, un cran plus compact, et TEINTÉ comme la carte. En ambre, il
+   passait devant « ↑ reprendre » — l'action qui compte ici — alors qu'il ne fait que sortir une
+   liste. Le retour « ✓ Copié » reste vert : c'est le même signal partout dans l'app. */
+.depots-card .hold-head .copy-btn {
+  font-size: 11px; padding: 5px 11px;
+  color: var(--acc-2); background: rgba(169, 112, 255, 0.08); border-color: rgba(169, 112, 255, 0.4);
+}
+.depots-card .hold-head .copy-btn:hover { color: #fff; background: rgba(169, 112, 255, 0.18); }
+.depots-card .hold-head .copy-btn.copied { color: #04120a; background: var(--good); border-color: var(--good); }
 .depot-stations { display: flex; flex-direction: column; gap: 11px; }
 .depot-lieu { display: flex; align-items: center; gap: 6px; font-size: 11.5px; margin-bottom: 5px; }
 .depot-take {
@@ -1050,6 +1060,11 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .corr-side { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); border: 1px solid var(--line2); border-radius: 3px; padding: 1px 6px; margin-left: 4px; }
 .corr-del { flex-shrink: 0; width: 26px; height: 26px; border-radius: 4px; cursor: pointer; color: var(--bad); background: rgba(255, 93, 93, 0.08); border: 1px solid rgba(255, 93, 93, 0.35); font-size: 13px; line-height: 1; transition: color 0.12s, background 0.12s; }
 .corr-del:hover { color: #fff; background: #6b1c1c; }
+/* Les deux boutons de fin de bandeau restent COLLÉS à droite : c'est le `margin-left: auto` du
+   premier qui pousse la paire, jamais celui des deux — deux marges automatiques se partageraient
+   l'espace libre et les écarteraient l'un de l'autre au milieu du bandeau. */
+.corr-list-head .copy-btn { margin-left: auto; font-size: 11px; padding: 5px 11px; }
+.corr-list-head .copy-btn + .reset-ov { margin-left: 0; }
 .reset-ov { margin-left: auto; color: var(--warn); border-color: #5a4a1c; background: rgba(245,167,66,.08); border-radius: 3px; padding: 5px 11px; cursor: pointer; font-family: var(--font); font-size: 11px; font-weight: 600; }
 .reset-ov:hover { color: #fff; border-color: var(--warn); background: rgba(245, 167, 66, 0.16); }
 

@@ -645,12 +645,22 @@ export function setInStore(store, key, field, value, baseUpdated, nowSec = Date.
   const n = value == null || value === "" ? NaN : Math.max(0, Math.round(Number(value)));
   if (Number.isFinite(n)) o[field] = n;
   else delete o[field];
-  // `pris` n'existe que pour un volume : lui seul a une durée de vie. Nom volontairement distinct de
-  // `ts`, que effValue lit encore comme alias historique de `base` — les confondre périmerait les
-  // corrections d'anciens formats au lieu de les épargner.
-  if (field === "vol") {
-    if (Number.isFinite(n)) o.pris = Number(nowSec) || 0;
-    else delete o.pris;
+  // DEUX dates de saisie, une par champ, et surtout pas une seule pour les deux : elles ne servent
+  // pas à la même chose.
+  //   `pris`      = heure murale de la saisie du VOLUME. C'est une HORLOGE : effValue s'en sert pour
+  //                 périmer le volume au bout de DUREE_VOL.
+  //   `saisiPrix` = heure murale de la saisie du PRIX. Ce n'est PAS une horloge — rien ne régénère un
+  //                 prix faux, il ne vieillit pas (cf. DUREE_VOL) et aucun lecteur ne le périme. Elle
+  //                 existe parce qu'une correction s'exporte, et qu'un export qui ne peut pas dater
+  //                 ce qu'il transporte est inexploitable : on le réappliquerait aveuglément des
+  //                 semaines plus tard.
+  // Les deux noms sont volontairement distincts de `ts`, que effValue lit encore comme alias
+  // historique de `base` — les confondre périmerait les corrections d'anciens formats au lieu de les
+  // épargner.
+  const dateDe = field === "vol" ? "pris" : field === "price" ? "saisiPrix" : null;
+  if (dateDe) {
+    if (Number.isFinite(n)) o[dateDe] = Number(nowSec) || 0;
+    else delete o[dateDe];
   }
   if (o.price != null || o.vol != null) { o.base = Number(baseUpdated) || 0; store[key] = o; }
   else delete store[key];
@@ -693,6 +703,33 @@ export function groupOverridesByTerminal(store, actif, nowSec = Date.now() / 100
     .sort((a, b) => (b.actif ? 1 : 0) - (a.actif ? 1 : 0)
       || b.corrections - a.corrections
       || a.terminal.localeCompare(b.terminal, "fr"));
+}
+
+// Met à niveau les corrections déjà posées chez l'utilisateur, au chargement. Deux règles, et la
+// seconde est la plus importante des deux :
+//
+//   1. `ts` -> `base`. L'alias historique reste LU par effValue (compat ascendante), mais l'export
+//      ne doit pas avoir à connaître deux noms pour la même ancre : il en manquerait un le jour où
+//      un troisième apparaîtrait. La normalisation ne change aucune décision de fraîcheur —
+//      effValue traitait déjà les deux à l'identique.
+//   2. AUCUNE date de saisie n'est inventée. Un prix corrigé avant `saisiPrix` s'exporte « date
+//      inconnue » et le reste : lui poser la date du jour le ferait passer pour frais alors qu'il
+//      peut dater de trois patchs, et c'est exactement la correction qu'on réappliquerait à tort.
+//      Même prudence qu'effValue avec `pris` absent — on épargne les formats antérieurs plutôt que
+//      de les périmer, et ici on refuse aussi de les rajeunir.
+//
+// Renvoie { store, migres } ; `migres` à 0 = rien à persister (même forme que `migrerRefus`).
+export function migrerCorrections(store) {
+  const s = store || {};
+  let migres = 0;
+  for (const cle of Object.keys(s)) {
+    const o = s[cle];
+    if (!o || o.base != null || o.ts == null) continue;
+    o.base = o.ts;
+    delete o.ts;
+    migres++;
+  }
+  return { store: s, migres };
 }
 
 // ---------- État partageable (URL / localStorage) ----------
@@ -1997,11 +2034,18 @@ export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, aut
 // Dépose des SCU à une station : ils quittent la soute SANS être vendus. Troisième sortie du fret,
 // et souvent la bonne quand le seul débouché est saturé — on libère la place sans vendre à perte.
 // Renvoie { hold, entrepots } ; les lots déposés gardent leur prix payé, c'est du capital immobilisé.
-export function storeFromHold(hold, entrepots, name, units, station) {
+//
+// `at` = horodatage du DÉPÔT (epoch en secondes), INJECTÉ comme celui de `loadHold` : une fonction
+// pure ne lit pas l'horloge. Le lot le porte sous `deposeAt` — un nom à lui, distinct du `at` de
+// chargement que `sellFromHold` laisse tomber en reconstruisant les lots consommés. Sans cette date,
+// une liste « j'ai laissé 170 SCU d'or à Ruin Station » ne dit pas si c'était hier ou il y a trois
+// patchs. Absente (0), elle s'exporte « date inconnue » : on n'invente pas celle du jour.
+export function storeFromHold(hold, entrepots, name, units, station, at) {
   const r = sellFromHold(hold, name, units, 0); // même consommation FIFO, sans recette
   if (!r.vendu) return { hold, entrepots };
   const deja = entrepots[station] || [];
-  return { hold: r.hold, entrepots: { ...entrepots, [station]: deja.concat(r.lots) } };
+  const deposes = r.lots.map((l) => ({ ...l, deposeAt: at || 0 }));
+  return { hold: r.hold, entrepots: { ...entrepots, [station]: deja.concat(deposes) } };
 }
 
 // Reprend `units` SCU d'une commodité DÉPOSÉE à une station : elle repasse en soute avec son prix
@@ -2011,6 +2055,11 @@ export function storeFromHold(hold, entrepots, name, units, station) {
 // FIFO, à recette nulle — reprendre n'est pas une vente, c'est le dépôt joué à l'envers.
 // La station vidée DISPARAÎT plutôt que de laisser un entrepôt à zéro : il s'afficherait comme un
 // lieu où l'on a du fret.
+//
+// La date du dépôt (`deposeAt`) NE REMONTE PAS avec le lot, et ce n'est pas un oubli : reprendre
+// n'est pas acheter. `sellFromHold` reconstruit les lots consommés en { name, units, paid, from } —
+// le lot rendu à la soute n'a donc ni `at` de chargement ni `deposeAt`, ce qui est exactement juste :
+// il n'a pas été chargé maintenant, et il n'est plus déposé nulle part.
 export function takeFromStore(hold, entrepots, name, units, station) {
   const stock = entrepots[station];
   if (!stock || !stock.length) return { hold, entrepots };
@@ -2243,4 +2292,145 @@ export function decodeJourney(str) {
   } catch {
     return null;
   }
+}
+
+// ---------- Exports datés : entrepôts et corrections (cf. ADR-006) ----------
+// Deux sorties, un seul format, décidé une fois pour les deux : ISO 8601 UTC à la seconde et
+// en-tête versionné. Les traiter séparément aurait fait diverger deux formats de date dans le même
+// dépôt, et une correction périme ici PAR SA DATE — deux façons de l'écrire, c'est deux façons de
+// se tromper en la relisant.
+//
+// Le format seulement : où va le texte ne regarde pas ce module. Voir ADR-006 §3.
+export const FORMAT_EXPORT = 1;
+
+// Une date, écrite pour être relue sur une autre machine, dans un autre fuseau, des mois plus tard.
+// `null` quand la date n'existe pas — JAMAIS l'heure courante en remplacement : c'est la règle
+// commune aux deux exports, et le seul moyen de distinguer « déposé hier » de « je n'en sais rien ».
+export function isoUTC(sec) {
+  const n = Number(sec);
+  if (!(n > 0) || !Number.isFinite(n)) return null;
+  // TRONQUÉE, pas arrondie : la seconde PENDANT laquelle le geste a eu lieu. Arrondir daterait un
+  // dépôt de 20:13:20,7 à 20:13:21, une seconde après qu'il s'est produit.
+  return new Date(Math.floor(n) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+export function secDepuisISO(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? Math.round(t / 1000) : null;
+}
+// En-tête commun aux deux sorties : le numéro de format d'abord (sans lui, la première évolution
+// casse tous les fichiers déjà émis), la date d'émission ensuite.
+export const enteteExport = (type, nowSec) => ({ v: FORMAT_EXPORT, type, emis: isoUTC(nowSec) });
+
+// Séparateur de milliers DÉTERMINISTE (espace simple). `toLocaleString("fr-FR")` aurait fait
+// l'affaire à l'écran, mais son séparateur dépend de l'ICU embarquée : un export comparé en test
+// deviendrait vert ou rouge selon la build de Node. Un export doit être reproductible.
+const milliers = (n) => String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
+// L'export des corrections : un OBJET sérialisable, parce que celui-ci est fait pour être relu par
+// la machine (cf. relireCorrections) autant que par un humain.
+// UNE ENTRÉE PAR CHAMP corrigé : une même clé peut porter un prix ET un volume, et les deux ne
+// portent pas la même date de saisie. Deux dates par entrée, qui ne disent pas la même chose :
+//   `saisi` = quand JE l'ai corrigée (`saisiPrix` pour un prix, `pris` pour un volume) ;
+//   `base`  = la date UEX du point CONTRE laquelle la correction vaut.
+// Seules les clés à TROIS segments sortent : les relevés de tarif d'autoload vivent dans un store
+// séparé sous une clé à deux segments, et n'ont ni date UEX de référence ni péremption (même
+// frontière que `groupOverridesByTerminal`).
+export function exporterCorrections(overrides, nowSec) {
+  const store = overrides || {};
+  const corrections = [];
+  for (const cle of Object.keys(store)) {
+    const seg = cle.split("|");
+    if (seg.length !== 3) continue;
+    const [commodite, terminal, side] = seg;
+    const o = store[cle] || {};
+    const commun = {
+      commodite, terminal,
+      cote: side === "buy" ? "achat" : "vente",
+      base: isoUTC(o.base != null ? o.base : o.ts),
+    };
+    if (o.price != null) corrections.push({ ...commun, champ: "prix", valeur: o.price, saisi: isoUTC(o.saisiPrix) });
+    if (o.vol != null) corrections.push({ ...commun, champ: "volume", valeur: o.vol, saisi: isoUTC(o.pris) });
+  }
+  // Rangé PAR STATION, comme la vue Corrections (ADR-003) : c'est ainsi qu'on relit ses relevés,
+  // comptoir par comptoir. L'ordre est total et explicite — un export dont l'ordre dépend de celui
+  // des clés de localStorage ne se compare pas d'une machine à l'autre.
+  const rang = (c) => `${c.cote === "achat" ? 0 : 1}${c.champ === "prix" ? 0 : 1}`;
+  corrections.sort((a, b) =>
+    a.terminal.localeCompare(b.terminal, "fr")
+    || a.commodite.localeCompare(b.commodite, "fr")
+    || rang(a).localeCompare(rang(b)));
+  // Les champs sont réordonnés pour que chaque entrée se lise dans l'ordre où on la décrit.
+  return {
+    ...enteteExport("corrections", nowSec),
+    corrections: corrections.map((c) => ({
+      commodite: c.commodite, terminal: c.terminal, cote: c.cote,
+      champ: c.champ, valeur: c.valeur, saisi: c.saisi, base: c.base,
+    })),
+  };
+}
+
+// La relecture : que vaut encore chaque correction d'un export, aujourd'hui ? Un verdict par entrée,
+// jamais une application silencieuse.
+//   `appliquer`     — datée, ancrée, et le point n'a pas été republié depuis ;
+//   `périmée-uex`   — UEX a republié ce point après l'ancrage ;
+//   `périmée-âge`   — un VOLUME saisi il y a plus de DUREE_VOL (un prix ne vieillit jamais) ;
+//   `date-inconnue` — format antérieur, sans date de saisie : signalée, pas acceptée en silence.
+//
+// Les deux premières règles ne sont pas réécrites ici : on reconstruit la correction et on la
+// soumet à `effValue`, la MÊME fonction que le rendu. Deux implémentations de la péremption
+// finiraient par diverger, et c'est la relecture qui aurait tort sans qu'on le voie.
+// `releves` = { "Commodité|Terminal|side": date UEX courante du point }. Un point absent n'est pas
+// rejeté : ne pas connaître le relevé n'est pas la même chose que le savoir plus récent.
+export function relireCorrections(exporte, releves = {}, nowSec = Date.now() / 1000, dureeVol = DUREE_VOL) {
+  const entrees = exporte && Array.isArray(exporte.corrections) ? exporte.corrections : [];
+  return entrees.map((c) => {
+    const side = c.cote === "achat" ? "buy" : "sell";
+    const saisi = secDepuisISO(c.saisi);
+    // `base` null couvre deux cas indistinguables à l'export (ancre à 0, ancre absente) ; on les
+    // relit comme le store les écrit — `setInStore` pose toujours `Number(baseUpdated) || 0`.
+    const o = { base: secDepuisISO(c.base) || 0 };
+    if (c.champ === "prix") o.price = c.valeur;
+    else { o.vol = c.valeur; if (saisi != null) o.pris = saisi; }
+    const r = effValue(o, null, null, releves[ovKey(c.commodite, c.terminal, side)], nowSec, dureeVol);
+    const verdict = r.stale ? "périmée-uex"
+      : r.staleVol ? "périmée-âge"
+      : saisi == null ? "date-inconnue"
+      : "appliquer";
+    return { ...c, verdict };
+  });
+}
+
+// L'export des entrepôts : du TEXTE, et c'est délibéré — celui-ci n'est pas fait pour être relu par
+// la machine mais collé dans un bloc-notes, un second écran ou un canal Discord d'org. Du JSON y
+// serait illisible là où il sert.
+// UNE LIGNE PAR LOT, pas par commodité : deux lots de la même commodité peuvent avoir été déposés
+// des jours d'écart et venir de stations différentes — les regrouper effacerait précisément ce que
+// cet export existe pour dire.
+export function exporterEntrepots(entrepots, nowSec) {
+  const e = entrepots || {};
+  const stations = Object.keys(e)
+    .filter((s) => Array.isArray(e[s]) && e[s].length)
+    .sort((a, b) => a.localeCompare(b, "fr"));
+  const entete = enteteExport("entrepots", nowSec);
+  const lignes = [`# Best Hauling — entrepôts · format v${entete.v} · émis ${entete.emis}`];
+  let scuTotal = 0, investTotal = 0;
+  for (const station of stations) {
+    const lots = e[station];
+    const scu = lots.reduce((s, l) => s + (l.units || 0), 0);
+    const invest = lots.reduce((s, l) => s + (l.units || 0) * (l.paid || 0), 0);
+    scuTotal += scu;
+    investTotal += invest;
+    lignes.push("", `## ${station}`);
+    for (const l of lots) {
+      const date = isoUTC(l.deposeAt);
+      lignes.push(`- ${milliers(l.units || 0)} SCU · ${l.name} @ ${milliers(l.paid || 0)} aUEC/SCU`
+        + ` · ${date ? `déposé ${date}` : "déposé à une date inconnue"}`
+        + ` · ${l.from ? `chargé à ${l.from}` : "provenance inconnue"}`);
+    }
+    lignes.push(`  sous-total ${milliers(scu)} SCU · ${milliers(invest)} aUEC immobilisés`);
+  }
+  // Les deux chiffres que la carte affiche déjà, repris en pied : de l'argent déjà sorti.
+  lignes.push("", `Total : ${milliers(scuTotal)} SCU déposés · ${milliers(investTotal)} aUEC immobilisés`);
+  return lignes.join("\n");
 }

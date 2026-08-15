@@ -26,6 +26,8 @@ import {
   cleApresRetrait, reindexerRangsJambe, detacherLotsDeJambe,
   soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   stationTree, groupOverridesByTerminal,
+  isoUTC, secDepuisISO, FORMAT_EXPORT, migrerCorrections,
+  exporterCorrections, relireCorrections, exporterEntrepots,
 } from "./logic.mjs";
 
 // ---------- Temps de trajet ----------
@@ -717,13 +719,13 @@ test("ovKey : clé stable commodité|terminal|side", () => {
 });
 
 test("setInStore : enregistre prix + base, efface un champ, supprime la clé si vide", () => {
-  // Horloge passée explicitement : un volume enregistre son heure de saisie (`pris`), qui serait
-  // sinon celle du run et rendrait la comparaison non déterministe.
+  // Horloge passée explicitement : chaque champ enregistre son heure de saisie (`pris` pour un
+  // volume, `saisiPrix` pour un prix), qui serait sinon celle du run — comparaison non déterministe.
   const store = {};
   setInStore(store, "A|T|buy", "price", "7000", 111, MAINTENANT);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, base: 111 }); // valeur arrondie + base, pas de `pris`
+  assert.deepEqual(store["A|T|buy"], { price: 7000, saisiPrix: MAINTENANT, base: 111 }); // arrondi + base
   setInStore(store, "A|T|buy", "vol", 50, 222, MAINTENANT);
-  assert.deepEqual(store["A|T|buy"], { price: 7000, vol: 50, base: 222, pris: MAINTENANT });
+  assert.deepEqual(store["A|T|buy"], { price: 7000, saisiPrix: MAINTENANT, vol: 50, base: 222, pris: MAINTENANT });
   setInStore(store, "A|T|buy", "price", "", 222, MAINTENANT); // efface le prix
   assert.deepEqual(store["A|T|buy"], { vol: 50, base: 222, pris: MAINTENANT });
   setInStore(store, "A|T|buy", "vol", null, 222, MAINTENANT);  // plus rien -> clé supprimée
@@ -759,7 +761,7 @@ test("effFromStore : SUPPRIME du store la correction périmée par un relevé pl
   assert.equal("k" in store, false);   // effet de bord : périmée -> supprimée
 });
 
-test("setInStore : un volume enregistre l'heure de saisie, un prix non", () => {
+test("setInStore : un volume est daté sous `pris`, un prix sous `saisiPrix` — jamais l'un sous l'autre", () => {
   const store = {};
   setInStore(store, "A|T|buy", "vol", 12, 111, MAINTENANT);
   assert.equal(store["A|T|buy"].pris, MAINTENANT);
@@ -773,7 +775,7 @@ test("setInStore : effacer le volume retire aussi son heure de saisie", () => {
   setInStore(store, "k", "vol", 12, 111, MAINTENANT);
   setInStore(store, "k", "price", 7000, 111, MAINTENANT);
   setInStore(store, "k", "vol", null, 111, MAINTENANT);
-  assert.deepEqual(store.k, { price: 7000, base: 111 }); // ni vol, ni pris
+  assert.deepEqual(store.k, { price: 7000, saisiPrix: MAINTENANT, base: 111 }); // ni vol, ni pris
 });
 
 test("effFromStore : le volume périmé quitte le store, le prix y reste", () => {
@@ -4171,4 +4173,244 @@ test("classement : la route la plus rentable passe DEVANT (contre-exemple 1 de l
   assert.equal(classe[0], grosse);
   // Et la fiabilité dit toujours la vérité sur la donnée, sans commander le classement.
   assert.ok(petite.fiabilite > grosse.fiabilite, "la fraîche et publiée reste la mieux notée");
+});
+
+// ---------- Exports datés : entrepôts (#46) et corrections (#47) ----------
+// Un seul format pour les deux sorties : ISO 8601 UTC à la seconde, en-tête versionné. Les tests
+// figent l'horloge (MAINTENANT) et comparent la sortie ENTIÈRE — un export dont on ne vérifie que
+// des morceaux laisse passer exactement ce qui le rend inexploitable : une date manquante.
+
+test("isoUTC : ISO 8601 UTC à la seconde, suffixe Z, jamais de millisecondes", () => {
+  assert.equal(isoUTC(MAINTENANT), "2023-11-14T22:13:20Z");
+  // Tronquée, jamais arrondie : la seconde PENDANT laquelle le geste a eu lieu.
+  assert.equal(isoUTC(1699992800.7), "2023-11-14T20:13:20Z");
+  // Pas de date -> null, et surtout pas la date du jour : c'est toute la règle des deux issues.
+  for (const rien of [0, null, undefined, NaN, ""]) assert.equal(isoUTC(rien), null);
+});
+
+test("secDepuisISO : l'aller-retour rend l'epoch d'origine", () => {
+  assert.equal(secDepuisISO(isoUTC(MAINTENANT)), MAINTENANT);
+  assert.equal(secDepuisISO(null), null);
+  assert.equal(secDepuisISO("pas une date"), null);
+});
+
+// ---------- #47 : setInStore date AUSSI les prix ----------
+test("setInStore : un prix corrigé porte enfin sa date de saisie", () => {
+  // Avant : `o.pris` n'était posé que sous `if (field === "vol")`, donc rien ne datait un prix —
+  // et une correction qu'on ne peut pas dater ne peut pas périmer (spec du 2026-08-12).
+  const store = {};
+  setInStore(store, "A|T|buy", "price", 7000, 111, MAINTENANT);
+  assert.equal(store["A|T|buy"].saisiPrix, MAINTENANT);
+  // `pris` reste au VOLUME seul : lui seul a une durée de vie, et les confondre périmerait les prix.
+  assert.equal("pris" in store["A|T|buy"], false);
+  // `ts` n'est pas touché non plus : effValue le lit encore comme alias historique de `base`.
+  assert.equal("ts" in store["A|T|buy"], false);
+});
+
+test("setInStore : effacer le prix retire aussi sa date de saisie", () => {
+  const store = {};
+  setInStore(store, "k", "price", 7000, 111, MAINTENANT);
+  setInStore(store, "k", "vol", 12, 111, MAINTENANT);
+  setInStore(store, "k", "price", "", 111, MAINTENANT);
+  assert.deepEqual(store.k, { vol: 12, base: 111, pris: MAINTENANT }); // ni price, ni saisiPrix
+});
+
+test("setInStore : dater le prix ne périme rien — effValue l'applique toujours", () => {
+  // Garde-fou : `saisiPrix` est une date de PROVENANCE, pas une horloge. Un prix ne vieillit pas.
+  const store = {};
+  setInStore(store, "k", "price", 7000, 1000, IL_Y_A(30 * 86400)); // corrigé il y a un mois
+  const r = effValue(store.k, 100, 50, 900, MAINTENANT);
+  assert.equal(r.price, 7000);
+  assert.equal(r.oprice, true);
+  assert.equal(r.stale, false);
+  assert.equal(r.staleVol, false);
+});
+
+// ---------- #47 : migration des corrections déjà posées ----------
+test("migrerCorrections : n'invente JAMAIS une date de saisie pour un prix d'un format antérieur", () => {
+  // Le piège de #47 : leur poser la date du jour les ferait passer pour fraîches alors qu'elles
+  // peuvent dater de trois patchs. On préfère « inconnue » à « fausse ».
+  const store = OV({ "Gold|Ruin Station|buy": { price: 7000, base: 1000 } });
+  const r = migrerCorrections(store);
+  assert.equal("saisiPrix" in r.store["Gold|Ruin Station|buy"], false);
+  assert.deepEqual(r.store["Gold|Ruin Station|buy"], { price: 7000, base: 1000 });
+});
+
+test("migrerCorrections : `ts`, alias historique de `base`, est normalisé — l'export n'a qu'un nom à lire", () => {
+  const store = OV({ "Gold|Ruin Station|buy": { price: 7000, ts: 1000 } });
+  const r = migrerCorrections(store);
+  assert.equal(r.migres, 1);
+  assert.deepEqual(r.store["Gold|Ruin Station|buy"], { price: 7000, base: 1000 });
+  // Et la fraîcheur ne bouge pas d'un iota : effValue lisait déjà `ts` comme `base`.
+  assert.equal(effValue(r.store["Gold|Ruin Station|buy"], 1, 1, 1500).stale, true);
+});
+
+test("migrerCorrections : rien à faire -> `migres` à 0 (l'appelant n'écrit pas dans localStorage)", () => {
+  const store = OV({ "Gold|Ruin Station|buy": { price: 7000, base: 1000, saisiPrix: MAINTENANT } });
+  assert.equal(migrerCorrections(store).migres, 0);
+});
+
+// ---------- #47 : l'export des corrections ----------
+const OV_EXPORT = () => OV({
+  "Gold|Ruin Station|buy": { price: 7000, vol: 120, base: 1699000000, saisiPrix: IL_Y_A(7200), pris: IL_Y_A(7200) },
+  "Laranite|GrimHEX|sell": { price: 31200, base: 1698000000 },          // format antérieur : pas de saisiPrix
+  "autoload|GrimHEX": { k: 1.4, amount: 900, scu: 100 },                 // clé à DEUX segments
+});
+
+test("exporterCorrections : en-tête versionné, deux dates par correction, tout en ISO 8601 UTC", () => {
+  assert.deepEqual(exporterCorrections(OV_EXPORT(), MAINTENANT), {
+    v: 1,
+    type: "corrections",
+    emis: "2023-11-14T22:13:20Z",
+    corrections: [
+      { commodite: "Laranite", terminal: "GrimHEX", cote: "vente", champ: "prix",
+        valeur: 31200, saisi: null, base: "2023-10-22T18:40:00Z" },
+      { commodite: "Gold", terminal: "Ruin Station", cote: "achat", champ: "prix",
+        valeur: 7000, saisi: "2023-11-14T20:13:20Z", base: "2023-11-03T08:26:40Z" },
+      { commodite: "Gold", terminal: "Ruin Station", cote: "achat", champ: "volume",
+        valeur: 120, saisi: "2023-11-14T20:13:20Z", base: "2023-11-03T08:26:40Z" },
+    ],
+  });
+});
+
+test("exporterCorrections : le numéro de format est là, sinon la première évolution casse tout", () => {
+  assert.equal(exporterCorrections({}, MAINTENANT).v, FORMAT_EXPORT);
+  assert.equal(FORMAT_EXPORT, 1);
+});
+
+test("exporterCorrections : les relevés d'autoload (clé à DEUX segments) n'y entrent pas", () => {
+  const sorti = exporterCorrections(OV_EXPORT(), MAINTENANT).corrections;
+  assert.equal(sorti.some((c) => c.commodite === "autoload"), false);
+  assert.equal(sorti.length, 3); // 2 champs sur Ruin Station + 1 sur GrimHEX, et rien d'autre
+});
+
+test("exporterCorrections : un prix d'un format antérieur sort « date de saisie inconnue », pas daté d'aujourd'hui", () => {
+  const c = exporterCorrections(OV({ "Laranite|GrimHEX|sell": { price: 31200, base: 1698000000 } }), MAINTENANT);
+  assert.equal(c.corrections[0].saisi, null);
+});
+
+test("exporterCorrections : une date UEX absente ou nulle sort `null`, jamais un epoch nu", () => {
+  const c = exporterCorrections(OV({ "Gold|T|buy": { price: 10, base: 0 }, "Iron|T|buy": { price: 10 } }), MAINTENANT);
+  assert.equal(c.corrections.length, 2);
+  for (const e of c.corrections) assert.equal(e.base, null);
+});
+
+// ---------- #47 : la relecture, qui réutilise effValue plutôt que de réécrire la règle ----------
+const RELU = (o, releves = {}, now = MAINTENANT) =>
+  relireCorrections(exporterCorrections(OV(o), MAINTENANT), releves, now).map((c) => c.verdict);
+
+test("relireCorrections : les quatre verdicts", () => {
+  // 1. appliquer — datée, ancrée, et le point n'a pas été republié depuis.
+  assert.deepEqual(RELU({ "Gold|T|buy": { price: 7000, base: 1000, saisiPrix: IL_Y_A(60) } },
+    { "Gold|T|buy": 900 }), ["appliquer"]);
+  // 2. périmée-uex — UEX a republié le point APRÈS l'ancrage (c'est exactement `stale`).
+  assert.deepEqual(RELU({ "Gold|T|buy": { price: 7000, base: 1000, saisiPrix: IL_Y_A(60) } },
+    { "Gold|T|buy": 1500 }), ["périmée-uex"]);
+  // 3. périmée-âge — un VOLUME saisi il y a plus de DUREE_VOL.
+  assert.deepEqual(RELU({ "Gold|T|buy": { vol: 120, base: 1000, pris: IL_Y_A(4 * 3600) } },
+    { "Gold|T|buy": 900 }), ["périmée-âge"]);
+  // 4. date-inconnue — format antérieur : signalée, jamais appliquée en silence.
+  assert.deepEqual(RELU({ "Gold|T|buy": { price: 7000, base: 1000 } },
+    { "Gold|T|buy": 900 }), ["date-inconnue"]);
+});
+
+test("relireCorrections : un prix ne périme JAMAIS par l'âge, si vieux soit-il", () => {
+  assert.deepEqual(RELU({ "Gold|T|buy": { price: 7000, base: 1000, saisiPrix: IL_Y_A(90 * 86400) } },
+    { "Gold|T|buy": 900 }), ["appliquer"]);
+});
+
+test("relireCorrections : un point dont on n'a aucun relevé n'est pas rejeté par UEX", () => {
+  assert.deepEqual(RELU({ "Gold|T|buy": { price: 7000, base: 1000, saisiPrix: IL_Y_A(60) } }, {}), ["appliquer"]);
+});
+
+test("relireCorrections : UEX l'emporte sur l'âge — un volume vieux ET republié est rejeté par UEX", () => {
+  assert.deepEqual(RELU({ "Gold|T|buy": { vol: 120, base: 1000, pris: IL_Y_A(4 * 3600) } },
+    { "Gold|T|buy": 1500 }), ["périmée-uex"]);
+});
+
+test("relireCorrections : rend la correction entière, pas seulement son verdict", () => {
+  const r = relireCorrections(exporterCorrections(
+    OV({ "Gold|Ruin Station|buy": { price: 7000, base: 1000, saisiPrix: IL_Y_A(60) } }), MAINTENANT), {}, MAINTENANT);
+  assert.deepEqual(r, [{ commodite: "Gold", terminal: "Ruin Station", cote: "achat", champ: "prix",
+    valeur: 7000, saisi: "2023-11-14T22:12:20Z", base: "1970-01-01T00:16:40Z", verdict: "appliquer" }]);
+});
+
+// ---------- #46 : le dépôt est daté ----------
+test("storeFromHold : chaque lot déposé porte la date du dépôt, INJECTÉE (aucune horloge cachée)", () => {
+  const h = loadHold([], [ligne(2200, 1000, 1400)], "Megumi", 1);
+  const r = storeFromHold(h, {}, "Gold", 2170, "Ruin Station — Pyro", MAINTENANT);
+  assert.equal(r.entrepots["Ruin Station — Pyro"][0].deposeAt, MAINTENANT);
+  // Sans date fournie : 0, comme `loadHold` — surtout pas l'heure du run.
+  assert.equal(storeFromHold(h, {}, "Gold", 10, "X").entrepots.X[0].deposeAt, 0);
+});
+
+test("takeFromStore : reprendre n'est pas acheter — la date du dépôt ne devient pas un `at` de chargement", () => {
+  const h = loadHold([], [ligne(2200, 1000, 1400)], "Megumi", 1);
+  const d = storeFromHold(h, {}, "Gold", 2170, "Ruin Station — Pyro", MAINTENANT);
+  const repris = takeFromStore([], d.entrepots, "Gold", 170, "Ruin Station — Pyro").hold[0];
+  assert.equal("at" in repris, false);
+  assert.equal("deposeAt" in repris, false);
+  assert.deepEqual(repris, { name: "Gold", units: 170, paid: 1000, from: "Megumi" });
+});
+
+test("storeFromHold/takeFromStore : dater le dépôt ne change rien à l'aller-retour", () => {
+  // L'invariant de #10 reste entier : déposer puis tout reprendre rend exactement la soute d'avant.
+  const h = loadHold([], [ligne(2200, 1000, 1400)], "Megumi", 1);
+  const d = storeFromHold(h, {}, "Gold", 2170, "Ruin Station — Pyro", MAINTENANT);
+  const t = takeFromStore(d.hold, d.entrepots, "Gold", 2170, "Ruin Station — Pyro");
+  assert.equal(holdScu(t.hold), holdScu(h));
+  assert.deepEqual(t.entrepots, {});
+});
+
+// ---------- #46 : l'export des entrepôts ----------
+test("exporterEntrepots : liste par station, une ligne par lot, sortie comparée en entier", () => {
+  const entrepots = {
+    "Ruin Station — Pyro": [
+      { name: "Gold", units: 170, paid: 1000, from: "Megumi", deposeAt: IL_Y_A(7200) },
+      { name: "Laranite", units: 30, paid: 900, from: "Checkmate", deposeAt: IL_Y_A(4 * 3600) },
+    ],
+    "Area18 — Stanton": [{ name: "Gold", units: 5, paid: 1200, from: "Megumi", deposeAt: MAINTENANT }],
+  };
+  assert.equal(exporterEntrepots(entrepots, MAINTENANT), [
+    "# Best Hauling — entrepôts · format v1 · émis 2023-11-14T22:13:20Z",
+    "",
+    "## Area18 — Stanton",
+    "- 5 SCU · Gold @ 1 200 aUEC/SCU · déposé 2023-11-14T22:13:20Z · chargé à Megumi",
+    "  sous-total 5 SCU · 6 000 aUEC immobilisés",
+    "",
+    "## Ruin Station — Pyro",
+    "- 170 SCU · Gold @ 1 000 aUEC/SCU · déposé 2023-11-14T20:13:20Z · chargé à Megumi",
+    "- 30 SCU · Laranite @ 900 aUEC/SCU · déposé 2023-11-14T18:13:20Z · chargé à Checkmate",
+    "  sous-total 200 SCU · 197 000 aUEC immobilisés",
+    "",
+    "Total : 205 SCU déposés · 203 000 aUEC immobilisés",
+  ].join("\n"));
+});
+
+test("exporterEntrepots : un lot déposé AVANT ce correctif s'affiche « date inconnue », pas aujourd'hui", () => {
+  const entrepots = { "Ruin Station — Pyro": [{ name: "Gold", units: 170, paid: 1000, from: "Megumi" }] };
+  const texte = exporterEntrepots(entrepots, MAINTENANT);
+  assert.match(texte, /déposé à une date inconnue/);
+  assert.equal(texte.includes("déposé 2023-11-14T22:13:20Z"), false); // surtout pas la date d'émission
+});
+
+test("exporterEntrepots : une provenance perdue se dit, elle ne se devine pas", () => {
+  const texte = exporterEntrepots({ X: [{ name: "Gold", units: 1, paid: 0, deposeAt: MAINTENANT }] }, MAINTENANT);
+  assert.match(texte, /provenance inconnue/);
+});
+
+test("exporterEntrepots : rien de déposé -> l'en-tête daté et un total à zéro, jamais une chaîne vide", () => {
+  assert.equal(exporterEntrepots({}, MAINTENANT), [
+    "# Best Hauling — entrepôts · format v1 · émis 2023-11-14T22:13:20Z",
+    "",
+    "Total : 0 SCU déposés · 0 aUEC immobilisés",
+  ].join("\n"));
+});
+
+test("les deux exports partagent le même en-tête daté et le même numéro de format", () => {
+  // C'est la raison d'être de la PR unique : deux formats de date dans un même dépôt divergeraient.
+  const corr = exporterCorrections({}, MAINTENANT);
+  const entr = exporterEntrepots({}, MAINTENANT);
+  assert.equal(corr.emis, isoUTC(MAINTENANT));
+  assert.ok(entr.startsWith(`# Best Hauling — entrepôts · format v${corr.v} · émis ${corr.emis}`));
 });
