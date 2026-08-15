@@ -13,6 +13,7 @@
 //
 // Le calcul n'est pas ici : `tourneesEcoulement` vit dans logic.ts, pure et couverte par les tests
 // unitaires. Ce fichier ne fait que présenter.
+import { Fragment } from "react";
 import type { Tournee, Destination } from "../types.ts";
 
 // Le formateur de app.js est passé en prop plutôt qu'importé : app.js n'exporte rien (c'est un
@@ -167,11 +168,15 @@ export function VueTournee({ tournee: t, alternative: alt, systeme, toutSysteme,
             {alt.ecartPct != null ? <> <span className="muted">(+{alt.ecartPct.toFixed(1)} %)</span></> : null}
           </div>
           <div className="tour-alt-chemin">
+            {/* `Fragment` et non un <span> englobant : ici `.tour-alt-chemin` n'est pas un flex,
+                donc le rendu ne changerait pas — mais le motif est le même que celui qui a cassé
+                `.chain-path` (enfants sortis du contexte flex, espaces perdus). Autant ne pas le
+                laisser traîner. */}
             {alt.arrets.map((a, i) => (
-              <span key={i}>
+              <Fragment key={i}>
                 {i > 0 ? <span className="tour-fleche">→</span> : null}
                 {i > 0 ? " " : ""}{a.terminal} <span className="muted">({a.lignes.length})</span>{i < alt.arrets.length - 1 ? " " : ""}
-              </span>
+              </Fragment>
             ))}
           </div>
           <div className="tour-alt-note muted">À toi de trancher : l'app ne sait pas si tu as le temps, ni si c'est sur ton chemin.</div>
