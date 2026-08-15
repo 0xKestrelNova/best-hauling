@@ -91,10 +91,17 @@
              updateOvBadge() écrasait tout le bouton en textContent, ce texte survivait au repli et
              portait seul le nom accessible ; un aria-label statique y aurait figé le compteur. Il
              est maintenant masqué au repli comme les autres, donc l'aria-label est le seul à porter
-             « ✎ Corrections (3) » à ce moment-là — et updateOvBadge() le tient à jour AVEC le
+             « Corrections (3) » à ce moment-là — et updateOvBadge() le tient à jour AVEC le
              compteur, exactement comme copyShareLink() le fait pour #share. Le numéro, lui, cesse
-             d'être du balisage mort : il était détruit à chaque appel depuis toujours. -->
-        <button id="viewCorrections" class="vbtn" data-view="corrections" aria-label="✎ Corrections" title="Corrections locales (raccourci : 8)"><span class="rn">08</span><span class="rl">✎ Corrections</span></button>
+             d'être du balisage mort : il était détruit à chaque appel depuis toujours.
+
+             Le « ✎ » a disparu du libellé, et ce n'est pas de la coquetterie : MESURÉ, il coûte
+             20 px sur les 118 px que laisse le numéro, et « ✎ Corrections (12) » repartait à la
+             ligne — le bouton faisait deux fois la hauteur des sept autres. C'était d'ailleurs le
+             seul picto du rail, hérité de ce que ce libellé s'écrivait en JS au lieu d'être posé
+             ici comme les autres. Élargir le rail était l'autre voie : elle aggrave #86. -->
+
+        <button id="viewCorrections" class="vbtn" data-view="corrections" aria-label="Corrections" title="Corrections locales (raccourci : 8)"><span class="rn">08</span><span class="rl">Corrections</span></button>
       </div>
 
       <!-- Le libellé visible « Partager » OUVRE l'aria-label : sinon le nom accessible ne le

@@ -3175,15 +3175,25 @@ function startEdit(span) {
 // Met à jour le libellé du bouton de vue « Corrections » (compteur).
 function updateOvBadge() {
   const n = ovCount();
-  const libelle = n ? `✎ Corrections (${n})` : "✎ Corrections";
+  const bouton = $("viewCorrections");
+  const rl = bouton.querySelector(".rl");
   // On écrit DANS le .rl, au lieu d'écraser le bouton entier en textContent : cette écriture-là
   // détruisait le <span class="rn">, et le numéro de Corrections n'a donc jamais existé à l'écran
   // (#45). Le rail annonce une touche par numéro — il ne peut pas en manquer un sur huit.
-  $("viewCorrections").querySelector(".rl").textContent = libelle;
+  rl.textContent = "Corrections";
+  // Le compteur en plus petit, sans interlettrage : mesuré, il rend 20 px au libellé. Sans lui
+  // « Corrections (123) » repart à la ligne, et le bouton fait deux fois la hauteur des sept
+  // autres — un rail qui cède quand la place manque, c'est le symptôme de #86.
+  if (n) {
+    const compteur = document.createElement("span");
+    compteur.className = "ov-n";
+    compteur.textContent = `(${n})`;
+    rl.append(" ", compteur);
+  }
   // Le libellé étant maintenant dans un .rl, il disparaît au rail rétracté : l'aria-label est le
   // seul à porter le compteur à ce moment-là, et il doit donc suivre. Même geste que
   // copyShareLink() sur #share.
-  $("viewCorrections").setAttribute("aria-label", libelle);
+  bouton.setAttribute("aria-label", n ? `Corrections (${n})` : "Corrections");
 }
 
 function resetAllOverrides() {
@@ -3394,7 +3404,7 @@ function copierCorrections() {
 
 // Liste des relevés d'autoload, à côté des corrections locales et sur le même modèle : ils sont de
 // la même nature (mesures faites en jeu, purement locales), mais ils ne comptent PAS dans le badge
-// « ✎ Corrections (n) » et « Tout réinitialiser » ne les touche pas — ils ont leur propre store.
+// « Corrections (n) » du rail et « Tout réinitialiser » ne les touche pas — ils ont leur propre store.
 function autoloadListHTML() {
   const keys = Object.keys(AUTOLOAD_K);
   if (!keys.length) return "";

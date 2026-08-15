@@ -65,7 +65,7 @@ test("Rail : Corrections porte enfin son numéro, compteur compris (#45)", async
   // textContent, détruisant le <span class="rn"> posé dans index.html. Le numéro de Corrections
   // n'a jamais existé à l'écran — le réordonnancement ne vaut rien s'il le laisse muet.
   await expect(page.locator("#viewCorrections .rn")).toHaveText("08");
-  await expect(page.locator("#viewCorrections .rl")).toHaveText("✎ Corrections");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections");
 
   const cell = page.locator("#rows .editv").first();
   await cell.click();
@@ -74,10 +74,27 @@ test("Rail : Corrections porte enfin son numéro, compteur compris (#45)", async
 
   // Après réécriture du bouton par updateOvBadge : le numéro tient, le compteur arrive.
   await expect(page.locator("#viewCorrections .rn")).toHaveText("08");
-  await expect(page.locator("#viewCorrections .rl")).toHaveText("✎ Corrections (1)");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (1)");
   // Et le compteur reste dans le NOM ACCESSIBLE. Le libellé passant en .rl (masqué au repli),
   // le bouton gagne un aria-label tenu à jour — même patron que #share.
   await expect(page.locator("#viewCorrections")).toHaveAccessibleName(/Corrections \(1\)/);
+});
+
+test("Rail : Corrections tient sur UNE ligne, compteur compris (#45)", async ({ page }) => {
+  // Le numéro a pris 26 px des 144 px du bouton, et l'ancien « ✎ Corrections (1) » (125 px pour
+  // 118 px de place) repartait à la ligne : le bouton faisait 57 px contre 40 pour ses voisins.
+  // Défaut invisible aux assertions de contenu — il ne se voit qu'à l'écran, d'où ce test sur la
+  // GÉOMÉTRIE. Le « ✎ » a été retiré (20 px) et le compteur réduit : « Corrections (123) » tient.
+  const hauteur = async (id) => (await page.locator(`#${id}`).boundingBox()).height;
+  const reference = await hauteur("viewRoutes");
+
+  const cell = page.locator("#rows .editv").first();
+  await cell.click();
+  await cell.locator("input").fill("12345");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (1)");
+
+  expect(await hauteur("viewCorrections"), "le bouton Corrections passe à la ligne").toBe(reference);
 });
 
 test("Rail rétracté : les huit entrées restent distinctes, et le repli survit au rechargement (#45)", async ({ page }) => {
