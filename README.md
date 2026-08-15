@@ -23,18 +23,22 @@ reconstruites/redéployées **quand UEX a réellement changé** — et le site e
 
 ## Fonctionnalités
 
-Huit vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage, profit/heure) :
+Huit vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût, profit/voyage,
+profit/heure). Le menu les range **du général au particulier, les réglages en dernier** — recherche
+de fret, marché, soute, conclusion, réglage — et **« En route » est une sous-entrée de « Trajets »** :
+c'est la même question, posée depuis un point de départ donné. Le numéro affiché est la touche qui
+ouvre la vue.
 
 | Vue | Ce qu'elle fait |
 |-----|-----------------|
 | **Trajets simples** | Meilleures routes A→B, triables, triées par **profit net** par défaut. Une colonne **Fiabilité** dit ce qu'on sait de la donnée — fraîcheur du relevé × part du volume publiée par UEX — **sans entrer dans le tri** ([ADR-005](docs/superpowers/specs/2026-08-14-refonte-du-score-adr.md)). Coche **Multi commodité** : liste plutôt les **chargements combinés** (plusieurs commodités d'un même A vers un même B), dépliables (📦) pour voir le détail par commodité |
+| **↳ En route 🧭** | *Sous-entrée de Trajets.* Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
 | **Boucles ⇄** | Meilleures boucles A⇄B (une commodité à l'aller, une autre au retour) pour ne jamais repartir à vide |
-| **En route 🧭** | Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
-| **Corrections ✎** | Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
-| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
 | **Tournée 📦** | **Vider la soute en un minimum d'arrêts**, l'argent n'arbitrant qu'à nombre d'arrêts égal — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'**inverse** de « où écouler », qui classe par ce que ça rapporte : les deux questions sont différentes, et celle-ci répond à « je ne veux plus porter ça » (le cas d'une sortie butin). La tournée est un **plancher** — un point de vente sur six seulement publie sa capacité — et se recalcule après chaque arrêt réel. La meilleure tournée **à un arrêt de plus** s'affiche à côté, avec son écart chiffré : l'app ne sait pas si tu as le temps ([ADR-007](docs/superpowers/specs/2026-08-15-tournee-ecoulement-adr.md)) |
+| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
+| **Corrections ✎** | *Un réglage, pas une vue d'analyse — d'où la dernière place.* Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 
 Autres éléments :
 
@@ -76,18 +80,18 @@ d'aucune soute à remplir — le fret est déjà à bord. Elle honore en revanch
 filtres qu'« où écouler » (avant-postes, commodités légales, fraîcheur, système), plus **sa propre
 portée** : le système courant par défaut, ouvrable aux autres d'un menu.
 
-| Filtre | Trajets | Boucles | En route | Chaîne | Corrections | Commodités |
+| Filtre | Trajets | ↳ En route | Boucles | Chaîne | Commodités | Corrections |
 |--------|:-:|:-:|:-:|:-:|:-:|:-:|
 | Soute (SCU) | ✅ | ✅ | ✅ | ✅ | — | — |
 | Budget | ✅ | ✅ | ✅ | —¹ | — | — |
-| Commodité (recherche) | ✅ | ✅ | ✅ | —² | station | ✅ (tableau) |
-| Système d'achat | ✅ | ✅ | —³ | —³ | — | — |
+| Commodité (recherche) | ✅ | ✅ | ✅ | —² | ✅ (tableau) | station |
+| Système d'achat | ✅ | —³ | ✅ | —³ | — | — |
 | Fraîcheur | ✅ | ✅ | ✅ | ✅ | — | — |
 | Même système | ✅ | ✅ | ✅ | ✅ | — | — |
-| Exclure avant-postes | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| Légales uniquement | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Exclure avant-postes | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Légales uniquement | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Stock & demande | ✅ | ✅ | ✅ | ✅⁴ | — | — |
-| Frais d'autoload | ✅ | ✅ | ✅ | ✅ | — | —⁵ |
+| Frais d'autoload | ✅ | ✅ | ✅ | ✅ | —⁵ | — |
 
 ¹ Le budget se reconstitue à chaque vente → non pertinent pour une chaîne. Le **remplissage** de
 chaque saut l'ignore donc lui aussi : reprise dans le Voyage, qui le consomme, une jambe peut
