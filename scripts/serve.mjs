@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // Serveur statique minimal, sans dépendance — pour les tests Playwright et le dev local.
-// Usage : node scripts/serve.mjs [port]
+// Usage : node scripts/serve.mjs [port] [racine]
+//
+// La racine est un ARGUMENT depuis le socle v2 (ADR-008) : les tests servent désormais `dist/`,
+// c'est-à-dire ce que le build a réellement produit. Servir le dépôt les laissait passer au vert
+// sans jamais regarder le build — une suite qui ne peut pas échouer ne prouve rien.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize, sep } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const port = Number(process.argv[2]) || 4173;
@@ -58,5 +62,13 @@ export function startStaticServer(listenPort = port, root = process.cwd()) {
   return createStaticServer(root).listen(listenPort, HOST);
 }
 
+// La racine passée en CLI est résolue ICI, pas dans startStaticServer : celle-ci garde son défaut
+// `process.cwd()`, ce dont dépendent scripts/serve.test.mjs et l'usage `npm run serve`.
+const racineCli = process.argv[3] ? resolve(process.argv[3]) : process.cwd();
+
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) startStaticServer(port).on("listening", () => console.log(`serve → http://127.0.0.1:${port}`));
+if (isMain) {
+  startStaticServer(port, racineCli).on("listening", () =>
+    console.log(`serve → http://127.0.0.1:${port} (racine : ${racineCli})`)
+  );
+}

@@ -29,10 +29,20 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // La suite tourne sur `dist/`, c'est-à-dire sur CE QUI EST RÉELLEMENT PRODUIT (ADR-008 §4).
+  // Servir la racine du dépôt la laissait verte sans jamais regarder le build : elle aurait validé
+  // un `dist/` cassé, et le critère de fusion « les e2e passent sur le build Vite » n'aurait rien
+  // voulu dire. Le build est donc DANS la commande — un `dist/` périmé ferait passer des tests sur
+  // un artefact qui n'est plus celui du code sous les yeux.
+  //
+  // `reuseExistingServer` hors CI reste vrai, mais il change de sens : le serveur relit le disque à
+  // chaque requête, donc un `npm run build:site` relancé à côté est pris en compte sans redémarrer.
+  // En revanche il ne reconstruit pas tout seul — après une modification de source, relancer la
+  // suite entière (qui rejoue la commande) ou rebâtir à la main.
   webServer: {
-    command: `node scripts/serve.mjs ${PORT}`,
+    command: `npm run build:site && node scripts/serve.mjs ${PORT} dist`,
     url: `${ORIGINE}/index.html`,
     reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    timeout: 120_000,
   },
 });
