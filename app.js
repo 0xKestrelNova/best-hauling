@@ -22,7 +22,7 @@ import {
   soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
   encodeJourney, decodeJourney,
   migrerCorrections, exporterCorrections, exporterEntrepots,
-} from "./logic.mjs";
+} from "./logic.ts";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
 // `maxBox` = plafond de caisse du terminal de CHARGEMENT, quand on le connaît : c'est une propriété

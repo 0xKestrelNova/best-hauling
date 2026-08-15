@@ -6,9 +6,12 @@
 // visite, tandis que rail.js, lui, serait déjà là. `activate` purge tout cache au nom différent :
 // le bump garantit que la nouvelle page et son script arrivent ENSEMBLE.
 const CACHE = "best-hauling-v1.1.0";
-// Coquille précachée. Les woff2 (mêmes-origine depuis fonts/) sont mis en cache au premier
-// rendu par le gestionnaire fetch ci-dessous (stale-while-revalidate) -> hors-ligne complet.
-const SHELL = ["./", "./index.html", "./app.js", "./rail.js", "./logic.mjs", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
+// Coquille précachée. Cette liste est un DÉFAUT DE REPLI : en production, le build la remplace par
+// ce qu'il a réellement émis, noms hachés compris (vite.config.mjs, plugin best-hauling:precache).
+// `logic.mjs` n'y figure plus depuis qu'il est devenu `logic.ts` (ADR-008 §5) — un fichier
+// TypeScript n'est pas servi au navigateur, il est bundlé dans l'entrée. Le laisser aurait fait
+// rejeter `addAll` EN BLOC, qui est atomique, et supprimé tout le hors-ligne au lieu de le dégrader.
+const SHELL = ["./", "./index.html", "./app.js", "./rail.js", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

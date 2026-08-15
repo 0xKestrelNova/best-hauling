@@ -176,17 +176,27 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
                             │ artefact Pages
 ┌─ Front (statique, navigateur) ────────────────────────────────┐
 │  index.html  (+ <meta> Content-Security-Policy)               │
-│    ├─ logic.mjs   ← fonctions PURES (calcul), testées         │
+│    ├─ logic.ts    ← fonctions PURES (calcul), testées         │
 │    ├─ app.js      ← module ES : rendu DOM, état, interactions │
 │    └─ rail.js     ← bascule du menu (script classique)        │
 │  sw.js (service worker) + manifest.webmanifest → PWA offline  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-**Séparation clé** : toute la logique de calcul sans DOM vit dans [`logic.mjs`](logic.mjs)
+**Séparation clé** : toute la logique de calcul sans DOM vit dans [`logic.ts`](logic.ts)
 (temps de trajet, score, `computeUnits`, **filtres partagés** par vue, corrections, remplissage glouton,
 chaîne, **graphe de marché**, **résumés de commodités**, décodage d'état…), importée à la fois par
 `app.js` (navigateur) et par les tests. `app.js` ne fait que le rendu et le câblage.
+
+Depuis la v2, ce fichier est en **TypeScript**, et le vocabulaire du domaine vit à côté dans
+[`types.ts`](types.ts) — relevé sur les usages et les données réelles, pas inventé. Deux
+conséquences qui ne se devinent pas :
+
+- **Node exécute le TypeScript directement**, en effaçant les annotations (d'où `node >= 24` dans
+  `engines`). Le job de tests de la CI n'installe donc toujours **rien** : ni transpileur, ni cache.
+- **Effacer n'est pas vérifier.** `node --test` passerait au vert sur des annotations fausses.
+  C'est `npm run typecheck` (`tsc --noEmit`) qui le dit, et il a son propre job en CI pour que le
+  signal reste lisible.
 
 **Content-Security-Policy** : l'app injecte des données **communautaires** (noms de terminaux et de
 commodités venus d'UEX) dans `innerHTML`. L'échappement (`esc`) reste la défense qui compte, mais
@@ -500,7 +510,7 @@ survivent pas à la confrontation avec UEX — les 15 points de vente de Quantai
 `scu_sell = 0`, et les 50 000 SCU annoncés à TDD Area 18 dépassent le 99ᵉ centile des capacités
 publiées (médiane 539 SCU). C'est pourquoi l'app ne tente **aucune** remontée progressive du stock :
 elle se contente de dire qu'au-delà de trois heures, ta valeur ne vaut plus rien. La durée vit dans
-`DUREE_VOL` (`logic.mjs`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
+`DUREE_VOL` (`logic.ts`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
 
 Contrepartie assumée : sur trois heures un comptoir vidé a très probablement déjà tout récupéré, donc
 l'app reste trop pessimiste pendant une partie du délai. En échange, une correction survit à une
