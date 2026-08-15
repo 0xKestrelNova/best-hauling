@@ -33,7 +33,8 @@
     "noImplicitAny": false,
     "forceConsistentCasingInFileNames": true,
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx"
   },
-  "include": ["logic.ts", "types.ts"]
+  "include": ["logic.ts", "types.ts", "vues/**/*.tsx"]
 }

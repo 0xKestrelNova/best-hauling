@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -239,5 +240,5 @@ export default defineConfig({
   // nôtres quoi qu'on écrive. Nos trois-là n'en souffrent pas — ils n'agissent qu'en
   // generateBundle/closeBundle, soit après toute transformation, et `precache` liste dist/ tel
   // qu'il est : le CSS retravaillé par Tailwind y entre seul, sous son nom haché.
-  plugins: [tailwindcss(), cspDev(), horsBundle(), precache()],
+  plugins: [react(), tailwindcss(), cspDev(), horsBundle(), precache()],
 });
