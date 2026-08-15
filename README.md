@@ -30,7 +30,7 @@ Six vues, un même moteur de calcul (soute SCU + budget aUEC → unités, coût,
 | **Trajets simples** | Meilleures routes A→B, triables, triées par **profit net** par défaut. Une colonne **Fiabilité** dit ce qu'on sait de la donnée — fraîcheur du relevé × part du volume publiée par UEX — **sans entrer dans le tri** ([ADR-005](docs/superpowers/specs/2026-08-14-refonte-du-score-adr.md)). Coche **Multi commodité** : liste plutôt les **chargements combinés** (plusieurs commodités d'un même A vers un même B), dépliables (📦) pour voir le détail par commodité |
 | **Boucles ⇄** | Meilleures boucles A⇄B (une commodité à l'aller, une autre au retour) pour ne jamais repartir à vide |
 | **En route 🧭** | Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
-| **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut retient la commodité qui **rapporte** le plus une fois plafonnée par le stock et la demande, pas celle à la plus forte marge affichée |
+| **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
 | **Corrections ✎** | Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 
@@ -78,8 +78,10 @@ Tous les filtres ne s'appliquent pas à toutes les vues — comportement **garan
 | Stock & demande | ✅ | ✅ | ✅ | ✅⁴ | — | — |
 | Frais d'autoload | ✅ | ✅ | ✅ | ✅ | — | —⁵ |
 
-¹ Le budget se reconstitue à chaque vente → non pertinent pour une chaîne.
-² Une chaîne est multi-commodité par nature.
+¹ Le budget se reconstitue à chaque vente → non pertinent pour une chaîne. Le **remplissage** de
+chaque saut l'ignore donc lui aussi : reprise dans le Voyage, qui le consomme, une jambe peut
+charger moins que ce que la carte Chaîne annonçait.
+² Chaque saut charge **déjà** plusieurs commodités : le filtre n'aurait rien à réduire.
 ³ Le terminal de départ est déjà choisi → le menu « système d'achat » serait redondant.
 ⁴ La chaîne plafonne **toujours** au stock/demande de chaque saut.
 ⁵ Pas de quantité → pas de caisses → pas de frais : le board raisonne au SCU, et Corrections n'affiche aucun profit (elle ne fait qu'**héberger** les tarifs relevés, [voir plus bas](#frais-dautoload)).
@@ -199,7 +201,7 @@ Chaque jambe porte son propre manifeste, recalculé au marché et ajustable à l
 |--------|-------|-----------------------|
 | Trajets, Trajets multi, En route (tableaux) | `▶` sur une ligne | la route de cette ligne |
 | Boucles | `▶` sur une boucle | ses **deux** jambes, entrées par le bout qui touche le parcours |
-| Chaîne | `▶ Ajouter au voyage` | tous les sauts de la chaîne |
+| Chaîne | `▶ Ajouter au voyage` | tous les sauts de la chaîne, **avec le chargement de chacun** |
 | **En route** (carte Manifeste) | `▶ Ajouter au voyage` | le **chargement composé**, tes ajustements compris |
 
 **La règle de raccord** : une jambe s'ajoute si elle **part de la dernière station** du parcours,

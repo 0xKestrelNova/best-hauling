@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, tighterVolume,
-  scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain, chainLegNet,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
@@ -1416,6 +1416,21 @@ test("legsFromChain : chaîne (index) -> jambes nommées", () => {
   const legs = legsFromChain(chain, terminals);
   assert.deepEqual(legs.map((l) => [l.from, l.to]), [["A", "B"], ["B", "D"]]);
   assert.equal(legs[1].toSystem, "Pyro");
+});
+
+test("legsFromChain : la jambe est nommée par la ligne de TÊTE du manifeste du saut", () => {
+  // Un saut transporte plusieurs commodités (#56) et le format de jambe n'en porte qu'une : c'est
+  // la tête du manifeste qui la nomme, comme pour un trajet multi-commodité — sans quoi la vue
+  // Voyage, qui recompose le chargement complet, afficherait une commodité de tête différente de
+  // celle du libellé venu de la chaîne.
+  const terminals = [{ name: "A", system: "Stanton" }, { name: "B", system: "Stanton" }];
+  const chain = { path: [0, 1], legs: [{
+    commodity: "Repli", buyPrice: 1, sellPrice: 3, margin: 2,   // le repli mono de l'arc
+    lines: [{ name: "Tête", buyPrice: 10, sellPrice: 30, margin: 20, units: 60 },
+            { name: "Appoint", buyPrice: 5, sellPrice: 8, margin: 3, units: 36 }],
+  }] };
+  const [jambe] = legsFromChain(chain, terminals);
+  assert.deepEqual([jambe.commodity, jambe.buyPrice, jambe.sellPrice, jambe.margin], ["Tête", 10, 30, 20]);
 });
 
 test("startJourney + journeyStations : stations = legs.length + 1", () => {
@@ -3571,21 +3586,183 @@ test("buildChainAdjacency : les frais peuvent renverser le choix de commodité d
   // Non vacuisant : les frais doivent VRAIMENT inverser l'ordre, sinon le test ne prouve rien.
   assert.ok(brutGrosse > brutPetite && netGrosse < netPetite, "la fixture doit inverser le classement");
 
-  // Sans frais : le gain réalisable départage, donc la grosse cargaison.
+  // Sans frais : le gain réalisable départage, donc la grosse cargaison NOMME l'arc.
   assert.equal(buildChainAdjacency(mkt(), f, idResolve).get(0)[0].commodity, "Grosse");
-  assert.equal(bestChain(buildChainAdjacency(mkt(), f, idResolve), 0, 1, { cargo: 96 }).profit, brutGrosse);
+  // Le saut, lui, emporte les deux depuis #56 : les 8 SCU de « Petite » comblent une soute que la
+  // « Grosse » remplissait déjà — le classement de l'arc ne dit plus à lui seul ce qui voyage.
+  const sans = bestChain(buildChainAdjacency(mkt(), f, idResolve), 0, 1, { cargo: 96 });
+  assert.deepEqual(sans.legs[0].lines.map((l) => [l.name, l.units]), [["Petite", 8], ["Grosse", 88]]);
+  assert.equal(sans.profit, 8 * 400 + 88 * 60);
+  assert.ok(sans.profit > brutGrosse, "le manifeste doit battre la meilleure commodité seule");
   // Avec frais : la manutention renverse le classement.
   const avec = buildChainAdjacency(mkt(), f, idResolve, feeNet);
   assert.equal(avec.get(0)[0].commodity, "Petite");
   const chaine = bestChain(avec, 0, 1, { cargo: 96 });
   assert.ok(chaine, "un saut rentable ne doit pas disparaître du graphe");
-  assert.equal(chaine.profit, netPetite);
+  assert.equal(chaine.profit, manifestTotals(chaine.legs[0].lines, chaine.legs[0].fee).profit);
+  assert.ok(chaine.profit > netPetite, "le manifeste doit rester au-dessus du repli mono");
 });
 
 test("buildChainAdjacency : sans soute bornée, le classement reste la marge (aucun volume calculable)", () => {
   const f = { legalOnly: false, noOutpost: false }; // ni useCargo ni cargo
   const adj = buildChainAdjacency(MKT(), f, idResolve, feeNet);
   assert.equal(adj.get(0).find((l) => l.to === 1).commodity, "Gold"); // marge 50 > Drug 30
+});
+
+// ---------- Chaîne : un MANIFESTE par saut (#56) ----------
+// « Rare » est ce qui paie le mieux SEUL sur cet arc (20 SCU × 1 000 = 20 000, contre 96 × 200 =
+// 19 200 pour « Vrac ») : c'est donc elle que le chiffrage mono retient, et le saut repartait avec
+// 20 SCU sur 96. Les 76 SCU restants tiennent du « Vrac », que le stock ne borne pas.
+const MKT_SOUTE_VIDE = () => ({
+  terminals: [TERM_NET("Depart"), TERM_NET("Arrivee")],
+  commodities: [
+    { name: "Rare", kind: "metal", illegal: false, buys: [[0, 100, 20, NOW, 5]], sells: [[1, 1100, 999, NOW, 3]] },
+    { name: "Vrac", kind: "metal", illegal: false, buys: [[0, 100, 500, NOW, 5]], sells: [[1, 300, 999, NOW, 3]] },
+  ],
+});
+const F96 = { legalOnly: false, noOutpost: false, useCargo: true, cargo: 96 };
+
+test("chaîne : un saut transporte un manifeste, et la soute ne repart plus à moitié vide", () => {
+  const adj = buildChainAdjacency(MKT_SOUTE_VIDE(), F96, idResolve);
+  const [arc] = adj.get(0);
+  // Non vacuisant : la fixture doit bien faire gagner la commodité qui NE remplit PAS la soute,
+  // sinon le manifeste n'aurait rien à rattraper.
+  assert.ok(20 * 1_000 > 96 * 200, "la fixture doit faire gagner la commodité plafonnée");
+  assert.equal(arc.commodity, "Rare");                       // le repli mono reste identifié sur l'arc
+  assert.deepEqual(arc.lines.map((l) => [l.name, l.units]), [["Rare", 20], ["Vrac", 76]]);
+  const chaine = bestChain(adj, 0, 1, { cargo: 96 });
+  assert.equal(chaine.legs[0].units, 96);                    // 20 avant : 76 SCU voyageaient à vide
+  assert.deepEqual(chaine.legs[0].lines.map((l) => [l.name, l.units]), [["Rare", 20], ["Vrac", 76]]);
+  assert.equal(chaine.profit, 20 * 1_000 + 76 * 200);
+  assert.equal(chaine.profit, 35_200);                       // 20 000 avant
+});
+
+test("chaîne : un saut de N lignes paie N bases d'autoload, pas une", () => {
+  // Hypothèse 2 de la spec : une transaction PAR COMMODITÉ. Chiffrer le saut comme un chargement
+  // mono (une seule base pour les 96 SCU) lui prêterait 420 aUEC qu'il ne gagne pas, et fausserait
+  // l'arbitrage entre sauts — c'est bestChain qui compare ces montants.
+  const adj = buildChainAdjacency(MKT_SOUTE_VIDE(), F96, idResolve, frais41);
+  const chaine = bestChain(adj, 0, 1, { cargo: 96 });
+  const parLigne = 2 * autoloadFee(20, 32, 1) + 2 * autoloadFee(76, 32, 1);
+  const enBloc = 2 * autoloadFee(96, 32, 1);
+  assert.ok(parLigne > enBloc, "la fixture doit facturer plus par ligne qu'en bloc");
+  assert.equal(chaine.legs[0].profit, 35_200 - parLigne);
+  assert.equal(chaine.legs[0].profit, manifestTotals(chaine.legs[0].lines, chaine.legs[0].fee).profit);
+  assert.notEqual(chaine.legs[0].profit, 35_200 - enBloc);
+});
+
+test("chaîne : un arc sans manifeste garde son chiffrage mono et reste dans le graphe", () => {
+  // Sur l'instantané réel, 71 arcs n'ont aucun manifeste : `fillCargo` ne retient rien là où le
+  // chiffrage mono produit encore un segment (demande publiée à 0, stock épuisé). Remplacer l'arc
+  // par son manifeste les ferait disparaître du graphe — et avec eux les chaînes qui les traversent.
+  const mkt = () => ({
+    terminals: [TERM_NET("Depart"), TERM_NET("Ouvert"), TERM_NET("Sature")],
+    commodities: [
+      { name: "Fret", kind: "metal", illegal: false,
+        buys: [[0, 100, 500, NOW, 5]],
+        sells: [[1, 300, 999, NOW, 3], [2, 400, 0, NOW, 3]] },   // « Sature » ne demande plus rien
+    ],
+  });
+  const legs = buildChainAdjacency(mkt(), F96, idResolve).get(0);
+  assert.equal(legs.length, 2, "l'arc sans manifeste a disparu du graphe");
+  const sature = legs.find((l) => l.to === 2);
+  assert.equal(sature.lines, undefined);                     // aucun manifeste : le mono reste seul
+  assert.equal(sature.commodity, "Fret");
+  assert.deepEqual(legs.find((l) => l.to === 1).lines.map((l) => [l.name, l.units]), [["Fret", 96]]);
+});
+
+test("chaîne : le manifeste par arc reste soumis à « même système » et à l'exclusion des avant-postes", () => {
+  // `pairEligible`, que manifestsFrom applique, ne teste QUE l'avant-poste de VENTE : ni `sameOnly`
+  // ni l'avant-poste d'ORIGINE. Sans réapplication, la chaîne se remettrait à proposer des départs
+  // d'avant-poste et des sauts inter-systèmes que ses propres filtres écartent.
+  const ici = (name, o = {}) => ({ ...TERM_NET(name), system: "Stanton", ...o });
+  const mkt = () => ({
+    terminals: [ici("Base"), ici("Relais"), ici("Poste", { outpost: true }), ici("Lointain", { system: "Pyro" })],
+    commodities: [
+      { name: "Fret", kind: "metal", illegal: false,
+        buys: [[0, 100, 500, NOW, 5], [2, 100, 500, NOW, 5]],
+        sells: [[1, 300, 999, NOW, 3], [3, 400, 999, NOW, 3]] },
+    ],
+  });
+  const dests = (adj, u) => (adj.get(u) || []).map((l) => l.to).sort();
+  const tout = buildChainAdjacency(mkt(), F96, idResolve);
+  assert.deepEqual([dests(tout, 0), dests(tout, 2)], [[1, 3], [1, 3]]);
+  assert.ok(tout.get(2)[0].lines, "sans manifeste sur l'arc, le test ne prouverait rien");
+  const sansPoste = buildChainAdjacency(mkt(), { ...F96, noOutpost: true }, idResolve);
+  assert.deepEqual(dests(sansPoste, 2), [], "un avant-poste ne peut pas être un départ de chaîne");
+  assert.deepEqual(dests(sansPoste, 0), [1, 3]);
+  const memeSysteme = buildChainAdjacency(mkt(), { ...F96, sameOnly: true }, idResolve);
+  assert.deepEqual(dests(memeSysteme, 0), [1], "« Lointain » est dans Pyro : le saut est inter-systèmes");
+  assert.ok(memeSysteme.get(0)[0].lines, "l'arc survivant doit bien porter son manifeste");
+});
+
+// La non-régression MESURÉE, pas supposée : sur l'instantané entier, frais actifs, le chargement de
+// chaque arc doit rapporter au moins autant que le chiffrage mono d'avant #56 — le repli que le
+// joueur a toujours sous la main. C'est l'invariant que le SCU perdu de #41 cassait sur 20 arcs ;
+// il tient depuis que `manifestsFrom` réalloue la place d'une ligne écartée, et cette chaîne en
+// dépend directement.
+const F_REEL = { legalOnly: false, noOutpost: false, maxAge: 0, useCargo: true, cargo: 96 };
+const fraisReels = (t) => autoloadPoint(t, 1);
+
+test("chaîne : sur les 4 355 arcs réels, aucun ne rapporte moins qu'avant et aucun ne disparaît", () => {
+  const adj = buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels);
+  let arcs = 0, sansManifeste = 0, multi = 0, scuMono = 0, scuManifeste = 0;
+  const pertes = [];
+  for (const [u, legs] of adj) {
+    for (const leg of legs) {
+      arcs++;
+      const mono = chainLegNet({ ...leg, lines: undefined, net: undefined }, 96); // le chiffrage d'avant
+      const saut = chainLegNet(leg, 96);
+      if (!leg.lines) {                       // aucun manifeste : le repli mono, au chiffre près
+        sansManifeste++;
+        assert.equal(saut.profit, mono.profit);
+        continue;
+      }
+      if (leg.lines.length > 1) multi++;
+      if (saut.profit < mono.profit) pertes.push(`${REAL.terminals[u].name} -> ${REAL.terminals[leg.to].name} : ${saut.profit} < ${mono.profit}`);
+      scuMono += mono.units;
+      scuManifeste += saut.units;
+    }
+  }
+  assert.equal(arcs, 4_355, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le gain");
+  assert.deepEqual(pertes, []);
+  assert.equal(sansManifeste, 136, "arcs sans manifeste (frais actifs) : ils doivent RESTER dans le graphe");
+  // Non vacuisant : l'invariant serait trivialement vrai si les arcs étaient tous restés mono.
+  assert.ok(multi > 700, `chargements multi-commodité tombés à ${multi}`);
+  assert.ok(scuManifeste > scuMono * 1.04, `SCU emportés : ${scuManifeste} contre ${scuMono} avant`);
+});
+
+test("chaîne : garde de performance — le manifeste se compose par ARC, jamais dans le faisceau", () => {
+  // Composer un manifeste par arc coûte ≈ 6 ms sur l'instantané ; le composer depuis les ≈ 33 000
+  // expansions du faisceau, ≈ 1 s — un gel visible sous le clic.
+  // La garde est un RAPPORT, mesuré dans le même processus, et pas un plafond en millisecondes : le
+  // runner de la CI est ~20× plus lent que le poste où ceci s'écrit (190 ms contre 8 pour 4 sauts),
+  // si bien qu'un plafond calé sur l'un est soit rouge sur l'autre, soit trop lâche pour rien voir.
+  // Le meilleur de deux tours, parce qu'un runner partagé se fait désordonnancer, jamais accélérer.
+  const meilleurDe = (fn, n = 2) => {
+    let min = Infinity;
+    for (let i = 0; i < n; i++) { const t = performance.now(); fn(); min = Math.min(min, performance.now() - t); }
+    return min;
+  };
+  // L'adjacence contre elle-même sans soute bornée : même balayage du marché, zéro manifeste à
+  // composer. Mesuré ×4 à ×11 selon les tours ; au-delà de ×20, `manifestsFrom` n'est plus appelé
+  // une fois par ORIGINE mais une fois par arc (ce serait ×40) — l'erreur que ce rapport attrape.
+  const tSans = meilleurDe(() => buildChainAdjacency(REAL, { ...F_REEL, useCargo: false }, idResolve, fraisReels));
+  const tAvec = meilleurDe(() => buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels));
+  assert.ok(tAvec < 20 * tSans, `adjacence : ${tAvec.toFixed(1)} ms avec manifestes contre ${tSans.toFixed(1)} ms sans`);
+
+  // Le faisceau sur chargements pré-calculés contre le MÊME faisceau sur la même adjacence privée de
+  // ses manifestes — le chiffrage mono, O(1) par expansion, celui d'avant #56. Mesuré ×0,5 à ×0,8 :
+  // lire `leg.net` coûte moins que recalculer. Composer le manifeste dans la boucle donnerait ×100.
+  const adj = buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels);
+  const mono = new Map([...adj].map(([u, legs]) => [u, legs.map((l) => ({ ...l, lines: undefined, net: undefined }))]));
+  // L'origine la plus chargée du graphe, choisie sur son degré SORTANT — c'est lui qui décide du
+  // nombre d'expansions. Prendre « la première » désignerait une ligne de données, pas un pire cas.
+  const u = [...adj.keys()].sort((a, b) => adj.get(b).length - adj.get(a).length)[0];
+  const quatreSauts = (graphe) => meilleurDe(() => assert.ok(bestChain(graphe, u, 4, { cargo: 96 }), "une origine à fort degré doit rendre une chaîne"), 1);
+  quatreSauts(mono); quatreSauts(adj);              // chauffe : on mesure le code, pas la compilation
+  const tMono = quatreSauts(mono), tManifeste = quatreSauts(adj);
+  assert.ok(tManifeste < 3 * tMono, `4 sauts : ${tManifeste.toFixed(1)} ms sur chargements pré-calculés contre ${tMono.toFixed(1)} ms en mono`);
 });
 
 // Chaîne : deux itinéraires A->…->D aux profits BRUTS proches, dont le mieux payé transite par une
