@@ -32,6 +32,7 @@ import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from "./vues/commodites.tsx";
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
+import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -2557,64 +2558,9 @@ function planData() {
 // La soute EN GRAND : ce qu'il y a à bord commodité par commodité, la place libre, ce qui a été
 // payé. Le #holdCard du bandeau dit la même chose dans un encart latéral — mais il porte la vente,
 // le dépôt et le retrait de lot. Ici, aucun bouton : c'est la même donnée, en lecture.
-function planHoldHTML(d) {
-  if (!d.groupes.length) {
-    return `<div class="plan-card" id="planHold"><div class="plan-card-head">◈ Soute</div>
-      <p class="plan-muted">Rien à bord. Charge un manifeste depuis une jambe, ou déclare ce que tu transportes depuis le bandeau d'une vue de recherche.</p></div>`;
-  }
-  const icone = (nom) => { const c = MARKET && findCommodity(nom); return c ? commodityIcon(c.kind) : ""; };
-  const lignes = d.groupes.map((g) => {
-    // Part de la soute occupée par cette commodité : c'est le « visuel » que l'encart latéral, trop
-    // étroit, ne pouvait pas porter. Rapportée à la CAPACITÉ quand elle est connue, au chargement
-    // sinon — une barre sans dénominateur ne voudrait rien dire.
-    const base = d.f.useCargo && d.f.cargo > 0 ? d.f.cargo : d.scu;
-    const part = base > 0 ? Math.min(100, (g.units / base) * 100) : 0;
-    return `<div class="plan-hold-line">
-        <span class="plan-hold-name">${icone(g.name)}<span>${esc(g.name)}</span></span>
-        <span class="plan-hold-bar" aria-hidden="true"><i style="width:${part.toFixed(1)}%"></i></span>
-        <span class="plan-hold-scu"><b>${fmt(g.units)}</b> SCU</span>
-        <span class="plan-hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}">@ ${fmt(Math.round(g.paidMoyen))}</span>
-      </div>`;
-  }).join("");
-  return `<div class="plan-card" id="planHold">
-      <div class="plan-card-head">◈ Soute</div>
-      <div class="plan-hold-lines">${lignes}</div>
-      <div class="plan-card-meta"><b>${fmt(d.scu)}</b> SCU à bord${d.libre != null ? ` · <b>${fmt(d.libre)}</b> SCU libres` : ""} · capital engagé <b>${fmt(d.invest)}</b> aUEC</div>
-    </div>`;
-}
-
+// `planHoldHTML` a été remplacé par vues/plan.tsx.
 // Le parcours étape par étape, la jambe en cours et son manifeste, et ce qu'il reste à faire.
-function planRouteHTML(d) {
-  if (!JOURNEY) {
-    return `<div class="plan-card" id="planRoute"><div class="plan-card-head">◈ Parcours</div>
-      <p class="plan-muted">Aucun voyage engagé. Démarre-en un depuis <b>Trajets</b> — le ▶ d'une ligne — ou de zéro en posant un point de départ dans le bandeau.</p></div>`;
-  }
-  const chemin = d.stations
-    .map((s, i) => `<span class="plan-step${i === JOURNEY.current ? " here" : ""}"><span class="sys ${esc(s.system.toLowerCase())}">${esc(s.name)}</span></span>`)
-    .join('<span class="plan-sep">→</span>');
-  const jambes = d.jambes.map((j) => {
-    const cargo = j.lines.length
-      ? j.lines.map((l) => `<span class="plan-cargo-item">${commodityIcon(l.kind)}${esc(l.name)} <b>${fmt(l.units)} SCU</b></span>`).join("")
-      : '<span class="plan-muted">aucun fret rentable</span>';
-    const etat = j.faite ? "faite" : j.courante ? "courante" : "à venir";
-    return `<div class="plan-leg ${j.courante ? "current" : j.faite ? "done" : ""}">
-        <div class="plan-leg-head"><span class="plan-leg-n">${j.i + 1}</span>
-          <span class="plan-leg-route">${esc(j.from)} → ${esc(j.to)}</span>
-          <span class="plan-leg-state">${etat}${j.chargee ? " · chargée" : ""}</span>
-          <span class="plan-leg-profit ${classeProfit(j.profit)}">${signe(j.profit, fmtFee(j.profit, j.fees))}</span></div>
-        <div class="plan-leg-cargo">${cargo}</div>
-      </div>`;
-  }).join("");
-  const n = JOURNEY.legs.length;
-  return `<div class="plan-card" id="planRoute">
-      <div class="plan-card-head">◈ Parcours</div>
-      <div class="plan-path">${chemin}</div>
-      ${MARKET ? `<div class="plan-legs">${jambes}</div>` : '<p class="plan-muted">Calcul des manifestes…</p>'}
-      <div class="plan-card-meta"><b>${n}</b> saut${n > 1 ? "s" : ""} · <b>${d.reste}</b> à faire · <b>${fmt(d.totalScu)}</b> SCU transportés ·
-        profit ${MARKET ? `<b class="${classeProfit(d.totalProfit)}">${signe(d.totalProfit, fmtFee(d.totalProfit, d.totalFees))}</b> aUEC` : "…"}</div>
-    </div>`;
-}
-
+// `planRouteHTML` a été remplacé par vues/plan.tsx.
 function renderPlan() {
   const head = $("planHead"), body = $("planBody");
   if (!head || !body) return;
@@ -2623,11 +2569,24 @@ function renderPlan() {
   // l'utilisateur peut avoir changé de vue entre-temps.
   if (JOURNEY && !MARKET) withMarket(refresh);
   const d = planData();
-  head.innerHTML =
-    `<div class="plan-title"><span class="plan-kicker">◈ Plan de vol</span>
-       <button id="planCopy" class="plan-copy" type="button" title="Copier le récapitulatif en texte, à coller dans un salon">⧉ Copier le récapitulatif</button></div>
-     <div class="plan-hyp" id="planHypotheses" title="Ces quatre réglages changent le sens des chiffres ci-dessous. Pour les modifier, retourne dans une vue de recherche.">${planHypotheses(d.f).map(esc).join(" · ")}</div>`;
-  body.innerHTML = `<div class="plan-grid">${planHoldHTML(d)}${planRouteHTML(d)}</div>`;
+  peindre(head, enTetePlan(planHypotheses(d.f)));
+  // L'îlot ne lit AUCUNE globale : app.js lui passe tout, y compris le résolveur de `kind` (MARKET)
+  // et la base des barres de soute — la CAPACITÉ quand elle est connue, le chargement sinon. Une
+  // barre sans dénominateur ne voudrait rien dire.
+  peindre(body, corpsPlan({
+    hypotheses: planHypotheses(d.f),
+    stations: d.stations,
+    courante: JOURNEY ? JOURNEY.current : -1,
+    jambes: d.jambes,
+    groupes: d.groupes,
+    scu: d.scu, libre: d.libre, invest: d.invest,
+    totalScu: d.totalScu, totalProfit: d.totalProfit, totalFees: d.totalFees,
+    reste: d.reste, nbSauts: JOURNEY ? JOURNEY.legs.length : 0,
+    base: d.f.useCargo && d.f.cargo > 0 ? d.f.cargo : d.scu,
+    marchePret: !!MARKET,
+    kindDe: (nom) => { const c = MARKET && findCommodity(nom); return c ? c.kind : null; },
+    fmt, fmtProfit: fmtFee, signe,
+  }));
 }
 
 // Le récapitulatif EN TEXTE (ADR-004 §8). Pas une image : la CSP pose `img-src 'self' https:` sans
