@@ -1458,8 +1458,7 @@ function chargerJambe(i) {
     const lignes = legEffectiveLines(leg, i, readFilters());
     if (!lignes.length) return;
     const lots = loadHold([], lignes, leg.from, nowSec()).map((l) => ({ ...l, leg: k }));
-    // Charger, c'est vider le rayon d'autant. On fige d'abord les jambes qui achetaient ce point
-    // (même règle qu'une correction de volume saisie à la main), puis on écrit la déduction.
+    // Charger, c'est vider le rayon d'autant.
     const prises = [];
     for (const l of lots) {
       const p = pointAchat(l.name, l.from);
@@ -1468,9 +1467,19 @@ function chargerJambe(i) {
       // effectif ici, ce serait relire notre propre déduction et la compter une seconde fois.
       const s = soldeDuPoint(CHARGEMENTS, l.name, l.from);
       prises.push({ name: l.name, terminal: l.from, ref: s.ref != null ? s.ref : p.stock, units: l.units });
-      pinLegsForVolume(l.name, l.from, "buy");
     }
+    // LE REGISTRE D'ABORD, le gel ensuite (#48). C'est le registre qui porte « chargée », et c'est
+    // lui que consulte désormais pinLegsForVolume : figer avant de l'écrire laissait hors du verrou
+    // la jambe qu'on vient précisément de charger — celle dont les SCU sont pourtant les plus sûrs.
     CHARGEMENTS = poserChargement(CHARGEMENTS, k, prises);
+    // Cette jambe fige ses SCU : le fret est payé et à bord, c'est un FAIT et plus un plan. On la
+    // fige EXPLICITEMENT, et pas seulement par ricochet d'une déduction : un chargement dont aucune
+    // commodité n'a de stock publié n'entre dans aucune `prise`, et n'était donc jamais figé.
+    if (figerJambe(i, lignes)) { saveJourneyEdits(); saveJourneyPins(); }
+    // Les AUTRES jambes déjà chargées qui achètent le même fret au même rayon : la déduction qu'on
+    // vient d'écrire ne doit pas les rétrécir non plus. Celles qui ne sont PAS chargées, si — c'est
+    // le stock déduit qui est leur bon chiffre.
+    for (const pr of prises) pinLegsForVolume(pr.name, pr.terminal, "buy");
     const vides = [];
     for (const pr of prises) {
       const s = ecrireStockDuPoint(pr);
@@ -2075,17 +2084,29 @@ function legIntent(leg, i, f) {
 // Fige les jambes qu'une correction de volume rebattrait, AVANT qu'elle soit appliquée : on capture
 // donc les quantités telles qu'elles sont encore. La sélection est pure (legsToPin) ; ici on ne
 // fournit que ce que logic.mjs ne peut pas connaître — les chargements effectifs du moment.
+// Fige les SCU d'une jambe : son chargement devient une INTENTION persistée, et le 🔒 dit que ce
+// n'est pas la main de l'utilisateur qui l'a voulu. Rend `true` si quelque chose a bougé.
+// Une jambe déjà ajustée (✎) ou déjà figée n'est pas retouchée : ses quantités ne bougeaient plus,
+// et l'écraser effacerait un ajustement fait à la main.
+function figerJambe(i, lignes) {
+  const k = legKey(JOURNEY.legs[i], i);
+  if (JOURNEY_EDITS[k]) return false;
+  JOURNEY_EDITS[k] = manifestIntent(lignes || []);
+  JOURNEY_PINS[k] = true;
+  return true;
+}
+
+// Le gel consulte désormais l'état « chargée » de chaque jambe (#48) : une jambe qu'on n'a pas
+// payée n'est plus figée par une correction de volume, elle RECALCULE. Voir legsToPin (logic.mjs)
+// pour le pourquoi du renversement.
 function pinLegsForVolume(commodity, terminal, side) {
   if (!JOURNEY || !JOURNEY.legs.length || !MARKET) return;
   const f = readFilters();
   const lignes = JOURNEY.legs.map((leg, i) => legEffectiveLines(leg, i, f));
+  const chargees = JOURNEY.legs.map((leg, i) => jambeChargee(leg, i));
   let change = false;
-  for (const i of legsToPin(JOURNEY.legs, lignes, commodity, terminal, side)) {
-    const k = legKey(JOURNEY.legs[i], i);
-    if (JOURNEY_EDITS[k]) continue; // déjà ajustée ou figée : ses quantités ne bougeaient déjà plus
-    JOURNEY_EDITS[k] = manifestIntent(lignes[i]);
-    JOURNEY_PINS[k] = true;
-    change = true;
+  for (const i of legsToPin(JOURNEY.legs, lignes, commodity, terminal, side, chargees)) {
+    if (figerJambe(i, lignes[i])) change = true;
   }
   if (change) { saveJourneyEdits(); saveJourneyPins(); }
 }
