@@ -178,6 +178,13 @@ origine tierce. C'est pour elle que la bascule du menu a quitté `index.html` po
 score et le vaisseau de la carte seraient figés. Toute retouche des `<script>` de la page se
 répercute dans `SHELL` (sw.js) **et** dans la ligne `cp` de l'assemblage — un test le tient.
 
+> **Cette architecture est celle de la v1, et elle a une date de péremption.** La **v2.0.0** réécrit
+> le front en **Vite + React + TypeScript + shadcn/ui** : les décisions, ce qu'elles coûtent (build,
+> dépendances, lisibilité du déployé) et ce qu'elles imposent à la CSP sont dans
+> [ADR-008](docs/superpowers/specs/2026-08-15-refonte-v2-vite-react-adr.md). Rien ne bouge tant que
+> `v1.1.0` n'est pas close et taguée, et la bascule n'a lieu que si les **176 tests e2e** repassent
+> **sélecteurs inchangés** — c'est le contrat.
+
 Fichiers de données (dans [`data/`](data/)) :
 
 | Fichier | Contenu | Usage |
