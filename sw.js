@@ -5,7 +5,7 @@
 // recevrait encore l'ANCIEN index.html — sans CSP et avec son <script> inline — pendant toute une
 // visite, tandis que rail.js, lui, serait déjà là. `activate` purge tout cache au nom différent :
 // le bump garantit que la nouvelle page et son script arrivent ENSEMBLE.
-const CACHE = "best-hauling-v1.0.1";
+const CACHE = "best-hauling-v1.1.0";
 // Coquille précachée. Les woff2 (mêmes-origine depuis fonts/) sont mis en cache au premier
 // rendu par le gestionnaire fetch ci-dessous (stale-while-revalidate) -> hors-ligne complet.
 const SHELL = ["./", "./index.html", "./app.js", "./rail.js", "./logic.mjs", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
