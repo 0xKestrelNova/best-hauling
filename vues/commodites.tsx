@@ -13,6 +13,7 @@
 // Ce qui passe ici : #commGrid (le gros du rendu, une tuile par commodité) et #commHint (le texte
 // d'aide, qui change avec le board).
 import type { ResumeCommodite } from "../types.ts";
+import { IconeCommodite, TagIllegal, BadgeSysteme } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
 
@@ -106,3 +107,116 @@ export const AIDE_BUTIN = (
 );
 
 export const aideBoard = (butin: boolean) => (butin ? AIDE_BUTIN : AIDE_MARCHE);
+
+// ── Le panneau de DÉTAIL ───────────────────────────────────────────────────────────────────────
+// Il était resté en vanilla à la PR précédente parce qu'il rend des `.editv`, que `startEdit`
+// mutait impérativement. `ValeurEditable` (communs.tsx) lève cet obstacle : l'édition passe
+// désormais par l'état React, et les deux délégations d'app.js ignorent ces nœuds.
+import { ValeurEditable, PastilleStatut, PastilleFraicheur, TagAvantPoste } from "./communs.tsx";
+import type { DetailCommodite, PointAchatCommodite, PointVenteCommodite } from "../types.ts";
+
+export type ProprietesDetail = {
+  points: DetailCommodite;
+  butin: boolean;
+  fmt: Fmt;
+  fmtVol: (n: number | null) => string;
+  /** Une correction locale porte-t-elle déjà sur ce point ? */
+  estCorrige: (terminal: string, cote: "buy" | "sell", champ: "price" | "vol") => boolean;
+  /** app.js écrit la correction — il sait figer les jambes, mettre le compteur à jour et re-rendre. */
+  corriger: (terminal: string, cote: "buy" | "sell", champ: "price" | "vol", valeur: string, releve: number) => void;
+  legendeAchat: Record<number, [string, string]>;
+  legendeVente: Record<number, [string, string]>;
+  texteCapaciteInconnue: string;
+};
+
+function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteCommodite; cote: "buy" | "sell" } & Omit<ProprietesDetail, "points" | "butin" | "fmt">) {
+  // Le champ de volume porte un NOM différent selon le côté — `stock` à l'achat, `demand` à la
+  // vente — et c'est voulu : ce ne sont pas la même chose. `demand: null` veut dire « capacité
+  // inconnue chez UEX », ni zéro ni illimitée.
+  const volume = cote === "buy"
+    ? (p as PointAchatCommodite).stock
+    : (p as PointVenteCommodite).demand;
+  const cellule = (champ: "price" | "vol", valeur: number | null | undefined) => (
+    <ValeurEditable
+      valeur={valeur ?? null}
+      corrige={r.estCorrige(p.terminal, cote, champ)}
+      fmtVol={r.fmtVol}
+      texteCapaciteInconnue={r.texteCapaciteInconnue}
+      onCorriger={(v) => r.corriger(p.terminal, cote, champ, v, p.updated)}
+    />
+  );
+  return (
+    <tr>
+      <td className="loc">
+        <div>{p.terminal}<BadgeSysteme system={p.system} /><TagAvantPoste outpost={p.outpost} /></div>
+        <div className="loc-sub">{p.planet}</div>
+      </td>
+      <td className="num">{cellule("price", p.price)}</td>
+      {/* L'espace entre la pastille et la valeur est LITTÉRAL dans la version d'origine, et il
+          subsiste seul quand le code de statut est absent. Reproduit tel quel. */}
+      <td className="num">
+        <PastilleStatut code={p.status} cote={cote}
+                        legende={cote === "buy" ? r.legendeAchat : r.legendeVente} />
+        {" "}
+        {cellule("vol", volume)}
+      </td>
+      <td><PastilleFraicheur updated={p.updated} /></td>
+    </tr>
+  );
+}
+
+function TablePoints({ lignes, entete, cote, ...r }: {
+  lignes: (PointAchatCommodite | PointVenteCommodite)[]; entete: string; cote: "buy" | "sell";
+} & Omit<ProprietesDetail, "points" | "butin" | "fmt">) {
+  if (!lignes.length) return <p className="muted">Aucun point.</p>;
+  return (
+    <table className="comm-points">
+      <thead><tr><th>Terminal</th><th className="num">Prix</th><th className="num">{entete}</th><th>Relevé</th></tr></thead>
+      <tbody>{lignes.map((p, i) => <LignePoint key={i} p={p} cote={cote} {...r} />)}</tbody>
+    </table>
+  );
+}
+
+export function VueDetailCommodite({ points: p, butin, fmt, ...r }: ProprietesDetail) {
+  const meilleur = p.sells[0];
+  return (
+    <>
+      <div className="comm-detail-head">
+        <IconeCommodite kind={p.kind} />
+        <span className="comm-detail-title">
+          {p.code ? <><b className="comm-code">{p.code}</b> · </> : null}
+          {p.name}<TagIllegal illegal={p.illegal} />
+        </span>
+        {/* La valeur de revente n'existe QU'en mode Butin : quand l'acquisition est gratuite, la
+            marge n'a pas de sens, seul compte le prix au SCU. */}
+        {butin ? (
+          meilleur
+            ? <span className="loot-value"><b>{fmt(meilleur.price)}</b> aUEC/SCU<span className="loot-where">au mieux — {meilleur.terminal} ({meilleur.system})</span></span>
+            : <span className="loot-value muted">aucun point de vente</span>
+        ) : null}
+      </div>
+      <div className={butin ? "comm-cols one" : "comm-cols"}>
+        {butin ? null : (
+          <div className="comm-col">
+            <h4>◈ Où acheter <span className="muted">({p.buys.length} · moins cher d'abord)</span></h4>
+            <TablePoints lignes={p.buys} entete="Stock" cote="buy" {...r} />
+          </div>
+        )}
+        <div className="comm-col">
+          <h4>◈ Où {butin ? "l'écouler" : "vendre"} <span className="muted">({p.sells.length} · mieux payé d'abord)</span></h4>
+          <TablePoints lignes={p.sells} entete="Demande" cote="sell" {...r} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+export const vueDetailCommodite = (p: ProprietesDetail) => <VueDetailCommodite {...p} />;
+
+export const inviteDetail = (butin: boolean) => (
+  <p className="manifest-hint">
+    {butin
+      ? "Sélectionne une commodité pour savoir combien elle vaut au SCU et où l'écouler."
+      : "Sélectionne une commodité (ligne du tableau ou champ « Commodité ») pour voir tous ses points d'achat et de vente."}
+  </p>
+);
