@@ -2,6 +2,109 @@
    Best Hauling — refonte « HUD / cockpit » (amber · violet)
    Feuille de style ciblant le markup émis par app.js.
    ============================================================ */
+
+/* ── Tailwind 4.3.3 ────────────────────────────────────────────────────────────────────────────
+   Cette entête est TOUT ce que Tailwind ajoute à cette feuille. Les 1 400 lignes qui suivent
+   restent HORS COUCHE, et une déclaration hors couche bat toute déclaration layered quelle que
+   soit sa spécificité : c'est ce qui garantit qu'aucun pixel ne bouge tant que personne n'écrit
+   une classe utilitaire.
+
+   L'ordre est tranché MAINTENANT pour n'être plus à trancher plus tard. `heritage` est la couche
+   où cette feuille ira le jour où une vue React devra pouvoir la surcharger — déclarée AVANT
+   `utilities`, donc perdante face à un utilitaire, à dessein. */
+@layer theme, base, heritage, composants, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+/* PAS DE PREFLIGHT, et c'est mesuré, pas frileux. Il remet à zéro marges, titres, listes et
+   bordures — soit très exactement des pixels qui bougent. Les couches nous protègent partout où
+   cette feuille parle, mais elle est SILENCIEUSE à des endroits précis : `.empty`, `.fee-off`,
+   `.manifest-hint` et le <p> du pied de page ne déclarent aucune marge (les deux <p class="fee-off">
+   consécutifs se colleraient), et 20 des 37 classes de <button> ne déclarent pas de font-family —
+   `button { font: inherit }` les ferait basculer sur Chakra Petch, changeant glyphes et largeurs.
+
+   `source(none)` : aucun scan automatique. Sans lui, Tailwind fabrique 12 utilitaires (2,8 ko) à
+   partir de MOTS trouvés dans le code — « flex », « hidden », « table » lus dans des valeurs CSS
+   ou des noms de balises, jamais dans un attribut class. Du CSS mort, payé par le visiteur. Ce que
+   la refonte utilisera vraiment s'ajoutera par `@source` au fur et à mesure des vues migrées. */
+
+/* La palette et les familles de Tailwind sont RETIRÉES : deux palettes côte à côte, c'est
+   exactement la dérive que scripts/jetons.test.mjs existe pour attraper. */
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+}
+
+/* `inline` fait que l'utilitaire prend la VALEUR au lieu de référencer un second jeton :
+   Tailwind n'émet ici AUCUNE variable, et surtout aucune couleur écrite une deuxième fois. La
+   source unique reste le :root ci-dessous. */
+@theme inline {
+  --canaux-acc:        var(--acc-rgb);
+  --canaux-acc-2:      var(--acc-2-rgb);
+  --canaux-good:       var(--good-rgb);
+  --canaux-warn:       var(--warn-rgb);
+  --canaux-bad:        var(--bad-rgb);
+  --canaux-muted:      var(--muted-rgb);
+  --canaux-text-fort:  var(--text-fort-rgb);
+  --canaux-panel:      var(--panel-solid-rgb);
+  --canaux-fond-carte: var(--fond-carte-rgb);
+  --canaux-stanton:    var(--stanton-rgb);
+  --canaux-pyro:       var(--pyro-rgb);
+  --canaux-nyx:        var(--nyx-rgb);
+
+  /* `--font-sans` et `--font-mono` reprennent les noms de Tailwind à dessein : c'est ce qu'un
+     composant tiers écrira. Ils ne dupliquent aucune valeur, ils pointent le même jeton. */
+  --font-sans:    var(--font);
+  --font-hud:     var(--font);
+  --font-display: var(--display);
+  --font-mono:    var(--mono);
+}
+
+/* Le cœur, et il ne s'improvise pas : `bg-acc/14` doit rendre `rgb(255 176 32 / .14)`, pas un
+   `color-mix()`. La voie normale de la v4 (`@theme { --color-acc }`) produit
+   `color-mix(in oklab, …)`, que Chromium calcule en `oklab(0.813 …)` — même couleur à l'œil, mais
+   une CHAÎNE différente, donc toute assertion comparant des `rgba(…)` tombe. Et
+   `@theme inline { --color-acc: rgb(var(--acc-rgb)) }` produit un repli silencieusement OPAQUE.
+
+   Ici, l'ORDRE des trois déclarations EST le mécanisme : Tailwind supprime toute déclaration dont
+   une fonction ne rend rien. Sans modificateur seule la 1re survit ; avec `/14` la 2e ; avec
+   `/[.14]` la 3e. `calc(--modifier(number) * 1%)` et non `--modifier(number)` : `rgb(… / 14)` est
+   un alpha supérieur à 1, donc écrêté — mesuré opaque. Et `--modifier()` n'existe QUE dans un
+   utilitaire fonctionnel `nom-*` : dans un `@utility bg-acc` statique il est recopié tel quel dans
+   le CSS produit, ce qui donne du CSS invalide sans que rien ne proteste.
+
+   Surcharger ces noms ne casse pas les utilitaires natifs : quand `--value(--canaux-*)` ne résout
+   pas, Tailwind retombe sur les siens (bg-cover, text-center, border-2… restent intacts). */
+@utility bg-* {
+  background-color: rgb(--value(--canaux-*));
+  background-color: rgb(--value(--canaux-*) / calc(--modifier(number) * 1%));
+  background-color: rgb(--value(--canaux-*) / --modifier([*]));
+}
+@utility text-* {
+  color: rgb(--value(--canaux-*));
+  color: rgb(--value(--canaux-*) / calc(--modifier(number) * 1%));
+  color: rgb(--value(--canaux-*) / --modifier([*]));
+}
+@utility border-* {
+  border-color: rgb(--value(--canaux-*));
+  border-color: rgb(--value(--canaux-*) / calc(--modifier(number) * 1%));
+  border-color: rgb(--value(--canaux-*) / --modifier([*]));
+}
+/* La carte du parcours est du SVG : sans ces deux-là, teinter une planète depuis un composant
+   obligerait à réécrire la couleur à la main — ce que tout ce thème existe pour éviter. */
+@utility fill-* {
+  fill: rgb(--value(--canaux-*));
+  fill: rgb(--value(--canaux-*) / calc(--modifier(number) * 1%));
+}
+@utility stroke-* {
+  stroke: rgb(--value(--canaux-*));
+  stroke: rgb(--value(--canaux-*) / calc(--modifier(number) * 1%));
+}
+
+/* Les témoins du test de couches et de teinte (e2e/tailwind.pw.mjs). `source(none)` coupant tout
+   scan, ces classes doivent être nommées explicitement pour exister. Elles ne sont portées par
+   aucun élément de l'app : elles servent à PROUVER que la configuration produit ce qu'on croit. */
+@source inline("bg-acc bg-acc/14 text-muted text-acc-2/50 border-good fill-stanton stroke-pyro/50 font-display font-mono p-4 flex");
 /* Le THÈME du HUD (refonte v2, ADR-008 §2). Il est verrouillé par scripts/jetons.test.mjs et par
    e2e/jetons.pw.mjs — le premier lit cette source, le second lit ce que le navigateur calcule.
    Ce double verrou répare un trou mesuré : sur 190 tests e2e, les seules assertions de couleur
