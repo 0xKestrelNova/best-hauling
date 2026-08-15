@@ -29,6 +29,7 @@ import {
 import { peindre } from "./pont.js";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
+import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -1286,56 +1287,7 @@ function resolveChainOrigin() {
 
 // buildChainAdjacency vit dans logic.mjs (fonction pure) ; appelée avec MARKET + effVals.
 
-function chainCardHTML(chain, f) {
-  const T = (idx) => MARKET.terminals[idx];
-  // Un saut transporte un MANIFESTE (#56), que bestChain pose sur `leg.lines` — une seule ligne
-  // quand l'arc n'avait pas de remplissage à composer. Les totaux se lisent donc comme ceux
-  // d'« En route » : une base d'autoload PAR COMMODITÉ (manifestTotals), jamais un `haulFee` unique
-  // par saut, qui sous-facturait de plusieurs bases et affichait un profit que bestChain, lui,
-  // n'avait pas retenu pour choisir l'itinéraire.
-  const totaux = chain.legs.map((leg) => manifestTotals(leg.lines || [], leg.fee));
-  const invest = totaux[0] ? totaux[0].invest : 0;
-  let minutes = 0;
-  for (let i = 0; i < chain.legs.length; i++) {
-    minutes += tripMinutes(0, T(chain.path[i]).system !== T(chain.path[i + 1]).system);
-  }
-  const totalFees = totaux.reduce((s, t) => s + t.fees, 0);
-  const totalScu = totaux.reduce((s, t) => s + t.scu, 0);
-  const nodes = chain.path
-    .map((idx) => `<span class="snode term">${esc(T(idx).name)}</span>${sysBadge(T(idx).system)}`)
-    .join('<span class="chain-arrow">→</span>');
-  const legs = chain.legs
-    .map((leg, i) => {
-      const a = T(chain.path[i]), b = T(chain.path[i + 1]);
-      const t = totaux[i], lignes = leg.lines || [];
-      const fc = feeCell(feeCtx(f, a.name, b.name, a, b), t.fees, () => feeCargoText(lignes, a.maxBox), t.scu > 0);
-      // Une ligne par commodité chargée, aux mêmes colonnes que le manifeste d'« En route » : la
-      // somme des lignes affichées DOIT faire le total du saut affiché à droite, d'où le même
-      // décompte de frais des deux côtés (lineProfitText / manifestTotals).
-      const detail = lignes.map((l) =>
-        `<div class="chain-line"><div class="commodity-cell">${commodityIcon(l.kind)}<span>${esc(l.name)}${illegalTag(l.illegal)}</span></div>` +
-        `<span class="chain-line-scu"><b>${fmt(l.units)}</b> SCU</span>` +
-        `<span class="chain-line-price">${fmt(l.buyPrice)} → ${fmt(l.sellPrice)} <span class="muted">(marge ${fmt(l.margin)}/SCU)</span></span>` +
-        `<span class="chain-line-profit ${classeProfit(lineNet(l.units, l, leg.fee))}">${lineProfitText(l.units, l, leg.fee)}</span></div>`
-      ).join("");
-      return `<div class="chain-leg"><span class="chain-step">${i + 1}</span><div class="chain-leg-main">` +
-        // `.loc-sub` est un flex à gouttière : sans ce span, le volume chargé et son plafond
-        // deviennent deux éléments séparés par 6 px, et la barre de fraction se lit « 96 /96 ».
-        `<div class="loc-sub">${esc(a.name)} → ${esc(b.name)} · <span><b class="chain-leg-scu">${fmt(t.scu)}</b>/${fmt(f.cargo)} SCU</span> · ${lignes.length} commodité${lignes.length > 1 ? "s" : ""}</div>` +
-        `<div class="chain-lines">${detail}</div>` +
-        `</div><span class="chain-leg-profit profit"${fc.attr}>+${fmtFee(leg.profit, t.fees)}${fc.mark}</span></div>`;
-    })
-    .join("");
-  return `<div class="chain">
-      <div class="chain-head">
-        <span class="chain-path">${nodes}</span>
-        <span class="chain-tot">Profit <b class="profit">${fmtFee(chain.profit, totalFees)}</b> aUEC${totalFees > 0 ? ` · frais ≈ ${fmt(totalFees)}` : ""} · ${chain.legs.length} saut${chain.legs.length > 1 ? "s" : ""} · ${fmt(totalScu)} SCU chargés · capital de départ ${fmt(invest)} · ~${Math.round(minutes)} min</span>
-        <button id="chainToJourney" class="chain-pick" title="Ajouter cette chaîne au voyage en cours">▶ Ajouter au voyage</button>
-      </div>
-      <div class="chain-legs">${legs}</div>
-    </div>`;
-}
-
+// `chainCardHTML` a été remplacé par vues/chaine.tsx.
 function renderChain() {
   if (!MARKET) { withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
@@ -1343,17 +1295,28 @@ function renderChain() {
   const box = $("chainOut");
   const f = readFilters();
   shownChain = null;
-  const hint = (msg) => { box.innerHTML = `<div class="manifest-hint">${msg}</div>`; notifySuperseded(); };
-  if (chainOrigin == null) return hint("Choisis un <b>terminal de départ</b> pour calculer une chaîne rentable.");
-  if (!f.useCargo || !(f.cargo > 0)) return hint("Active la <b>soute (SCU)</b> pour dimensionner la chaîne.");
+  const hint = (noeud) => { peindre(box, noeud); notifySuperseded(); };
+  if (chainOrigin == null) return hint(indiceDepart());
+  if (!f.useCargo || !(f.cargo > 0)) return hint(indiceSoute());
   const hops = Number($("hops").value) || 3;
   // Les frais sont estampillés sur chaque leg par buildChainAdjacency — seul endroit de la chaîne
   // où les deux terminaux d'un saut coexistent — puis consommés par bestChain, dont l'élagage et la
   // sélection portent alors sur le profit NET.
   const chain = bestChain(buildChainAdjacency(MARKET, f, effVals, feeResolver(f)), chainOrigin, hops, { cargo: f.cargo });
-  if (!chain || !chain.legs.length) return hint("Aucune chaîne rentable depuis ce terminal avec ces filtres.");
+  if (!chain || !chain.legs.length) return hint(indiceAucune());
   shownChain = chain;
-  box.innerHTML = chainCardHTML(chain, f);
+  // Le calcul de présentation vit dans l'îlot (il n'appelle que logic.ts) ; app.js ne lui passe que
+  // ce qui dépend de l'ÉTAT : le résolveur de terminaux, et les deux fonctions de frais.
+  peindre(box, vueChaine({
+    chaine: chain,
+    cargo: f.cargo,
+    terminal: (idx) => MARKET.terminals[idx],
+    fmt,
+    fmtFee,
+    celluleFrais: (lignes, fee, a, b, scu, fees) =>
+      feeCell(feeCtx(f, a.name, b.name, a, b), fees, () => feeCargoText(lignes, a.maxBox), scu > 0),
+    texteProfitLigne: lineProfitText,
+  }));
   notifySuperseded();
 }
 
