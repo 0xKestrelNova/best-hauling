@@ -439,3 +439,71 @@ Aucune ne bloque l'étape 1.
    dort du fret oublié serait cohérent avec ADR-001, mais c'est un second chantier.
 2. **Le profit d'un voyage doit-il compter le fret déposé ?** Il n'est ni vendu ni perdu : le
    compter en profit serait faux, l'ignorer masquerait un capital immobilisé.
+
+---
+
+## Addendum du 2026-08-15 — le verrou vient du CHARGEMENT (#48)
+
+**Statut :** Accepté · **Issue :** #48 · **Jalon :** v1.1.0
+
+Cet addendum **renverse** une règle posée plus haut. Elle était assumée et documentée
+(`README.md`, « Ce qu'une correction fait au voyage ») ; elle est devenue fausse.
+
+### Ce que disait la règle
+
+> Corriger un volume, c'est le plus souvent constater qu'on vient soi-même de vider la station.
+
+Toute correction de stock ou de demande figeait donc les SCU des jambes touchant ce point, avec le
+marqueur `🔒`.
+
+### Pourquoi elle ne tient plus
+
+Ce raccourci datait d'avant `✓ chargé`. **C'est le chargement qui déduit le stock maintenant** — la
+correction à la main ne le fait plus. Les deux gestes ont donc cessé de vouloir dire la même chose :
+
+| Le geste | Ce qu'il dit | Ce qu'il doit faire |
+|---|---|---|
+| Corriger un volume sans avoir chargé | « le relevé est faux, recalcule » | **recalculer** |
+| `✓ chargé` | « c'est payé et à bord » | **figer** |
+
+Le symptôme, lui, était franc : on arrive à A, le rayon n'a pas ce qu'UEX annonce, on corrige le
+chiffre sur place — et la jambe **gèle ses SCU sur la valeur qu'on vient soi-même de démentir**.
+Elle continuait d'annoncer « Copper 59 SCU » devant un rayon qui en avait 12. Le voyage faisait
+planifier sur un chiffre faux, et le gel était **persisté** : il survivait au rechargement. Pour en
+sortir, il fallait déplier la jambe et cliquer `↺ optimal`, qui efface *tout*, y compris un
+ajustement fait à la main plus tôt.
+
+### La décision
+
+**Le gel est conditionné à l'état « chargée » de la jambe.** `legsToPin` (`logic.mjs`) reçoit un
+argument de plus, `chargees`, et ne rend plus l'index d'une jambe non chargée.
+
+Trois conséquences qui ne se devinent pas :
+
+1. **Le registre avant le gel.** `chargerJambe` inscrivait le chargement **après** avoir figé.
+   Le garde tout juste posé aurait donc laissé non figée la jambe qu'on vient précisément de
+   charger — la seule dont les SCU sont pourtant certains. L'ordre est inversé : `poserChargement`
+   d'abord, gel ensuite.
+2. **Le gel de la jambe chargée est explicite.** Il ne passait que par ricochet d'une déduction de
+   stock : une jambe dont aucune commodité n'a de stock publié par UEX n'entrait dans aucune prise,
+   et n'était donc jamais figée. `figerJambe(i, lignes)` est désormais appelé directement.
+3. **Défaut sûr.** `chargees` vaut `[]` par défaut : un appelant qui l'oublierait ne fige **rien**
+   plutôt que de retomber en silence sur l'ancienne règle. Ne pas figer se rattrape au rendu
+   suivant ; figer à tort ne se défait qu'à la main, en emportant les ajustements légitimes.
+
+Le garde vit à **un seul endroit** (`pinLegsForVolume`), donc les quatre portes vers le gel —
+saisie d'une valeur, retour à la valeur UEX (`.scomm-undo`), effacement par station (`#stnClear`),
+suppression d'une correction (`.corr-del`) — le franchissent toutes.
+
+### Ce que ça ne change pas
+
+- Un **prix** corrigé n'a jamais rien figé, et ne fige toujours rien.
+- Un ajustement à la main (`✎`) reste intouchable, et `↺ optimal` lève toujours les deux formes.
+- Une jambe **déjà chargée** reste figée quand on corrige ensuite le stock de son départ.
+
+### Ce que ça ne traite pas
+
+- **#22** (annuler un chargement écrase la déduction d'une autre jambe au même point) : même
+  voisinage, autre défaut — l'instantané absolu `l.avant` réécrit par `setOverride`.
+- **#21** (soute vidée autrement que par « annuler ») : ce correctif rend `jambeChargee` **porteur**
+  de la règle de gel. Si l'état « chargée » peut se désynchroniser, le verrou se désynchronise avec.

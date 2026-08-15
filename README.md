@@ -381,15 +381,23 @@ comptoir saturé dont UEX tait la capacité est donc écarté, au lieu de passer
 Une jambe non ajustée suit le marché : corriger un **prix** mesure donc aussitôt ses effets sur les
 bénéfices du parcours, jambe par jambe.
 
-Corriger un **volume** (stock ou demande) est autre chose. Dire « il ne reste que 3 SCU ici », c'est
-le plus souvent constater qu'on vient soi-même de vider la station — le trajet, lui, est déjà
-décidé. Les jambes qui **touchent ce point** (le terminal corrigé est leur départ pour un stock,
-leur arrivée pour une demande, et leur chargement porte cette commodité) **figent donc leurs SCU**
-et prennent le marqueur `🔒`. Elles continuent de suivre les prix ; seules leurs quantités sont
-gelées. Tout ce qui est calculé **ensuite** — les autres jambes, les sept vues, un arrêt ajouté plus
-tard — voit le stock tel que tu l'as corrigé. `↺ optimal` lève le gel.
+Corriger un **volume** (stock ou demande) est autre chose — et **c'est le chargement, pas la
+correction, qui fige** ([addendum à l'ADR-002](docs/superpowers/specs/2026-08-12-soute-et-residus-adr.md#addendum-du-2026-08-15--le-verrou-vient-du-chargement-48)).
+Deux gestes, deux sens :
 
-`🔒` et `✎` se distinguent : le premier vient d'une correction, le second de ta main. Toucher au
+| Le geste | Ce qu'il veut dire | Ce qui arrive à la jambe |
+|---|---|---|
+| Corriger un stock, **rien de chargé** | « le relevé est faux, recalcule » — tu es sur place et tu vois le rayon | elle **recalcule** sur la valeur corrigée : moins de SCU, éventuellement une autre commodité qui prend la place libérée. Aucun `🔒` |
+| **`✓ chargé`** | « c'est payé et à bord » — ce ne sont plus des SCU prévus, ce sont des faits | elle **fige ses SCU** et prend `🔒`. Une correction du stock de départ **postérieure** ne la rétrécit plus |
+
+Une jambe figée continue de suivre les **prix** ; seules ses quantités sont gelées. Tout ce qui est
+calculé **ensuite** — les autres jambes, les sept vues, un arrêt ajouté plus tard — voit le stock tel
+que tu l'as corrigé, déduction du chargement comprise. `↺ optimal` lève le gel.
+
+Conséquence utile : charger la jambe 1 ne fige plus la jambe 3 qui rachètera la même commodité au
+même point sans avoir rien payé — elle voit le **stock déduit**, ce qui est son bon chiffre.
+
+`🔒` et `✎` se distinguent : le premier vient du chargement, le second de ta main. Toucher au
 chargement d'une jambe figée la fait passer de l'un à l'autre.
 
 ## Corrections locales

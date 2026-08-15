@@ -1516,30 +1516,81 @@ test("Corrections : un PRIX corrigé met à jour les bénéfices du voyage en co
   await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(0); // et ne fige rien
 });
 
-test("Corrections : un STOCK corrigé fige la jambe engagée, mais pas les trajets suivants", async ({ page }) => {
+// SCU annoncés pour une commodité dans le chargement de la première jambe, ou null si absente.
+async function scuDeLaJambe(page, nom) {
+  const item = page.locator("#journeyCard .jcargo-item", { hasText: nom }).first();
+  if (!(await item.count())) return null;
+  const txt = (await item.innerText()).replace(/[  \s]/g, "");
+  const m = txt.match(/(\d+)SCU/);
+  return m ? Number(m[1]) : null;
+}
+
+// Ce test portait EXACTEMENT la règle inverse jusqu'à #48 (« un STOCK corrigé fige la jambe
+// engagée »). Il est réécrit, pas supprimé : le renversement est une décision de conception, et
+// c'est ici qu'elle se vérifie. Voir l'addendum à l'ADR-002.
+test("Corrections : un STOCK corrigé sur une jambe NON chargée la fait RECALCULER (#48)", async ({ page }) => {
   await manifesteDepuis(page, "Megumi — Pyro");
   await page.click("#manifestToJourney");
   await expect(page.locator("#journeyCard .jleg")).toHaveCount(1);
-  const cargo = (await page.locator("#journeyCard .jleg-cargo").first().innerText()).trim();
-  const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
+  const nom = await page.locator("#manifest .editv[data-f='vol'][data-s='buy']").first().getAttribute("data-c");
+  // Sans ça le test ne mordrait pas : on doit corriger le stock d'une commodité que la jambe porte.
+  const avant = await scuDeLaJambe(page, nom);
+  expect(avant, `la jambe ne charge pas ${nom} — le test ne prouverait rien`).not.toBeNull();
+  expect(avant).toBeGreaterThan(3);
 
-  await corrige(page, "vol", "buy", 3); // « j'ai vidé la station en chargeant »
-  // Le trajet est décidé : ses SCU ne rétrécissent pas sous les pieds du joueur.
-  await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(1);
-  expect((await page.locator("#journeyCard .jleg-cargo").first().innerText()).trim()).toBe(cargo);
-  expect(await page.evaluate(() => localStorage.getItem("best-hauling-journey-pins"))).toContain("true");
+  await corrige(page, "vol", "buy", 3); // « le relevé est faux : il n'en reste que 3 »
 
-  // ...mais un chargement calculé APRÈS coup, lui, ne voit plus que ce qui reste.
-  await page.fill("#origin", "Megumi — Pyro");
-  await expect(page.locator("#manifest .mqty-input").first()).toBeVisible();
-  const ligne = page.locator("#manifest .mline", { hasText: nom }).first();
-  if (await ligne.count()) await expect(ligne.locator(".mqty-input")).toHaveValue(/^[0-3]$/);
-
-  // « ↺ optimal » lève le gel : la jambe redevient branchée sur le marché.
-  await page.locator("#journeyCard .jleg-head").first().click();
-  await page.locator("#journeyCard .jman-reset").click();
+  // Le renversement : rien n'est figé, et la jambe se rebat sur la valeur corrigée. Avant #48 elle
+  // prenait 🔒 et continuait d'annoncer l'ancienne quantité — un chiffre qu'on venait de démentir.
   await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(0);
-  expect((await page.locator("#journeyCard .jleg-cargo").first().innerText()).trim()).not.toBe(cargo);
+  expect(await page.evaluate(() => localStorage.getItem("best-hauling-journey-pins") || "{}")).not.toContain("true");
+  const apres = await scuDeLaJambe(page, nom);
+  expect(apres == null || apres <= 3, `la jambe annonce encore ${apres} SCU de ${nom}`).toBe(true);
+});
+
+test("Voyage : « ✓ chargé » fige la jambe TOUT DE SUITE, et la protège des corrections suivantes (#48)", async ({ page }) => {
+  await jambeChargeable(page);
+  await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(0); // rien n'est payé, rien n'est figé
+  // Le nom se lit AVANT le chargement : charger vide le rayon, et le manifeste « En route » n'a
+  // alors plus rien à proposer depuis ce terminal — c'est justement l'effet qu'on va vérifier.
+  const nom = await page.locator("#manifest .editv[data-f='vol'][data-s='buy']").first().getAttribute("data-c");
+
+  await page.locator("#journeyCard .jleg-load").first().click();
+  // Le piège d'ordre : le registre des chargements doit être écrit AVANT le gel. Écrit après, la
+  // jambe qu'on vient de charger n'était pas vue comme chargée, et restait la seule à ne pas se figer.
+  await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(1);
+  const avant = await scuDeLaJambe(page, nom);
+  expect(avant, `la jambe ne charge pas ${nom} — le test ne prouverait rien`).not.toBeNull();
+
+  // Le fret est payé et à bord : une correction POSTÉRIEURE du stock de départ ne le rétrécit plus.
+  await ouvreStation(page, "Megumi");
+  const cible = page.locator(`#correctionsStation .editv[data-s="buy"][data-f="vol"][data-c="${nom}"]`).first();
+  await expect(cible).toBeVisible({ timeout: 8000 });
+  await cible.click();
+  const champ = page.locator("#correctionsStation input.editv-input").first();
+  await champ.fill("1");
+  await champ.press("Enter");
+
+  await page.click("#viewEnroute");
+  expect(await scuDeLaJambe(page, nom)).toBe(avant);
+});
+
+test("Corrections : le retour à la valeur UEX ne fige pas davantage une jambe non chargée (#48)", async ({ page }) => {
+  // La troisième des quatre portes vers le gel (`.scomm-undo`) : le garde vit dans un seul endroit,
+  // ce test le vérifie de l'autre bout.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  await page.click("#manifestToJourney");
+  await expect(page.locator("#journeyCard .jleg")).toHaveCount(1);
+  await corrige(page, "vol", "buy", 3);
+  await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(0);
+
+  await ouvreStation(page, "Megumi");
+  const undo = page.locator("#correctionsStation .scomm-undo").first();
+  await expect(undo).toBeVisible({ timeout: 8000 });
+  await undo.click();
+
+  await page.click("#viewEnroute");
+  await expect(page.locator("#journeyCard .jleg-pinned")).toHaveCount(0);
 });
 
 test("Compagnon de voyage : retirer l'arrivée d'un parcours à DEUX arrêts garde le départ", async ({ page }) => {

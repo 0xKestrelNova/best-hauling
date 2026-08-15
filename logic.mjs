@@ -1498,19 +1498,31 @@ export function manifestJourneyState(journey, origin, dest) {
   return { etat: "conflit", fin: fin ? fin.name : null };
 }
 
-// Jambes qu'une correction de VOLUME (stock ou demande) rebattrait, et qu'il faut donc figer avant
-// de l'appliquer. Corriger un stock, c'est dire « j'ai vidé ce terminal » — le plus souvent parce
-// qu'on vient d'y charger. Le trajet, lui, est décidé : ses SCU ne doivent pas rétrécir sous les
-// pieds du joueur. Les jambes SUIVANTES, elles, doivent bien voir ce qu'il reste.
-// Une jambe n'est concernée que si elle touche vraiment ce point : le terminal corrigé est son
-// départ (correction d'un stock d'ACHAT) ou son arrivée (correction d'une demande de VENTE), et
-// son chargement porte cette commodité. Les autres n'en dépendent pas — les figer les marquerait
-// pour rien. Un prix, lui, ne rebat aucune quantité : il ne fige rien.
-// `lignesPar[i]` = chargement effectif de la jambe i (l'appelant le connaît, pas nous).
-export function legsToPin(legs, lignesPar, commodity, terminal, side) {
+// Jambes dont les SCU doivent être FIGÉS quand un volume (stock ou demande) change à un terminal.
+//
+// Le verrou vient du CHARGEMENT, pas de la correction (#48, ADR-002 addendum). Deux gestes, deux
+// sens, qu'il ne faut pas confondre :
+//   - « ✓ chargé » dit « c'est payé et à bord » : les SCU de cette jambe sont un FAIT, plus un plan.
+//     Rien ne doit plus les rétrécir, et surtout pas la déduction de stock que ce chargement vient
+//     lui-même de provoquer.
+//   - corriger un stock à la main dit « le relevé est faux, recalcule » : la jambe reste branchée
+//     sur le marché et se rebat sur la valeur corrigée. C'est le geste de qui est SUR PLACE et voit
+//     le rayon. Le figer sur un chiffre qu'on vient soi-même de démentir n'aurait aucun sens.
+// L'ancienne règle assimilait les deux — « corriger un volume, c'est constater qu'on vient de vider
+// la station ». Ce raccourci ne tient plus depuis que `✓ chargé` existe : c'est LUI qui déduit.
+//
+// Une jambe n'est de toute façon concernée que si elle touche vraiment ce point : le terminal est
+// son départ (stock d'ACHAT) ou son arrivée (demande de VENTE), et son chargement porte cette
+// commodité. Un prix, lui, ne rebat aucune quantité : il ne fige rien.
+// `lignesPar[i]` = chargement effectif de la jambe i ; `chargees[i]` = son état « payée et à bord ».
+// Les deux sont connus de l'appelant, pas d'ici.
+// `chargees` par défaut vide : un appelant qui l'oublierait ne fige RIEN plutôt que de retomber en
+// silence sur l'ancienne règle. Ne pas figer se rattrape tout seul au rendu suivant ; figer à tort
+// ne se défait qu'à la main, par un « ↺ optimal » qui emporte aussi les ajustements légitimes.
+export function legsToPin(legs, lignesPar, commodity, terminal, side, chargees = []) {
   const bouts = legs.map((l) => (side === "buy" ? l.from : l.to));
   return legs.map((_, i) => i).filter((i) =>
-    bouts[i] === terminal && (lignesPar[i] || []).some((l) => l.name === commodity)
+    chargees[i] && bouts[i] === terminal && (lignesPar[i] || []).some((l) => l.name === commodity)
   );
 }
 

@@ -2666,31 +2666,66 @@ const CHARGEMENTS = [
 // `jambe` est défini plus bas dans le fichier : on ne l'appelle donc pas à l'évaluation du module.
 const jambeDe = (from, to) => ({ from, fromSystem: "S", to, toSystem: "S", commodity: "X", buyPrice: 1, sellPrice: 2, margin: 1 });
 const PARCOURS = [jambeDe("Megumi", "Rat's Nest"), jambeDe("Rat's Nest", "Checkmate")];
+// L'état « chargée » de chaque jambe. C'est LUI qui décide du gel depuis #48 : le verrou vient du
+// chargement (« c'est payé et à bord »), plus de la correction (« le relevé est faux, recalcule »).
+const TOUTES_CHARGEES = [true, true];
 
 test("legsToPin : seule la jambe qui ACHÈTE ce point est figée", () => {
   // Stock du Copper corrigé à Megumi : la jambe 0 en charge, elle garde ses SCU. La jambe 1 part
   // d'ailleurs et n'en dépend pas — la figer la marquerait pour rien.
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "buy"), [0]);
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Titanium", "Rat's Nest", "buy"), [1]);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "buy", TOUTES_CHARGEES), [0]);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Titanium", "Rat's Nest", "buy", TOUTES_CHARGEES), [1]);
 });
 
 test("legsToPin : une demande corrigée regarde l'ARRIVÉE, pas le départ", () => {
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Rat's Nest", "sell"), [0]);
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "sell"), []); // Megumi n'est l'arrivée de personne
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Rat's Nest", "sell", TOUTES_CHARGEES), [0]);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "sell", TOUTES_CHARGEES), []); // Megumi n'est l'arrivée de personne
 });
 
 test("legsToPin : ni le mauvais terminal ni la mauvaise commodité ne figent quoi que ce soit", () => {
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Checkmate", "buy"), []);  // bon fret, mauvais bout
-  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Gold", "Megumi", "buy"), []);        // bon bout, fret absent
-  assert.deepEqual(legsToPin(PARCOURS, [[], []], "Copper", "Megumi", "buy"), []);         // chargements vides
-  assert.deepEqual(legsToPin([], [], "Copper", "Megumi", "buy"), []);                     // aucun voyage
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Checkmate", "buy", TOUTES_CHARGEES), []);  // bon fret, mauvais bout
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Gold", "Megumi", "buy", TOUTES_CHARGEES), []);        // bon bout, fret absent
+  assert.deepEqual(legsToPin(PARCOURS, [[], []], "Copper", "Megumi", "buy", TOUTES_CHARGEES), []);         // chargements vides
+  assert.deepEqual(legsToPin([], [], "Copper", "Megumi", "buy", []), []);                                  // aucun voyage
 });
 
-test("legsToPin : un même terminal réutilisé plus loin fige TOUTES les jambes concernées", () => {
-  // Le joueur repasse par Megumi : les deux jambes qui y chargent du Copper sont déjà décidées.
+test("legsToPin : un même terminal réutilisé plus loin fige toutes les jambes CHARGÉES", () => {
+  // Le joueur repasse par Megumi : les deux jambes qui y chargent du Copper sont déjà payées.
   const boucle = [jambeDe("Megumi", "Rat's Nest"), jambeDe("Rat's Nest", "Megumi"), jambeDe("Megumi", "Checkmate")];
   const charges = [[{ name: "Copper", units: 59 }], [{ name: "Titanium", units: 96 }], [{ name: "Copper", units: 12 }]];
-  assert.deepEqual(legsToPin(boucle, charges, "Copper", "Megumi", "buy"), [0, 2]);
+  assert.deepEqual(legsToPin(boucle, charges, "Copper", "Megumi", "buy", [true, true, true]), [0, 2]);
+});
+
+// ---------- #48 : le verrou vient du CHARGEMENT, plus de la correction ----------
+
+test("legsToPin : une jambe NON chargée n'est plus figée — elle doit recalculer", () => {
+  // LE renversement. Corriger un stock sans avoir rien chargé, c'est dire « le relevé est faux »,
+  // pas « je viens de vider le rayon » : la jambe reste branchée sur le marché et se recalcule.
+  // Avant #48, elle prenait 🔒 et continuait d'annoncer 59 SCU pendant que le rayon en avait 12.
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "buy", [false, false]), []);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Rat's Nest", "sell", [false, false]), []);
+});
+
+test("legsToPin : une jambe CHARGÉE reste figée, à l'achat comme à la demande", () => {
+  // Le cas 2, celui qui ne doit pas régresser : le fret est payé et à bord, une correction de
+  // stock postérieure ne doit plus le rétrécir.
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "buy", [true, false]), [0]);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Rat's Nest", "sell", [true, false]), [0]);
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Titanium", "Rat's Nest", "buy", [false, true]), [1]);
+});
+
+test("legsToPin : un terminal réutilisé ne fige QUE la jambe chargée, pas sa jumelle", () => {
+  // Charger la jambe 0 à Megumi ne doit plus figer la jambe 2, qui y rachètera du Copper sans
+  // avoir rien payé : elle doit voir le stock DÉDUIT, ce qui est le bon chiffre.
+  const boucle = [jambeDe("Megumi", "Rat's Nest"), jambeDe("Rat's Nest", "Megumi"), jambeDe("Megumi", "Checkmate")];
+  const charges = [[{ name: "Copper", units: 59 }], [{ name: "Titanium", units: 96 }], [{ name: "Copper", units: 12 }]];
+  assert.deepEqual(legsToPin(boucle, charges, "Copper", "Megumi", "buy", [true, false, false]), [0]);
+});
+
+test("legsToPin : sans état de chargement, rien n'est figé — le défaut va dans le sens sûr", () => {
+  // Un appelant qui oublierait l'argument ne doit pas retomber dans l'ancienne règle en silence.
+  // Ne rien figer est récupérable (le manifeste se recalcule) ; figer à tort ne l'est qu'à la main.
+  assert.deepEqual(legsToPin(PARCOURS, CHARGEMENTS, "Copper", "Megumi", "buy"), []);
 });
 
 test("manifestIntent : ne persiste QUE le nom et les SCU, dans l'ordre", () => {
