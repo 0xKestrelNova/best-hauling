@@ -1218,43 +1218,66 @@ test("Soute : une commodité inconnue ne crée pas un lot que l'app ne saurait p
   expect(await lots(page)).toEqual([]);
 });
 
+// La carte du parcours ne vit plus QUE dans le Plan de vol (ADR-004, décision 4) : les tests qui la
+// regardent y passent. Ils en REVIENNENT pour agir sur le parcours — ajouter un arrêt, effacer,
+// lire le fil d'étapes : ces commandes vivent au bandeau, que la conclusion n'affiche pas.
+async function auPlanDeVol(page) {
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+}
+
 test("Carte : absente sans voyage, dessinée dès qu'il y en a un", async ({ page }) => {
+  await auPlanDeVol(page);
   await expect(page.locator("#journeyMap")).toBeHidden();
+
+  await page.click("#viewRoutes");
   await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await auPlanDeVol(page);
   await expect(page.locator("#journeyMap")).toBeVisible({ timeout: 8000 });
   await expect(page.locator("#journeyMap .jm-arret")).toHaveCount(2); // un arrêt par étape
   await expect(page.locator("#journeyMap .jm-vaisseau")).toBeVisible();
+
   // Purement décoratif : effacer le voyage retire le panneau.
+  await page.click("#viewRoutes");
   await page.locator("#journeyClear").click();
+  await auPlanDeVol(page);
   await expect(page.locator("#journeyMap")).toBeHidden();
 });
 
 test("Carte : cliquer une escale déplace « je suis ici », comme le fil d'étapes", async ({ page }) => {
   await page.locator("#rows tr").first().locator(".journey-pick").click();
-  await expect(page.locator("#journeyMap .jm-arret")).toHaveCount(2);
+  // Les deux libellés se lisent ICI, tant que le bandeau est à l'écran : `innerText` rend une
+  // chaîne vide sur un élément non rendu, et le fil d'étapes n'est pas peint dans la conclusion.
   const depart = (await page.locator("#journeyCard .jstep").nth(0).innerText()).trim();
+  const arrivee = (await page.locator("#journeyCard .jstep").nth(1).innerText()).trim();
   await expect(page.locator("#journeyCard .jstep.here")).toHaveText(memeStation(depart)); // on part du 1er arrêt
 
+  await auPlanDeVol(page);
+  await expect(page.locator("#journeyMap .jm-arret")).toHaveCount(2);
   const avant = await page.locator("#journeyMap .jm-vaisseau").getAttribute("style");
   await page.locator("#journeyMap .jm-arret").nth(1).locator(".jm-cible").click();
 
-  // Les DEUX chemins mènent à la même commande : le vaisseau bouge et le fil d'étapes suit.
+  // Les DEUX chemins mènent à la même commande : le vaisseau bouge sur la carte…
   await expect(page.locator("#journeyMap .jm-vaisseau")).not.toHaveAttribute("style", avant);
-  const arrivee = (await page.locator("#journeyCard .jstep").nth(1).innerText()).trim();
+  // …et le fil d'étapes du bandeau a suivi, là où il vit.
+  await page.click("#viewRoutes");
   await expect(page.locator("#journeyCard .jstep.here")).toHaveText(memeStation(arrivee));
 });
 
 test("Carte : un saut inter-système dessine deux disques et un corridor", async ({ page }) => {
   await manifesteDepuis(page, "Megumi — Pyro");
   await page.click("#manifestToJourney");
+  await auPlanDeVol(page);
   await expect(page.locator("#journeyMap")).toBeVisible({ timeout: 8000 });
   await expect(page.locator("#journeyMap .jm-saut")).toHaveCount(0); // intra-système : aucun saut
 
+  await page.click("#viewEnroute"); // ajouter un arrêt se fait au bandeau, pas dans la conclusion
   await page.fill("#journeyAddStop", "Stanton Gateway (Pyro) — Pyro");
   await page.click("#journeyAddBtn");
   await page.fill("#journeyAddStop", "Pyro Gateway (Stanton) — Stanton");
   await page.click("#journeyAddBtn");
 
+  await auPlanDeVol(page);
   await expect(page.locator("#journeyMap .jm-saut")).toHaveCount(1);
   await expect(page.locator("#journeyMap .jm-sys")).toHaveCount(2); // Pyro et Stanton côte à côte
   // `allInnerTexts` rend `undefined` sur du <text> SVG : ces nœuds n'ont pas d'innerText.
@@ -1267,13 +1290,14 @@ test("Carte : un saut est routé par les passerelles, et chaque jambe porte son 
   // de là-bas. Ici le parcours ne les mentionne PAS — c'est la carte qui les intercale.
   await manifesteDepuis(page, "Megumi — Pyro");
   await page.click("#manifestToJourney");
-  await expect(page.locator("#journeyMap")).toBeVisible({ timeout: 8000 });
+  await expect(page.locator("#journeyCard .jstep")).toHaveCount(2); // le parcours est posé
   await page.fill("#journeyAddStop", "TDD Area 18 — Stanton");
   await page.click("#journeyAddBtn");
-  await expect(page.locator("#journeyMap .jm-saut")).toHaveCount(1);
-
   // 3 étapes -> 2 jambes, dont une inter-système routée en 3 segments : 4 au total.
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(3);
+
+  await auPlanDeVol(page);
+  await expect(page.locator("#journeyMap .jm-saut")).toHaveCount(1);
   expect(await page.locator("#journeyMap .jm-jambe, #journeyMap .jm-saut").count()).toBe(4);
 
   // Chaque segment intra-système porte un chevron de sens ; le corridor a son nœud ⚡.

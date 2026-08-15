@@ -2428,20 +2428,171 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
      </div>`;
 }
 
-// Bascule intelligente : si la carte Voyage est bien plus haute que TOUT ce qui l'accompagne
+// ---------- Plan de vol : la vue de conclusion (ADR-004) ----------
+// Une CONCLUSION, pas un tableau de bord : on y arrive une fois tout paramétré, pour REGARDER le
+// résultat. Rien n'y est actionnable — pas un bouton de vente, pas un ✕, pas un champ. Les gestes
+// vivent dans les six vues de recherche, et le bandeau (masqué ici, et ici seulement) les y porte.
+
+// Les quatre réglages qui ne FILTRENT pas mais changent le SENS des chiffres (ADR-004 §6). La soute
+// donne la place libre ; l'autoload décide si les profits sont nets ou bruts, et son état n'est
+// autrement lisible que sur une case à cocher — masquée ici. Les taire rendrait la conclusion
+// silencieusement ambiguë : on lirait un profit sans savoir s'il est net.
+function planHypotheses(f) {
+  return [
+    $("ship").value.trim() || "aucun vaisseau",
+    f.useCargo && f.cargo > 0 ? `soute ${fmt(f.cargo)} SCU` : "soute non limitée",
+    f.useBudget && f.budget > 0 ? `budget ${fmt(f.budget)} aUEC` : "budget non limité",
+    f.autoload ? `profits nets (k = ${String(globalK()).replace(".", ",")})` : "profits bruts",
+  ];
+}
+
+// Tout ce que la vue montre, calculé UNE fois : le rendu et la copie lisent la même chose, sinon
+// le texte collé dans un salon dériverait de l'écran qui l'a produit.
+// Aucun calcul neuf (ADR-004 : « C'est un déménagement d'interface, les chiffres ne changent pas ») :
+// les manifestes par jambe passent par legEffectiveLines, exactement comme le compagnon de voyage.
+function planData() {
+  const f = readFilters();
+  const groupes = holdByCommodity(SOUTE);
+  const stations = JOURNEY ? journeyStations(JOURNEY) : [];
+  const jambes = (JOURNEY && MARKET ? JOURNEY.legs : []).map((leg, i) => {
+    const lines = legEffectiveLines(leg, i, f) || [];
+    const t = lines.length ? manifestTotals(lines, (legFeeCtx(leg, f) || {}).pair) : { profit: 0, fees: 0 };
+    return {
+      i, from: leg.from, to: leg.to, lines,
+      scu: lines.reduce((s, l) => s + l.units, 0),
+      profit: t.profit, fees: t.fees,
+      courante: i === JOURNEY.current,
+      faite: i < JOURNEY.current,
+      chargee: jambeChargee(leg, i),
+    };
+  });
+  return {
+    f, groupes, stations, jambes,
+    scu: holdScu(SOUTE),
+    libre: f.useCargo && f.cargo > 0 ? freeCargo(SOUTE, f.cargo) : null,
+    invest: groupes.reduce((s, g) => s + g.invest, 0),
+    totalProfit: jambes.reduce((s, j) => s + j.profit, 0),
+    totalFees: jambes.reduce((s, j) => s + j.fees, 0),
+    totalScu: jambes.reduce((s, j) => s + j.scu, 0),
+    reste: JOURNEY ? Math.max(0, JOURNEY.legs.length - JOURNEY.current) : 0,
+  };
+}
+
+// La soute EN GRAND : ce qu'il y a à bord commodité par commodité, la place libre, ce qui a été
+// payé. Le #holdCard du bandeau dit la même chose dans un encart latéral — mais il porte la vente,
+// le dépôt et le retrait de lot. Ici, aucun bouton : c'est la même donnée, en lecture.
+function planHoldHTML(d) {
+  if (!d.groupes.length) {
+    return `<div class="plan-card" id="planHold"><div class="plan-card-head">◈ Soute</div>
+      <p class="plan-muted">Rien à bord. Charge un manifeste depuis une jambe, ou déclare ce que tu transportes depuis le bandeau d'une vue de recherche.</p></div>`;
+  }
+  const icone = (nom) => { const c = MARKET && findCommodity(nom); return c ? commodityIcon(c.kind) : ""; };
+  const lignes = d.groupes.map((g) => {
+    // Part de la soute occupée par cette commodité : c'est le « visuel » que l'encart latéral, trop
+    // étroit, ne pouvait pas porter. Rapportée à la CAPACITÉ quand elle est connue, au chargement
+    // sinon — une barre sans dénominateur ne voudrait rien dire.
+    const base = d.f.useCargo && d.f.cargo > 0 ? d.f.cargo : d.scu;
+    const part = base > 0 ? Math.min(100, (g.units / base) * 100) : 0;
+    return `<div class="plan-hold-line">
+        <span class="plan-hold-name">${icone(g.name)}<span>${esc(g.name)}</span></span>
+        <span class="plan-hold-bar" aria-hidden="true"><i style="width:${part.toFixed(1)}%"></i></span>
+        <span class="plan-hold-scu"><b>${fmt(g.units)}</b> SCU</span>
+        <span class="plan-hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}">@ ${fmt(Math.round(g.paidMoyen))}</span>
+      </div>`;
+  }).join("");
+  return `<div class="plan-card" id="planHold">
+      <div class="plan-card-head">◈ Soute</div>
+      <div class="plan-hold-lines">${lignes}</div>
+      <div class="plan-card-meta"><b>${fmt(d.scu)}</b> SCU à bord${d.libre != null ? ` · <b>${fmt(d.libre)}</b> SCU libres` : ""} · capital engagé <b>${fmt(d.invest)}</b> aUEC</div>
+    </div>`;
+}
+
+// Le parcours étape par étape, la jambe en cours et son manifeste, et ce qu'il reste à faire.
+function planRouteHTML(d) {
+  if (!JOURNEY) {
+    return `<div class="plan-card" id="planRoute"><div class="plan-card-head">◈ Parcours</div>
+      <p class="plan-muted">Aucun voyage engagé. Démarre-en un depuis <b>Trajets</b> — le ▶ d'une ligne — ou de zéro en posant un point de départ dans le bandeau.</p></div>`;
+  }
+  const chemin = d.stations
+    .map((s, i) => `<span class="plan-step${i === JOURNEY.current ? " here" : ""}"><span class="sys ${esc(s.system.toLowerCase())}">${esc(s.name)}</span></span>`)
+    .join('<span class="plan-sep">→</span>');
+  const jambes = d.jambes.map((j) => {
+    const cargo = j.lines.length
+      ? j.lines.map((l) => `<span class="plan-cargo-item">${commodityIcon(l.kind)}${esc(l.name)} <b>${fmt(l.units)} SCU</b></span>`).join("")
+      : '<span class="plan-muted">aucun fret rentable</span>';
+    const etat = j.faite ? "faite" : j.courante ? "courante" : "à venir";
+    return `<div class="plan-leg ${j.courante ? "current" : j.faite ? "done" : ""}">
+        <div class="plan-leg-head"><span class="plan-leg-n">${j.i + 1}</span>
+          <span class="plan-leg-route">${esc(j.from)} → ${esc(j.to)}</span>
+          <span class="plan-leg-state">${etat}${j.chargee ? " · chargée" : ""}</span>
+          <span class="plan-leg-profit ${classeProfit(j.profit)}">${signe(j.profit, fmtFee(j.profit, j.fees))}</span></div>
+        <div class="plan-leg-cargo">${cargo}</div>
+      </div>`;
+  }).join("");
+  const n = JOURNEY.legs.length;
+  return `<div class="plan-card" id="planRoute">
+      <div class="plan-card-head">◈ Parcours</div>
+      <div class="plan-path">${chemin}</div>
+      ${MARKET ? `<div class="plan-legs">${jambes}</div>` : '<p class="plan-muted">Calcul des manifestes…</p>'}
+      <div class="plan-card-meta"><b>${n}</b> saut${n > 1 ? "s" : ""} · <b>${d.reste}</b> à faire · <b>${fmt(d.totalScu)}</b> SCU transportés ·
+        profit ${MARKET ? `<b class="${classeProfit(d.totalProfit)}">${signe(d.totalProfit, fmtFee(d.totalProfit, d.totalFees))}</b> aUEC` : "…"}</div>
+    </div>`;
+}
+
+function renderPlan() {
+  const head = $("planHead"), body = $("planBody");
+  if (!head || !body) return;
+  // Les manifestes par jambe vivent dans le graphe d'échange, que la vue par défaut ne charge pas.
+  // On passe `refresh` et non `renderPlan` : c'est la règle de withMarket — le fetch dure, et
+  // l'utilisateur peut avoir changé de vue entre-temps.
+  if (JOURNEY && !MARKET) withMarket(refresh);
+  const d = planData();
+  head.innerHTML =
+    `<div class="plan-title"><span class="plan-kicker">◈ Plan de vol</span>
+       <button id="planCopy" class="plan-copy" type="button" title="Copier le récapitulatif en texte, à coller dans un salon">⧉ Copier le récapitulatif</button></div>
+     <div class="plan-hyp" id="planHypotheses" title="Ces quatre réglages changent le sens des chiffres ci-dessous. Pour les modifier, retourne dans une vue de recherche.">${planHypotheses(d.f).map(esc).join(" · ")}</div>`;
+  body.innerHTML = `<div class="plan-grid">${planHoldHTML(d)}${planRouteHTML(d)}</div>`;
+}
+
+// Le récapitulatif EN TEXTE (ADR-004 §8). Pas une image : la CSP pose `img-src 'self' https:` sans
+// `data:`, ce qui bloque le procédé habituel (<foreignObject> sérialisé en data: URI). Et le texte
+// se colle partout, se cite ligne par ligne dans un salon, et survit aux thèmes.
+function copierPlan() {
+  const d = planData();
+  const lignes = [`Plan de vol — ${planHypotheses(d.f).join(" · ")}`];
+  if (d.stations.length) {
+    lignes.push(`Parcours : ${d.stations.map((s) => `${s.name} (${s.system})`).join(" → ")}`);
+    d.jambes.forEach((j) => {
+      lignes.push(`${j.i + 1}. ${j.from} → ${j.to}  ${fmt(j.scu)} SCU  ${signe(j.profit, fmtFee(j.profit, j.fees))} aUEC${j.courante ? "  <- ici" : ""}`);
+      j.lines.forEach((l) => lignes.push(`     ${fmt(l.units)} SCU  ${l.name}`));
+    });
+  } else {
+    lignes.push("Parcours : aucun voyage engagé.");
+  }
+  if (d.groupes.length) {
+    lignes.push(`Soute : ${d.groupes.map((g) => `${fmt(g.units)} SCU ${g.name}`).join(" · ")}`);
+    lignes.push(`        ${fmt(d.scu)} SCU à bord${d.libre != null ? ` · ${fmt(d.libre)} libres` : ""} · capital engagé ${fmt(d.invest)} aUEC`);
+  }
+  const n = JOURNEY ? JOURNEY.legs.length : 0;
+  lignes.push(`Total : ${n} saut${n > 1 ? "s" : ""} · ${fmt(d.totalScu)} SCU · ${signe(d.totalProfit, fmtFee(d.totalProfit, d.totalFees))} aUEC`);
+  copierTexte(lignes.join("\n"), $("planCopy"), "⧉ Copier le récapitulatif");
+}
+
+// Bascule intelligente : si la carte Voyage est bien plus haute que ce qui l'accompagne
 // (voyage long / jambe dépliée), on empile en pleine largeur pour supprimer le grand vide.
-// On mesure la plus haute des AUTRES colonnes, pas seulement celle de gauche : depuis que la carte
-// du parcours est la troisième colonne, c'est souvent ELLE qui remplit le vide, et ne regarder
-// qu'à gauche empilait la rangée dès que la colonne du vaisseau était vide.
-// À appeler APRÈS le rendu de la carte : mesurée avant, elle est encore masquée (ou à sa taille du
-// rendu précédent) et la rangée s'empilait sur une hauteur qui n'existait plus.
+// La carte du parcours ne compte PLUS dans cette mesure : elle a quitté la rangée pour le Plan de
+// vol (ADR-004 §4), où elle occupe toute la largeur. Tant qu'elle était la troisième colonne, il
+// fallait la mesurer — c'était souvent elle qui remplissait le vide. Il ne reste que la colonne de
+// gauche, et le bandeau est de toute façon masqué dans la vue où vit désormais la carte.
+// À appeler APRÈS le rendu des cartes : mesurées avant, elles sont encore masquées (ou à leur
+// taille du rendu précédent) et la rangée s'empilait sur une hauteur qui n'existait plus.
 // Mesure synchrone (getBoundingClientRect force le reflow) -> fiable même onglet non peint.
 function ajusterRangeeVoyage() {
-  const row = $("shipJourneyRow"), jc = $("journeyCard"), vl = $("voyageLeft"), jm = $("journeyMap");
+  const row = $("shipJourneyRow"), jc = $("journeyCard"), vl = $("voyageLeft");
   if (!row || !jc || !vl || jc.hidden) return;
   row.classList.remove("stacked"); // mesure toujours dans la disposition côte-à-côte de base
   const h = (el) => (el && !el.hidden ? el.getBoundingClientRect().height : 0);
-  if (h(jc) > Math.max(h(vl), h(jm)) + 140) row.classList.add("stacked");
+  if (h(jc) > h(vl) + 140) row.classList.add("stacked");
 }
 
 // Bascule entre les vues et rafraîchit la bonne.
@@ -2457,6 +2608,7 @@ function refresh() {
   else if (view === "chain") renderChain();
   else if (view === "corrections") renderCorrections();
   else if (view === "commodities") renderCommodities();
+  else if (view === "plan") renderPlan();
   else render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
@@ -2484,6 +2636,7 @@ function switchView(v) {
   $("viewChain").classList.toggle("active", v === "chain");
   $("viewCorrections").classList.toggle("active", v === "corrections");
   $("viewCommodities").classList.toggle("active", v === "commodities");
+  $("viewPlan").classList.toggle("active", v === "plan");
   $("routes").hidden = v !== "routes";
   $("loops").hidden = v !== "loops";
   $("enroute").hidden = v !== "enroute";
@@ -2494,8 +2647,16 @@ function switchView(v) {
   $("corrections").hidden = v !== "corrections";
   $("commoditiesControls").hidden = v !== "commodities";
   $("commodities").hidden = v !== "commodities";
+  $("plan").hidden = v !== "plan";
+  // Les deux blocs jusqu'ici PERMANENTS, que seule la vue de conclusion masque (ADR-004 §4 et §6).
+  // La barre de filtres : on ne change rien au voyage depuis le Plan de vol, l'y laisser ferait
+  // croire le contraire. Le bandeau : ses cartes sont éditables (✕ du parcours, vente en soute) et
+  // c'est tout ce que cette vue n'est pas — le Plan de vol le remplace par un récapitulatif inerte.
+  // Aucune valeur n'est touchée : les deux reviennent intacts au retour dans une vue de recherche.
+  $("controls").hidden = v === "plan";
+  $("shipJourneyRow").hidden = v === "plan";
   if (v !== "enroute") $("manifest").hidden = true;
-  if (v === "chain" || v === "corrections" || v === "commodities") $("empty").hidden = true;
+  if (v === "chain" || v === "corrections" || v === "commodities" || v === "plan") $("empty").hidden = true;
   refresh();
 }
 
@@ -2799,7 +2960,10 @@ function applyState(s) {
   STATE_CHECKS.forEach((id) => { if (s[id] != null) $(id).checked = s[id] === "1"; });
   if (safeKey(s.sk)) { sortKey = s.sk; sortDir = Number(s.sd) === 1 ? 1 : -1; }
   if (safeKey(s.lk)) { loopSortKey = s.lk; loopSortDir = Number(s.ld) === 1 ? 1 : -1; }
-  if (["routes", "loops", "enroute", "chain", "corrections", "commodities"].includes(s.v)) view = s.v;
+  // Liste blanche des vues restaurables. Y OUBLIER une vue neuve est le piège documenté par
+  // l'ADR-004 : elle s'ouvre au clic, mais ne revient ni d'un permalien ni du localStorage — et
+  // l'oubli ne se voit qu'au rechargement suivant.
+  if (["routes", "loops", "enroute", "chain", "corrections", "commodities", "plan"].includes(s.v)) view = s.v;
   if (s.cb === "loot") commBoard = "loot";
   if (s.j) JOURNEY = decodeJourney(s.j); // compagnon de voyage restauré (les champs sont déjà repris ci-dessus)
   applySortIndicators();
@@ -3332,6 +3496,14 @@ async function init() {
   $("viewChain").addEventListener("click", () => switchView("chain"));
   $("viewCorrections").addEventListener("click", () => switchView("corrections"));
   $("viewCommodities").addEventListener("click", () => switchView("commodities"));
+  $("viewPlan").addEventListener("click", () => switchView("plan"));
+  // La marque ramène à TRAJETS, la vue principale — pas au Plan de vol (ADR-004 §5). Un <button>
+  // natif : Entrée et Espace y viennent sans rien ajouter.
+  $("brandHome").addEventListener("click", () => switchView("routes"));
+  // Copie du récapitulatif : écouteur DÉLÉGUÉ sur l'en-tête, que renderPlan réécrit à chaque rendu.
+  $("planHead").addEventListener("click", (e) => {
+    if (e.target.closest("#planCopy")) copierPlan();
+  });
   $("share").addEventListener("click", copyShareLink);
   // Contrôles « Commodités » : modes de tri + sélection d'une tuile.
   $("commSortModes").addEventListener("click", (e) => { const b = e.target.closest("button[data-sort]"); if (b) setCommSort(b.dataset.sort); });
@@ -3604,13 +3776,13 @@ async function init() {
       startEdit(e.target);
     }
   });
-  // Raccourcis clavier : / (recherche), 1/2/3 (vues). Ignorés pendant la saisie.
+  // Raccourcis clavier : / (recherche), 1 à 7 (vues). Ignorés pendant la saisie.
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const el = document.activeElement;
     // `role="button"` couvre d'un coup tout ce que l'app rend activable sans être un <button> :
     // l'en-tête d'une jambe, une escale de la carte, une valeur corrigeable. Sans lui, tabuler
-    // jusqu'à l'un d'eux puis taper « 1 »…« 6 » changeait de vue — l'utilisateur clavier perdait son
+    // jusqu'à l'un d'eux puis taper « 1 »…« 7 » changeait de vue — l'utilisateur clavier perdait son
     // contexte au moment précis où il essayait d'agir dessus.
     if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ||
                el.getAttribute("role") === "button" || el.classList.contains("editv"))) return;
@@ -3621,6 +3793,7 @@ async function init() {
     else if (e.key === "4") switchView("chain");
     else if (e.key === "5") switchView("corrections");
     else if (e.key === "6") switchView("commodities");
+    else if (e.key === "7") switchView("plan");
   });
   loadOverrides();
   loadAutoloadK();
