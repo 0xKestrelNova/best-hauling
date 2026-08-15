@@ -19,7 +19,7 @@ import {
   journeyMap, nameAngle, CARTE, nomPasserelle,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
   refusActif, migrerRefus, DUREE_VOL,
-  refuseHere, sellableAt, sellAllAt, offloadPlan, stockApres,
+  refuseHere, sellableAt, sellAllAt, offloadPlan, tourneeEcoulement, tourneesEcoulement, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   encodeJourney, decodeJourney, removeJourneyStop, freeManifestLine, hydrateManifestLine,
@@ -2361,6 +2361,161 @@ test("takeFromStore : reprendre rend le lot à la soute avec son prix payé, et 
   // Rien à reprendre : ni station inconnue, ni commodité absente ne fabriquent quoi que ce soit.
   assert.deepEqual(takeFromStore([], depose.entrepots, "Gold", 10, "Nulle part").hold, []);
   assert.deepEqual(takeFromStore([], depose.entrepots, "Inconnue", 10, "Ruin Station — Pyro").hold, []);
+});
+
+// ---------- La tournée d'écoulement : vider la soute en un minimum d'arrêts (ADR-007, #57) ----------
+// Marché-jouet construit pour que COUVERTURE et PROFIT désignent des destinations différentes —
+// c'est tout l'objet de l'ADR-007. « Large » reprend les trois lignes à prix moyen ; « Riche » n'en
+// reprend qu'une, mais dix fois plus cher. Le contre-exemple à 886 SCU de l'issue, en miniature.
+const MARCHE_TOURNEE = {
+  terminals: [
+    { name: "Ici", system: "S" },       // 0 — on y est, et il ne reprend rien
+    { name: "Large", system: "S" },     // 1 — les trois lignes, à 100
+    { name: "Riche", system: "S" },     // 2 — X seule, à 1 000
+    { name: "Ailleurs", system: "T" },  // 3 — Y seule, et dans un autre système
+  ],
+  commodities: [
+    { name: "X", kind: "metal", illegal: false, buys: [], sells: [[1, 100, null, 9e9, 3], [2, 1000, null, 9e9, 3]] },
+    { name: "Y", kind: "metal", illegal: false, buys: [], sells: [[1, 100, null, 9e9, 3], [3, 900, null, 9e9, 3]] },
+    { name: "Z", kind: "metal", illegal: false, buys: [], sells: [[1, 100, null, 9e9, 3]] },
+  ],
+};
+const souteXYZ = () => ["X", "Y", "Z"].map((name) => ({ name, units: 10, paid: 0, from: "", at: 1 }));
+
+test("tournée : la plus COURTE gagne, même quand elle rapporte moins (ADR-007)", () => {
+  const t = tourneeEcoulement(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null);
+  assert.deepEqual(t.arrets.map((a) => a.terminal), ["Large"]);
+  assert.equal(t.resteScu, 0);
+  assert.equal(t.encaisse, 30 * 100);
+  // Le tri par profit, lui, partirait chez « Riche » — et coûterait un arrêt de plus pour finir.
+  assert.equal(offloadPlan(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null)[0].terminal, "Riche");
+});
+
+test("tournée : la meilleure « à un arrêt de plus » est proposée, avec son écart (ADR-007)", () => {
+  // L'arbitrage ne se tranche pas par un seuil : l'app ne sait pas si tu as le temps. Elle montre
+  // les deux et rend la décision à qui a le contexte.
+  const { tournee, alternative } = tourneesEcoulement(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null);
+  assert.equal(tournee.arrets.length, 1);
+  assert.deepEqual(alternative.arrets.map((a) => a.terminal), ["Riche", "Large"]);
+  assert.equal(alternative.encaisse, 10 * 1000 + 20 * 100);
+  assert.equal(alternative.ecart, alternative.encaisse - tournee.encaisse);
+  assert.ok(alternative.ecartPct > 0);
+});
+
+test("tournée : la station où l'on se trouve est un arrêt candidat, à coût de déplacement nul", () => {
+  // On vient justement d'y ramasser le butin. `offloadPlan` seul l'exclut toujours — c'est juste
+  // pour « où écouler AILLEURS », et faux pour une tournée.
+  const t = tourneeEcoulement(MARCHE_TOURNEE, souteXYZ(), 1, fEcouler(), null); // on EST à « Large »
+  assert.deepEqual(t.arrets.map((a) => a.terminal), ["Large"]);
+  assert.equal(t.resteScu, 0);
+  assert.equal(offloadPlan(MARCHE_TOURNEE, souteXYZ(), 1, fEcouler(), null).every((d) => d.terminal !== "Large"), true);
+});
+
+test("tournée : on ne repasse jamais deux fois au même comptoir (ADR-007)", () => {
+  // La capacité repousse par ticks en jeu, mais l'app n'a aucune donnée sur le débit de recharge.
+  // Attendre un tick n'est pas « tout écouler au plus vite » : le résidu ressort en « reste à bord »,
+  // pas en second passage fantôme.
+  const marche = {
+    terminals: [{ name: "Ici", system: "S" }, { name: "Petit", system: "S" }],
+    commodities: [{ name: "X", kind: "metal", illegal: false, buys: [], sells: [[1, 100, 40, 9e9, 3]] }],
+  };
+  const h = [{ name: "X", units: 100, paid: 0, from: "", at: 1 }];
+  const t = tourneeEcoulement(marche, h, 0, fEcouler(), null);
+  assert.equal(t.arrets.length, 1);
+  assert.equal(t.resteScu, 60); // 100 − 40, et on n'y retourne pas
+});
+
+test("tournée : les lignes qui ne s'écoulent nulle part sont NOMMÉES, pas oubliées", () => {
+  // 15 commodités sur 113 n'ont aucun débouché dans Pyro : c'est massif, pas marginal. Les taire
+  // ferait annoncer une soute vidée qui ne l'est pas.
+  const h = souteXYZ().concat([{ name: "Orphelin", units: 7, paid: 0, from: "", at: 1 }]);
+  const t = tourneeEcoulement(MARCHE_TOURNEE, h, 0, fEcouler(), null);
+  assert.deepEqual(t.sansDebouche, [{ name: "Orphelin", units: 7 }]);
+  assert.equal(t.resteScu, 7);
+});
+
+test("tournée : le résidu suit la CAPACITÉ et les FILTRES — jamais un sellAllAt brut", () => {
+  const marche = {
+    terminals: [{ name: "Ici", system: "S" }, { name: "A", system: "S" }],
+    commodities: [{ name: "Poudre", kind: "vice", illegal: true, buys: [], sells: [[1, 900, 40, 9e9, 3]] }],
+  };
+  const h = [{ name: "Poudre", units: 100, paid: 0, from: "", at: 1 }];
+  assert.equal(tourneeEcoulement(marche, h, 0, fEcouler(), null).resteScu, 60); // capacité 40 sur 100
+  assert.equal(sellAllAt(h, marche, 1, null).hold.length, 0); // la brique qu'il ne FAUT PAS employer
+  // …et les filtres de vue s'appliquent, comme partout ailleurs.
+  const t = tourneeEcoulement(marche, h, 0, fEcouler({ legalOnly: true }), null);
+  assert.equal(t.arrets.length, 0);
+  assert.equal(t.resteScu, 100);
+});
+
+test("tournée : bornée à 5 arrêts — au-delà, ce n'est plus « tout écouler au plus vite »", () => {
+  const n = 7;
+  const terminals = [{ name: "Ici", system: "S" }].concat(
+    Array.from({ length: n }, (_, i) => ({ name: `T${i}`, system: "S" })));
+  const commodities = Array.from({ length: n }, (_, i) => ({
+    name: `C${i}`, kind: "metal", illegal: false, buys: [], sells: [[i + 1, 100, null, 9e9, 3]],
+  }));
+  const h = commodities.map((c) => ({ name: c.name, units: 10, paid: 0, from: "", at: 1 }));
+  const t = tourneeEcoulement({ terminals, commodities }, h, 0, fEcouler(), null);
+  assert.equal(t.arrets.length, 5);
+  assert.equal(t.resteScu, 20); // deux lignes n'ont pas pu être servies, et ça se voit
+});
+
+test("tournée : un total bâti sur des capacités inconnues se dit PARIÉ, jamais garanti", () => {
+  // 307 des 1 879 points de vente publient leur capacité (16,3 %) : le nombre d'arrêts est un
+  // PLANCHER, presque toujours faux vers le bas. Il ne doit jamais s'afficher sans le dire.
+  const t = tourneeEcoulement(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null);
+  assert.equal(t.certitude, "inconnue");
+  assert.equal(t.garanti, 0);
+});
+
+test("tournée : sur les VRAIES données, la couverture l'emporte et l'alternative coûte UN arrêt", () => {
+  // La soute du contre-exemple de l'ADR-007 : une sortie butin en Pyro, 886 SCU sur 7 lignes.
+  // AUCUN montant n'est figé ici — les données se régénèrent, et un test adossé à un chiffre du
+  // jour se casse au premier `npm run build`. Ce qui est vérifié, c'est la FORME de l'arbitrage.
+  // Les avant-postes doivent rester ACTIVÉS : les destinations divergentes en sont toutes, et les
+  // exclure effondrerait les quatre tournées sur une seule — le cas intéressant disparaîtrait.
+  const noms = ["Janalite", "Hadanite", "Aphorite", "Dolivine", "Quantainium",
+    "Recycled Material Composite", "Titanium"];
+  const soute = noms
+    .filter((n) => REAL.commodities.some((c) => c.name === n))
+    .map((name, i) => ({ name, units: 10 * (i + 1), paid: 0, from: "", at: 1 }));
+  assert.ok(soute.length >= 4, `moins de 4 commodités du contre-exemple existent encore : ${soute.length}`);
+
+  const origine = REAL.terminals.findIndex((t) => t.system === "Pyro");
+  const f = fEcouler({ sysFilter: "Pyro" });
+  const { tournee, alternative } = tourneesEcoulement(REAL, soute, origine, f, null);
+
+  assert.ok(tournee.arrets.length >= 1, "aucun débouché trouvé pour une soute de butin en Pyro");
+  // Jamais deux fois le même comptoir : la capacité repousse par ticks, l'app n'en sait rien.
+  assert.equal(new Set(tournee.arrets.map((a) => a.idx)).size, tournee.arrets.length);
+  // COUVERTURE d'abord : aucun candidat ne reprend plus de lignes que le premier arrêt retenu.
+  const cands = offloadPlan(REAL, soute, origine, f, null, null, REAL.terminals.length, { inclureOrigine: true });
+  const maxLignes = Math.max(...cands.map((d) => d.lignes.length));
+  assert.equal(tournee.arrets[0].lignes.length, maxLignes);
+
+  if (alternative) {
+    assert.equal(alternative.arrets.length, tournee.arrets.length + 1); // UN arrêt de plus, pas deux
+    assert.ok(alternative.encaisse > tournee.encaisse);                 // et il doit se payer
+    assert.equal(alternative.ecart, alternative.encaisse - tournee.encaisse);
+    assert.ok(alternative.resteScu <= tournee.resteScu);                // sans vider moins
+  }
+});
+
+test("offloadPlan : l'origine reste exclue par défaut, incluse à la demande", () => {
+  assert.equal(offloadPlan(MARCHE_TOURNEE, souteXYZ(), 1, fEcouler(), null).every((d) => d.terminal !== "Large"), true);
+  const avec = offloadPlan(MARCHE_TOURNEE, souteXYZ(), 1, fEcouler(), null, null, 6, { inclureOrigine: true });
+  assert.ok(avec.some((d) => d.terminal === "Large"));
+  assert.equal(avec.find((d) => d.terminal === "Large").cross, false); // on y est : aucun saut
+});
+
+test("offloadPlan : le comparateur est injectable, et le tri par PROFIT reste le défaut", () => {
+  // Paramétrer plutôt que dupliquer : deux fonctions entretiendraient deux classements divergents,
+  // exactement le défaut que le dépôt corrige ailleurs.
+  assert.equal(offloadPlan(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null)[0].terminal, "Riche");
+  const parCouverture = offloadPlan(MARCHE_TOURNEE, souteXYZ(), 0, fEcouler(), null, null, 6,
+    { comparer: (a, b) => b.lignes.length - a.lignes.length });
+  assert.equal(parCouverture[0].terminal, "Large");
 });
 
 // ---------- Carte 2D du parcours (ADR-001) ----------

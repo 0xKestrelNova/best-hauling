@@ -14,7 +14,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
-  offloadPlan, storeFromHold, takeFromStore, stockApres,
+  offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
   journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
   removeJourneyStop as removeStopPure,
@@ -2459,6 +2459,109 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
      </div>`;
 }
 
+// ---------- La tournée d'écoulement : la huitième vue (ADR-007, #57) ----------
+// « Comment me débarrasser d'une soute que je ne veux plus porter ? » — l'AUTRE question, celle
+// qu'« où écouler » ne pose pas. Les deux vues coexistent parce que les deux classements sont
+// incompatibles, et l'écran doit le dire : sans ça l'app se contredit sous les yeux de
+// l'utilisateur, qui lit deux ordres opposés du même fret.
+
+// Un arrêt de la tournée. Les lignes sont plafonnées à 12 : le calcul est linéaire, c'est la
+// lisibilité qui souffre — et ce qui est écarté se dit, plutôt que de disparaître.
+function tourArretHTML(a, rang) {
+  const MAX = 12;
+  const visibles = a.lignes.slice(0, MAX);
+  const reste = a.lignes.length - visibles.length;
+  const detail = visibles
+    .map((l) => `<span class="tour-ligne${l.sousLePrixPaye ? " perte" : ""}">${esc(l.name)} <b>${fmt(l.absorbe)}</b>${l.reste > 0 ? `/${fmt(l.absorbe + l.reste)}` : ""} SCU</span>`)
+    .join("");
+  const cert = a.certitude === "connue"
+    ? `<span class="ec-sur" title="Capacité publiée par UEX">${fmt(a.garanti)} SCU garantis</span>`
+    : a.certitude === "inconnue"
+      ? '<span class="ec-flou" title="UEX ne publie pas la capacité de ce point : ni zéro, ni illimitée">capacité inconnue</span>'
+      : `<span class="ec-flou" title="Capacité publiée pour une partie seulement">${fmt(a.garanti)} SCU garantis, reste inconnu</span>`;
+  return `<div class="tour-arret">
+      <div class="tour-arret-head">
+        <span class="tour-n">${rang}</span>
+        <span class="tour-nom">${esc(a.terminal)}${sysBadge(a.system)}${a.cross ? ' <span class="cross" title="Changement de système">⚡</span>' : ""}${outpostTag(a.outpost)}</span>
+        <span class="tour-lignes-n">${a.lignes.length} ligne${a.lignes.length > 1 ? "s" : ""} · <b>${fmt(a.scu)}</b> SCU</span>
+        <span class="tour-encaisse" title="Encaissement brut. Profit, prix d'achat déduit : ${a.profit >= 0 ? "+" : ""}${fmt(Math.round(a.profit))} aUEC.">${fmt(Math.round(a.encaisse))}</span>
+      </div>
+      <div class="tour-arret-lignes">${detail}${reste > 0 ? `<span class="tour-ligne muted">+ ${reste} autre${reste > 1 ? "s" : ""}</span>` : ""}</div>
+      <div class="tour-arret-meta">${cert}${a.aPerte ? ' · <span class="ec-perte" title="Le prix ici est inférieur à ce que tu as payé">sous le prix payé</span>' : ""}</div>
+    </div>`;
+}
+
+function tourHTML(t, alt, systeme, toutSysteme) {
+  if (!t.arrets.length && !t.sansDebouche.length) {
+    return `<div class="tour-vide"><p class="muted">Aucun comptoir ne reprend ce fret ${toutSysteme ? "où que ce soit" : `dans ${esc(systeme)}`} avec ces filtres.
+      Ouvre la portée aux autres systèmes, ou <b>dépose</b> le fret à une station : il n'est alors ni vendu ni perdu.</p></div>`;
+  }
+  // Le plancher, dit AVANT les chiffres. 307 des 1 879 points de vente publient leur capacité :
+  // le nombre d'arrêts est presque toujours faux vers le bas, et un total ne s'affiche jamais sans
+  // dire s'il est garanti ou parié.
+  const parie = t.certitude !== "connue";
+  const bandeau = `<div class="tour-plancher ${parie ? "parie" : "sur"}">${parie
+    ? "Plancher : UEX ne publie la capacité que d'un point de vente sur six. Il faudra sans doute <b>plus d'arrêts</b> que ce qui est annoncé — la tournée se recalcule après chaque arrêt réel."
+    : "Toutes les capacités de cette tournée sont publiées par UEX : le nombre d'arrêts est <b>garanti</b>."}</div>`;
+
+  const orphelines = t.sansDebouche.length
+    ? `<div class="tour-orphelines"><b>${t.sansDebouche.length} ligne${t.sansDebouche.length > 1 ? "s ne s'écoulent" : " ne s'écoule"} nulle part ${toutSysteme ? "dans la portée" : `dans ${esc(systeme)}`}</b> :
+        ${t.sansDebouche.map((g) => `<span class="tour-orph">${esc(g.name)} ${fmt(g.units)} SCU</span>`).join("")}
+        <span class="muted">— ouvre la portée, dépose-les à une station, ou garde-les à bord.</span></div>`
+    : "";
+
+  const entete = `<div class="tour-head">
+      <span class="tour-titre">◈ Tournée d'écoulement</span>
+      <span class="tour-bilan"><b>${t.arrets.length}</b> arrêt${t.arrets.length > 1 ? "s" : ""}${t.sauts > 0 ? ` · <b>${t.sauts}</b> saut${t.sauts > 1 ? "s" : ""} de système` : ""} · <b>${fmt(t.scu)}</b> SCU écoulés${t.resteScu > 0 ? ` · <b class="tour-reste">${fmt(t.resteScu)}</b> SCU resteraient à bord` : " · <b>soute vidée</b>"}</span>
+      <span class="tour-total" title="Encaissement brut de la tournée. Profit, prix d'achat déduit : ${t.profit >= 0 ? "+" : ""}${fmt(Math.round(t.profit))} aUEC.">${fmt(Math.round(t.encaisse))} <span>aUEC</span></span>
+    </div>`;
+
+  // L'alternative « un arrêt de plus », chiffrée. L'ordre reste lexicographique STRICT : la plus
+  // courte est retenue. Un seuil serait un paramètre invérifiable — l'app ne sait pas si tu as le
+  // temps, si c'est sur ton chemin, ou si tu veux juste te coucher. On montre les deux.
+  const alternative = alt
+    ? `<div class="tour-alt">
+        <div class="tour-alt-head">Un arrêt de plus : <b class="profit">+${fmt(Math.round(alt.ecart))}</b> aUEC${alt.ecartPct != null ? ` <span class="muted">(+${alt.ecartPct.toFixed(1)} %)</span>` : ""}</div>
+        <div class="tour-alt-chemin">${alt.arrets.map((a) => `${esc(a.terminal)} <span class="muted">(${a.lignes.length})</span>`).join(" <span class=\"tour-fleche\">→</span> ")}</div>
+        <div class="tour-alt-note muted">À toi de trancher : l'app ne sait pas si tu as le temps, ni si c'est sur ton chemin.</div>
+      </div>`
+    : "";
+
+  return entete + bandeau + orphelines +
+    `<div class="tour-arrets">${t.arrets.map((a, i) => tourArretHTML(a, i + 1)).join("")}</div>` +
+    alternative;
+}
+
+function renderTour() {
+  const box = $("tour");
+  if (!box) return;
+  if (!SOUTE.length) {
+    box.innerHTML = `<div class="tour-vide"><p class="muted">Ta soute est vide — il n'y a rien à écouler.
+      Déclare ce que tu transportes avec <b>« + déclarer ce que j'ai à bord »</b> depuis une vue de recherche,
+      ou charge le manifeste d'une jambe avec <b>« ✓ chargé »</b>.</p></div>`;
+    return;
+  }
+  // Le graphe d'échange porte les débouchés. On passe `refresh` et non `renderTour` : c'est la règle
+  // de withMarket — le fetch dure, et l'utilisateur peut avoir changé de vue entre-temps.
+  if (!MARKET) { withMarket(refresh); box.innerHTML = '<p class="muted tour-vide">Chargement du marché…</p>'; return; }
+  // Le champ de la vue prime sur la position du voyage : on peut vouloir simuler depuis ailleurs.
+  const saisi = $("tourFrom").value.trim();
+  const ici = saisi ? resolveStationLabel(saisi) : stationCourante();
+  if (ici == null) {
+    box.innerHTML = `<div class="tour-vide"><p class="muted">Dis d'abord <b>où tu es</b> : une tournée part d'un terminal.
+      Le champ <b>Je suis à</b>, juste au-dessus, l'attend.</p></div>`;
+    return;
+  }
+  const f = readFilters();
+  const systeme = MARKET.terminals[ici].system;
+  const toutSysteme = $("tourScope").value === "all";
+  // Portée par défaut = le système où l'on se trouve (27 terminaux en Pyro, 80 en Stanton, 7 en Nyx
+  // sur 114). L'ouvrir est un geste explicite, et le saut apparaît alors comme une ligne de coût.
+  const ft = { ...f, sysFilter: toutSysteme ? f.sysFilter : systeme };
+  const { tournee, alternative } = tourneesEcoulement(MARKET, SOUTE, ici, ft, effVals, feeResolver(f));
+  box.innerHTML = tourHTML(tournee, alternative, systeme, toutSysteme);
+}
+
 // ---------- Plan de vol : la vue de conclusion (ADR-004) ----------
 // Une CONCLUSION, pas un tableau de bord : on y arrive une fois tout paramétré, pour REGARDER le
 // résultat. Rien n'y est actionnable — pas un bouton de vente, pas un ✕, pas un champ. Les gestes
@@ -2640,6 +2743,7 @@ function refresh() {
   else if (view === "corrections") renderCorrections();
   else if (view === "commodities") renderCommodities();
   else if (view === "plan") renderPlan();
+  else if (view === "tour") renderTour();
   else render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
@@ -2668,6 +2772,7 @@ function switchView(v) {
   $("viewCorrections").classList.toggle("active", v === "corrections");
   $("viewCommodities").classList.toggle("active", v === "commodities");
   $("viewPlan").classList.toggle("active", v === "plan");
+  $("viewTour").classList.toggle("active", v === "tour");
   $("routes").hidden = v !== "routes";
   $("loops").hidden = v !== "loops";
   $("enroute").hidden = v !== "enroute";
@@ -2679,6 +2784,8 @@ function switchView(v) {
   $("commoditiesControls").hidden = v !== "commodities";
   $("commodities").hidden = v !== "commodities";
   $("plan").hidden = v !== "plan";
+  $("tourControls").hidden = v !== "tour";
+  $("tour").hidden = v !== "tour";
   // Les deux blocs jusqu'ici PERMANENTS, que seule la vue de conclusion masque (ADR-004 §4 et §6).
   // La barre de filtres : on ne change rien au voyage depuis le Plan de vol, l'y laisser ferait
   // croire le contraire. Le bandeau : ses cartes sont éditables (✕ du parcours, vente en soute) et
@@ -2687,7 +2794,7 @@ function switchView(v) {
   $("controls").hidden = v === "plan";
   $("shipJourneyRow").hidden = v === "plan";
   if (v !== "enroute") $("manifest").hidden = true;
-  if (v === "chain" || v === "corrections" || v === "commodities" || v === "plan") $("empty").hidden = true;
+  if (v === "chain" || v === "corrections" || v === "commodities" || v === "plan" || v === "tour") $("empty").hidden = true;
   refresh();
 }
 
@@ -2879,7 +2986,7 @@ async function loadShips() {
 // hash de l'URL, pour reprendre là où on s'est arrêté et partager une vue précise.
 // `alk` = coefficient d'autoload global : partageable, comme tous les réglages. Les relevés PAR
 // STATION, eux, restent locaux — c'est la même frontière que pour les corrections de prix.
-const STATE_FIELDS = ["cargo", "budget", "search", "system", "freshness", "ship", "origin", "destSystem", "destTerminal", "chainOrigin", "hops", "station", "alk", "multiMode"];
+const STATE_FIELDS = ["cargo", "budget", "search", "system", "freshness", "ship", "origin", "destSystem", "destTerminal", "chainOrigin", "hops", "station", "alk", "multiMode", "tourFrom", "tourScope"];
 const STATE_CHECKS = ["useCargo", "useBudget", "sameSystem", "noOutpost", "legalOnly", "capStock", "multiCommodity", "autoload"];
 // Champs qui gardent leur défaut HTML quand la clé est absente de l'état. #system, #freshness et
 // #destSystem ont chacun une option VIDE (« Tous », « Toutes », « N'importe où ») : leur poser ""
@@ -2994,7 +3101,7 @@ function applyState(s) {
   // Liste blanche des vues restaurables. Y OUBLIER une vue neuve est le piège documenté par
   // l'ADR-004 : elle s'ouvre au clic, mais ne revient ni d'un permalien ni du localStorage — et
   // l'oubli ne se voit qu'au rechargement suivant.
-  if (["routes", "loops", "enroute", "chain", "corrections", "commodities", "plan"].includes(s.v)) view = s.v;
+  if (["routes", "loops", "enroute", "chain", "corrections", "commodities", "plan", "tour"].includes(s.v)) view = s.v;
   if (s.cb === "loot") commBoard = "loot";
   if (s.j) JOURNEY = decodeJourney(s.j); // compagnon de voyage restauré (les champs sont déjà repris ci-dessus)
   applySortIndicators();
@@ -3528,6 +3635,11 @@ async function init() {
   $("viewCorrections").addEventListener("click", () => switchView("corrections"));
   $("viewCommodities").addEventListener("click", () => switchView("commodities"));
   $("viewPlan").addEventListener("click", () => switchView("plan"));
+  $("viewTour").addEventListener("click", () => switchView("tour"));
+  // Terminal à SAISIE LIBRE (datalist, mais rien n'oblige à choisir dedans) : même debounce que
+  // #origin et #chainOrigin, faute de quoi chaque frappe re-rendrait ET réécrirait le hash.
+  $("tourFrom").addEventListener("input", refreshDebounced);
+  $("tourScope").addEventListener("input", refresh); // <select> : un seul événement, immédiat
   // La marque ramène à TRAJETS, la vue principale — pas au Plan de vol (ADR-004 §5). Un <button>
   // natif : Entrée et Espace y viennent sans rien ajouter.
   $("brandHome").addEventListener("click", () => switchView("routes"));
@@ -3807,13 +3919,13 @@ async function init() {
       startEdit(e.target);
     }
   });
-  // Raccourcis clavier : / (recherche), 1 à 7 (vues). Ignorés pendant la saisie.
+  // Raccourcis clavier : / (recherche), 1 à 8 (vues). Ignorés pendant la saisie.
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const el = document.activeElement;
     // `role="button"` couvre d'un coup tout ce que l'app rend activable sans être un <button> :
     // l'en-tête d'une jambe, une escale de la carte, une valeur corrigeable. Sans lui, tabuler
-    // jusqu'à l'un d'eux puis taper « 1 »…« 7 » changeait de vue — l'utilisateur clavier perdait son
+    // jusqu'à l'un d'eux puis taper « 1 »…« 8 » changeait de vue — l'utilisateur clavier perdait son
     // contexte au moment précis où il essayait d'agir dessus.
     if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ||
                el.getAttribute("role") === "button" || el.classList.contains("editv"))) return;
@@ -3825,6 +3937,7 @@ async function init() {
     else if (e.key === "5") switchView("corrections");
     else if (e.key === "6") switchView("commodities");
     else if (e.key === "7") switchView("plan");
+    else if (e.key === "8") switchView("tour");
   });
   loadOverrides();
   loadAutoloadK();

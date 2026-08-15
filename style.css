@@ -1181,6 +1181,56 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .comm-points .num { font-family: var(--mono); }
 .comm-detail .muted { color: var(--muted); }
 
+/* ---------- Tournée d'écoulement : la huitième vue (ADR-007) ---------- */
+.tour-wrap { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.tour-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; padding: 12px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--good);
+}
+.tour-titre { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--good); font-weight: 700; }
+.tour-bilan { font-size: 12px; color: var(--muted); }
+.tour-bilan b { font-family: var(--mono); color: var(--text); }
+.tour-reste { color: var(--warn) !important; }
+.tour-total { margin-left: auto; font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--good); }
+.tour-total span { font-size: 10px; color: var(--muted); font-weight: 400; letter-spacing: 1px; }
+/* Le PLANCHER, dit avant les chiffres : un point de vente sur six publie sa capacité, donc le
+   nombre d'arrêts est presque toujours faux vers le bas. Un total ne s'affiche jamais sans dire
+   s'il est garanti ou parié (ADR-007 §8). */
+.tour-plancher { padding: 8px 14px; font-size: 11.5px; line-height: 1.5; border-left: 2px solid; }
+.tour-plancher.parie { color: var(--warn); border-color: var(--warn); background: rgba(245, 167, 66, 0.06); }
+.tour-plancher.sur { color: var(--good); border-color: var(--good); background: rgba(70, 229, 160, 0.05); }
+.tour-plancher b { color: inherit; }
+.tour-orphelines {
+  padding: 8px 14px; font-size: 11.5px; line-height: 1.6; color: var(--text);
+  border-left: 2px solid var(--bad); background: rgba(255, 93, 93, 0.05);
+}
+.tour-orph { display: inline-block; margin: 0 8px 0 0; font-family: var(--mono); font-size: 11px; color: var(--bad); }
+.tour-arrets { display: flex; flex-direction: column; gap: 8px; }
+.tour-arret { padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--acc); }
+.tour-arret-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.tour-n {
+  font-family: var(--mono); font-size: 11px; width: 20px; height: 20px; flex-shrink: 0;
+  display: grid; place-items: center; color: var(--acc); border: 1px solid var(--line2);
+}
+.tour-nom { font-weight: 600; font-size: 13px; }
+.tour-lignes-n { font-size: 11px; color: var(--muted); }
+.tour-lignes-n b { font-family: var(--mono); color: var(--text); }
+.tour-encaisse { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--good); }
+.tour-arret-lignes { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.tour-ligne b { font-family: var(--mono); color: var(--text); }
+.tour-ligne.perte b { color: var(--bad); }
+.tour-arret-meta { margin-top: 6px; font-size: 10.5px; color: var(--muted); }
+/* L'alternative « un arrêt de plus » : l'ordre reste lexicographique strict, c'est l'utilisateur
+   qui arbitre — l'app ne sait pas s'il a le temps. */
+.tour-alt { padding: 10px 14px; border: 1px dashed var(--line2); background: rgba(255, 176, 32, 0.04); }
+.tour-alt-head { font-size: 12px; color: var(--text); }
+.tour-alt-head b { font-family: var(--mono); }
+.tour-alt-chemin { margin-top: 5px; font-size: 12px; }
+.tour-fleche { color: var(--muted); }
+.tour-alt-note { margin-top: 4px; font-size: 10.5px; }
+.tour-vide { padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); }
+.tour-vide p { margin: 0; font-size: 12px; line-height: 1.6; }
+
 /* ---------- Plan de vol : la vue de conclusion (ADR-004) ---------- */
 /* Deux niveaux : la carte du parcours EN GRAND (c'est ce qui justifie la vue), puis le
    récapitulatif en deux colonnes sous elle. Rien n'est actionnable ici, sauf la copie. */

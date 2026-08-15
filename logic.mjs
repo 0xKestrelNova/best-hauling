@@ -1961,8 +1961,16 @@ export function sellAllAt(hold, market, terminalIdx, resolve, nowSec = Date.now(
 // la demande d'une station est par commodité, les résidus ne se disputent donc rien. La « reine »
 // est celle qui RAPPORTE le plus — units × meilleur prix atteignable — et non celle qui a coûté le
 // plus cher : `holdByCommodity` trie par capital engagé, ce qui est un autre critère.
-export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, autoloadFor = null, limit = 6) {
+// `opts` (ADR-007) : la tournée d'écoulement PARAMÈTRE cette fonction au lieu de la dupliquer —
+// deux fonctions entretiendraient deux classements divergents, exactement le défaut que le dépôt
+// corrige ailleurs. Deux réglages, et les deux défauts sont ceux d'« où écouler » :
+//   `inclureOrigine` — le terminal de départ est écarté ici (« où écouler AILLEURS »), ce qui est
+//     faux pour une tournée : la station où l'on se trouve peut être le meilleur premier arrêt, à
+//     coût de déplacement nul — on vient justement d'y ramasser le butin ;
+//   `comparer` — le tri par profit reste le défaut ; la tournée injecte son tri par couverture.
+export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, autoloadFor = null, limit = 6, opts = {}) {
   if (!hold || !hold.length) return [];
+  const inclureOrigine = !!opts.inclureOrigine;
   const origine = market.terminals[originIdx];
   const parNom = holdByCommodity(hold);
   // La reine : celle qui rapporte le plus, au meilleur prix qu'on puisse en tirer quelque part.
@@ -1973,7 +1981,7 @@ export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, aut
     let meilleur = 0;
     for (const sv of c.sells) {
       const t = market.terminals[sv[0]];
-      if (!t || sv[0] === originIdx) continue;
+      if (!t || (sv[0] === originIdx && !inclureOrigine)) continue;
       const e = resolve ? resolve(g.name, t.name, "sell", sv[1], sv[2], sv[3]) : { price: sv[1] };
       if (e.price > meilleur) meilleur = e.price;
     }
@@ -1983,7 +1991,7 @@ export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, aut
   const out = [];
 
   market.terminals.forEach((t, idx) => {
-    if (idx === originIdx) return;                                   // on y est déjà
+    if (idx === originIdx && !inclureOrigine) return;                // on y est déjà
     if (f.noOutpost && t.outpost) return;
     if (f.sameOnly && origine && t.system !== origine.system) return;
     if (f.sysFilter && t.system !== f.sysFilter) return;
@@ -2039,8 +2047,113 @@ export function offloadPlan(market, hold, originIdx, f = {}, resolve = null, aut
   // Profit d'abord ; à égalité, celle qui écoule le plus de la reine — un booléen « solde-t-elle la
   // reine ? » abandonnerait la priorité dans tous les cas où AUCUNE destination ne la solde.
   return out
-    .sort((a, b) => b.profit - a.profit || b.scuReine - a.scuReine || b.garanti - a.garanti)
+    .sort(opts.comparer || ((a, b) => b.profit - a.profit || b.scuReine - a.scuReine || b.garanti - a.garanti))
     .slice(0, limit);
+}
+
+// ---------- La tournée d'écoulement (ADR-007, #57) ----------
+// « Comment me débarrasser d'une soute que je ne veux plus porter ? » — l'autre question, celle
+// qu'`offloadPlan` ne pose PAS. Lui demande « combien puis-je en tirer » et classe par profit ;
+// ici le fret est déjà à bord, le coût est coulé, et ce qui compte est le NOMBRE D'ARRÊTS.
+// Un comptoir qui reprend trois commodités à prix moyen bat donc un comptoir qui n'en reprend
+// qu'une au meilleur prix. Les deux vues coexistent parce que les deux questions sont
+// incompatibles — un seul classement ne peut pas servir les deux.
+
+// Le choix d'un arrêt : couverture d'abord (c'est elle qui réduit les arrêts À VENIR), puis on
+// préfère rester dans le système, puis le volume, puis l'argent. L'argent ne départage qu'en
+// dernier, et c'est l'ENCAISSEMENT, pas le profit : le prix payé est coulé et identique quelle que
+// soit la destination — sur une soute mixte, le profit comparerait des bases de coût hétérogènes
+// et pénaliserait la ligne réellement achetée, donc la destination qui l'écoule.
+const parCouverture = (a, b) =>
+  b.lignes.length - a.lignes.length ||
+  (a.cross === b.cross ? 0 : a.cross ? 1 : -1) ||
+  b.scu - a.scu ||
+  b.encaisse - a.encaisse;
+
+// Agrège une suite d'arrêts. `certitude` vaut « connue » seulement si TOUS les arrêts le sont :
+// 16,3 % des points de vente publient leur capacité, donc un total est presque toujours un pari.
+function bilanTournee(arrets, reste, sansDebouche) {
+  const somme = (cle) => arrets.reduce((s, a) => s + a[cle], 0);
+  const connus = arrets.filter((a) => a.certitude === "connue").length;
+  return {
+    arrets, reste, sansDebouche,
+    resteScu: holdScu(reste),
+    scu: somme("scu"), garanti: somme("garanti"),
+    encaisse: somme("encaisse"), profit: somme("profit"),
+    sauts: arrets.filter((a) => a.cross).length,
+    certitude: !arrets.length || connus === arrets.length ? (arrets.length ? "connue" : "inconnue")
+      : connus === 0 ? "inconnue" : "partielle",
+  };
+}
+
+// Glouton par couverture maximale, rejoué après chaque arrêt. C'est SET COVER (Karp, 1972),
+// inapproximable en deçà de (1−o(1))·ln n sauf si P = NP (Feige, 1998) — et le glouton par
+// couverture maximale atteint EXACTEMENT cette borne. Ce n'est pas un pis-aller : c'est l'optimum
+// de ce qu'on peut espérer en temps polynomial. À 7 lignes, ln(7) ≈ 1,95.
+// L'autre moitié du problème — ordonner les arrêts choisis — est dégénérée ici : sans matrice de
+// distances (aucune coordonnée dans market.json, 161 routes sur 316 portant une distance), il n'y
+// a rien à ordonner. Tout le NP-difficile est dans le CHOIX des comptoirs.
+export function tourneeEcoulement(market, hold, originIdx, f = {}, resolve = null, autoloadFor = null, opts = {}) {
+  const maxArrets = opts.maxArrets || 5;
+  const tous = market.terminals.length; // jamais de `limit` ici : on filtre nous-mêmes, après
+  // Les lignes qui ne s'écoulent NULLE PART dans la portée, sorties du calcul avant la boucle et
+  // nommées : sinon on annonce une soute vidée qui ne l'est pas. On les déduit d'un `offloadPlan`
+  // complet plutôt que d'une seconde règle d'éligibilité — deux règles finiraient par diverger.
+  const portee = offloadPlan(market, hold, originIdx, f, resolve, autoloadFor, tous, { inclureOrigine: true });
+  const ecoulables = new Set(portee.flatMap((d) => d.lignes.map((l) => l.name)));
+  const sansDebouche = holdByCommodity(hold)
+    .filter((g) => !ecoulables.has(g.name))
+    .map((g) => ({ name: g.name, units: g.units }));
+
+  const arrets = [], vus = new Set();
+  let h = hold, ici = originIdx;
+  while (holdScu(h) > 0 && arrets.length < maxArrets) {
+    const cands = offloadPlan(market, h, ici, f, resolve, autoloadFor, tous, {
+      inclureOrigine: !arrets.length, comparer: parCouverture,
+    }).filter((d) => !vus.has(d.idx));
+    // Un premier arrêt imposé sert à dérouler les alternatives : on ne force que le tout premier.
+    const best = !arrets.length && opts.premierForce != null
+      ? cands.find((d) => d.idx === opts.premierForce)
+      : cands[0];
+    if (!best) break; // plus rien d'écoulable : on sort avec ce qui reste, et on le dit
+    // PAS `sellAllAt` : il ignore la capacité ET les filtres de vue (mesuré). Le résidu se
+    // construit ligne par ligne, sur `absorbe`, qu'offloadPlan a déjà plafonné.
+    h = best.lignes.reduce((acc, l) => sellFromHold(acc, l.name, l.absorbe, l.price).hold, h);
+    arrets.push(best);
+    vus.add(best.idx); // on ne repasse jamais deux fois : la recharge par ticks n'est pas modélisable
+    ici = best.idx;
+  }
+  return bilanTournee(arrets, h, sansDebouche);
+}
+
+// La tournée retenue, et la meilleure « à un arrêt de plus » — affichée avec son écart chiffré.
+// L'ordre lexicographique est STRICT (la plus courte gagne toujours) : un seuil serait un paramètre
+// invérifiable, l'app ne sachant ni si tu as le temps, ni si c'est sur ton chemin. Montrer les deux
+// rend l'arbitrage à qui a le contexte.
+// L'alternative se cherche en FORÇANT un autre premier arrêt, puis en déroulant le même glouton :
+// borné à `k` essais, c'est le faisceau étroit de l'ADR, appliqué au seul endroit qui en a besoin.
+export function tourneesEcoulement(market, hold, originIdx, f = {}, resolve = null, autoloadFor = null, opts = {}) {
+  const tournee = tourneeEcoulement(market, hold, originIdx, f, resolve, autoloadFor, opts);
+  const k = opts.k || 3;
+  const premiers = offloadPlan(market, hold, originIdx, f, resolve, autoloadFor, market.terminals.length,
+    { inclureOrigine: true }) // par PROFIT : c'est là que se cachent les tournées plus payantes
+    .filter((d) => d.idx !== (tournee.arrets[0] || {}).idx)
+    .slice(0, k);
+
+  let alternative = null;
+  for (const d of premiers) {
+    const t = tourneeEcoulement(market, hold, originIdx, f, resolve, autoloadFor, { ...opts, premierForce: d.idx });
+    // « Un arrêt de plus », et pas deux : au-delà, ce n'est plus la même question.
+    if (t.arrets.length !== tournee.arrets.length + 1) continue;
+    if (t.resteScu > tournee.resteScu) continue;          // elle doit au moins vider autant
+    if (t.encaisse <= tournee.encaisse) continue;          // et rapporter plus, sinon elle n'a aucun sens
+    if (!alternative || t.encaisse > alternative.encaisse) alternative = t;
+  }
+  if (alternative) {
+    alternative.ecart = alternative.encaisse - tournee.encaisse;
+    alternative.ecartPct = tournee.encaisse > 0 ? (alternative.ecart / tournee.encaisse) * 100 : null;
+  }
+  return { tournee, alternative };
 }
 
 // Dépose des SCU à une station : ils quittent la soute SANS être vendus. Troisième sortie du fret,
