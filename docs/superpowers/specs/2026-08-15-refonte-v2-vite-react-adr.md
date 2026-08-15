@@ -53,6 +53,16 @@ annote, on ne refait pas.
 **176 tests e2e** — 174 verts, 2 ignorés, **1,2 min** en local — et **108 sélecteurs `#id`
 distincts**. « Fini » est déjà écrit, exécutable, et indépendant de l'implémentation.
 
+> **Amendement du 2026-08-15 (PR socle).** Ces chiffres étaient déjà périmés à la rédaction : le
+> jalon `v1.1.0` a livré `rail.pw.mjs` entre-temps. **184 collectés** (`playwright test --list` →
+> « Total: 184 tests in 6 files »), 182 verts, 2 ignorés. Le socle en ajoute 6 → **190**.
+>
+> Les **108 sélecteurs `#id`** sont exacts, mais deux d'entre eux sont des fragments d'URL et non
+> des sélecteurs : **106 réels**, dont **31 ne sont PAS dans `index.html`** — ils sont émis à
+> l'exécution par `app.js`. Et le contrat n'est chiffré qu'à moitié : la suite s'appuie aussi sur
+> ~109 sélecteurs de **classe** et 9 attributs `data-*` (`rail.pw.mjs` lit `dataset.view` sur
+> `.rail-nav .vbtn`). La structure de classes est un contrat au même titre que les `id`.
+
 > **Les `id` et les classes ne changent pas.** C'est ce qui transforme la suite e2e en **harnais de
 > migration** et en contrat anti-régression. Renommer les sélecteurs parce que la nouvelle pile
 > invite à le faire détruirait la seule raison objective de croire que cette refonte peut aboutir —
@@ -104,6 +114,21 @@ Le prix accepté : les correctifs v1 qui tombent pendant la migration sont à re
 
 **176/176 e2e sur le build Vite, sélecteurs inchangés.** Rien d'autre ne vaut « fini ». Les
 2 ignorés restent ignorés pour la même raison qu'aujourd'hui, ou l'ADR est amendé pour dire pourquoi.
+
+> **Amendement du 2026-08-15 (PR socle).** Le critère se reformule en **« tous les tests collectés
+> passent, aucun échec »**, avec le compte du jour comme repère (190 depuis le socle) — et non en
+> un rapport figé.
+>
+> Deux raisons, et la seconde est la vraie. D'abord `176` était périmé : un critère chiffré en dur
+> se déclare atteint **en perdant des tests**. Ensuite, « les 2 ignorés restent ignorés » n'était
+> pas vérifiable : ces deux-là (`smoke.pw.mjs:1719` et `:1759`) sont ignorés à cause des **DONNÉES**
+> — l'instantané `data/` committé n'offre aucune commodité rentable à suggérer sur ces chemins.
+> **Neuf autres tests** portent le même `test.skip` conditionnel et peuvent basculer d'un côté ou de
+> l'autre à la prochaine régénération, **sans qu'une ligne de code bouge**. Adosser le critère de
+> fusion de la refonte à un chiffre que le cron peut changer la nuit était une erreur.
+>
+> Le corollaire du §4 tient sans changement : la migration se fait vue par vue, chacune rendant vert
+> son sous-ensemble `-g` avant la suivante.
 
 Corollaire : la migration se fait **vue par vue à l'intérieur de la branche**, chacune rendant vert
 son sous-ensemble `-g` avant qu'on passe à la suivante. Une branche longue n'est tenable que si elle

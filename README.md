@@ -119,8 +119,23 @@ npm run serve        # sert le dossier sur http://127.0.0.1:4173 (serveur maison
 Les `data/*.json` versionnés servent d'**amorce** pour le dev local. Pour les régénérer depuis UEX :
 
 ```bash
-npm run build        # = node scripts/build-data.mjs  (Node >= 20, fetch natif)
+npm run build:data   # = node scripts/build-data.mjs  (Node >= 20, fetch natif)
 ```
+
+Depuis le socle v2, il y a **deux** builds, et ils ne font pas la même chose. `build` seul les
+enchaîne, mais `.github/workflows/update-data.yml` appelle `node scripts/build-data.mjs` en clair :
+un workflow qui dépend d'un alias npm se casse en silence le jour où l'alias bouge.
+
+```bash
+npm run build:data   # régénère les données depuis UEX
+npm run build:site   # fabrique le site dans dist/ (Vite)
+npm run build        # les deux, dans cet ordre
+npm run dev          # serveur de développement Vite, avec rechargement à chaud
+```
+
+> **`dist/` n'est pas le site déployé.** La mise en ligne assemble encore `_site/` à partir des
+> fichiers sources (`update-data.yml`) : le socle v2 introduit la fabrication et la fait vérifier par
+> les tests, sans y basculer la production. Ce qui est en ligne aujourd'hui ne dépend pas de Vite.
 
 Lancer les tests :
 
@@ -558,6 +573,13 @@ Les relevés bruts et le raisonnement complet sont dans
   (carte vaisseau au reload, demande corrigée à 0, contrôles qui ne fuient plus, persistance des corrections,
   navigation, cible tactile du ▶, dépliant de chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
   « même système » contraint la Chaîne). Playwright est une dépendance **de dev uniquement** — le site livré reste sans dépendance.
+- **Socle de build** ([`e2e/socle.pw.mjs`](e2e/socle.pw.mjs)) : depuis la v2, la suite E2E sert
+  `dist/` — **ce que le build produit réellement**, et non les fichiers du dépôt. Servir les sources
+  laissait la suite verte sans jamais regarder la fabrication : elle aurait validé un `dist/` cassé.
+  Ces tests-là couvrent les pannes qui ne se voient qu'**en production** : un manifeste déplacé sous
+  `assets/` (l'app installée démarrerait sur `/assets/`), une icône hachée que le manifeste ne
+  retrouve plus, une liste de précache périmée (`caches.addAll` est atomique — une seule URL en 404
+  et le hors-ligne ne se dégrade pas, il disparaît), et la CSP de dev qui fuirait dans le build.
 - **CI** ([`ci.yml`](.github/workflows/ci.yml)) : unitaires + E2E sur chaque push/PR.
 
 ## Versions et déploiement
