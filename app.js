@@ -33,6 +33,7 @@ import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chain
 import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from "./vues/commodites.tsx";
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
+import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -465,6 +466,46 @@ const isMultiRoutes = () => view === "routes" && $("multiCommodity").checked;
 // remise à zéro en tête de rendu, un état vide légitime affichait le message d'une AUTRE vue.
 const EMPTY_DEFAULT = "Aucune route ne correspond aux filtres.";
 
+// Ce que les deux modes de Trajets partagent. app.js garde l'ÉTAT — les frais dépendent de
+// l'interrupteur d'autoload et des relevés par station, l'écriture d'une correction doit figer les
+// jambes déjà planifiées, et `#empty` reste écrit ici (il est partagé par trois vues).
+function propsTrajetsCommunes() {
+  return {
+    fmt, fmtVol, fmtFee,
+    avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
+    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
+    legendeAchat: BUY_STATUS,
+    legendeVente: SELL_STATUS,
+    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
+      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
+      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
+      updateOvBadge();
+      refresh();
+    },
+  };
+}
+
+// Ce qui se calcule LIGNE PAR LIGNE, et qui vaut pour les deux tables à lignes simples : « Trajets »
+// (`#rows`) et « En route » (`#enrouteRows`). Elles ont toujours partagé leur rendu — c'était la
+// fonction `routeRowHTML`, appelée des deux endroits. L'îlot React la remplace, donc il doit servir
+// les deux appelants : ne peindre que `#rows` laisserait « En route » sans lignes.
+function propsLignesSimples() {
+  return {
+    celluleFrais: (r) => feeCell(r.feeInfo, r.fees, () => feeLoadText(r.units, (termByName.get(r.buy.terminal) || {}).maxBox), r.units > 0),
+    suspect: (r) => {
+      const d = pairAge(r.buy.updated, r.sell.updated);
+      if (d != null && d > 10) return "relevé de plus de 10 jours";
+      if (r.refSell > 0 && r.refBuy > 0 && (r.sell.price > r.refSell * 1.5 || r.buy.price < r.refBuy * 0.67))
+        return "prix très éloigné de la moyenne UEX";
+      return null;
+    },
+    // Le plafond de caisse vient du MARCHÉ, pas du contexte de frais : c'est une propriété physique
+    // de la station. Le prendre dans `feeInfo` le faisait disparaître dès l'interrupteur relâché, et
+    // la ligne annonçait « 3×32 » à côté d'un manifeste qui affichait « 6×16 » pour la même cargaison.
+    libelleCaisses: (r) => (r.units ? scuBoxesLabel(r.units, (termByName.get(r.buy.terminal) || {}).maxBox) : null),
+  };
+}
+
 function render() {
   const f = readFilters();
   $("empty").textContent = EMPTY_DEFAULT;
@@ -476,7 +517,11 @@ function render() {
   rows.sort(bySort(sortKey, sortDir));
 
   shownRoutes = rows;
-  $("rows").innerHTML = rows.map(routeRowHTML).join("");
+  peindre($("rows"), vueTrajets({
+    ...propsTrajetsCommunes(),
+    ...propsLignesSimples(),
+    lignes: rows,
+  }));
   $("empty").hidden = rows.length > 0;
   notifySuperseded();
 }
@@ -489,7 +534,7 @@ function renderMulti(f) {
   // Sans soute bornée, « remplir la soute » n'a pas de sens (cf. manifeste d'« En route »).
   if (!f.useCargo || !(f.cargo > 0)) {
     shownMulti = [];
-    $("rows").innerHTML = "";
+    peindre($("rows"), null);
     empty.hidden = false;
     empty.textContent = "Active la soute (SCU) pour calculer des trajets multi-commodité.";
     return;
@@ -500,7 +545,7 @@ function renderMulti(f) {
   // #empty reste masqué : le tableau n'est pas vide à cause des filtres, le marché n'est pas là.
   if (!MARKET) {
     shownMulti = [];
-    $("rows").innerHTML = "";
+    peindre($("rows"), null);
     empty.hidden = true;
     withMarket(refresh);
     return;
@@ -511,7 +556,14 @@ function renderMulti(f) {
     .map((t) => ({ ...t, feeInfo: feeCtx(f, t.origin.name, t.dest.name, t.origin, t.dest), ...tripMetrics(t) }));
   trips.sort(bySort(sortKey, sortDir));
   shownMulti = trips;
-  $("rows").innerHTML = trips.map(multiRowHTML).join("");
+  peindre($("rows"), vueTrajetsMulti({
+    ...propsTrajetsCommunes(),
+    lignes: trips,
+    celluleFrais: (t) => feeCell(t.feeInfo, t.fees, () => feeCargoText(t.lines, t.origin.maxBox), t.units > 0),
+    libelleCaisses: (t) => (t.units ? cargoBoxesLabel(t.lines, t.origin.maxBox) : null),
+    // Le relevé le plus ANCIEN du chargement : un trajet ne vaut pas mieux que sa ligne la moins sûre.
+    releveLePlusAncien: (t) => t.lines.reduce((m, l) => { const u = lineFreshUpdated(l); return m && u ? Math.min(m, u) : m || u; }, 0),
+  }));
   empty.hidden = trips.length > 0;
   // Rappel : seuls les chargements COMBINÉS (≥ 2 commodités) sont listés ici — un trajet dont le
   // remplissage optimal tient en une seule commodité est déjà dans la vue « Trajets » normale.
@@ -524,47 +576,7 @@ function renderMulti(f) {
 }
 
 // Ligne de tableau d'un trajet multi-commodité (mêmes colonnes que les trajets simples).
-function multiRowHTML(t, i) {
-  const n = t.lines.length;
-  const fc = feeCell(t.feeInfo, t.fees, () => feeCargoText(t.lines, t.origin.maxBox), t.units > 0);
-  const cross = t.cross ? '<span class="cross">⚡ saut inter-système</span>' : "";
-  const icons = t.lines.slice(0, 6).map((l) => commodityIcon(l.kind)).join("");
-  const more = n > 6 ? `<span class="muted">+${n - 6}</span>` : "";
-  const names = t.lines.map((l) => `${l.name} (${fmt(l.units)} SCU)`).join(" · ");
-  const oldest = t.lines.reduce((m, l) => { const u = lineFreshUpdated(l); return m && u ? Math.min(m, u) : m || u; }, 0);
-  return `
-      <tr data-row="${i}">
-        <td class="loc">
-          <div class="commodity-cell"><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button><button class="route-toggle" data-row="${i}" title="Voir le chargement" aria-label="Voir le chargement">📦</button><span class="multi-icons" title="${esc(names)}">${icons}${more}</span><span class="cname">${n} commodité${n > 1 ? "s" : ""}</span></div>
-          <div class="loc-badges">${t.lines.some((l) => l.illegal) ? illegalTag(true) : ""}${cross}</div>
-        </td>
-        <td class="loc">
-          <div class="term-name">${esc(t.origin.name)}</div>
-          <div class="loc-badges">${sysBadge(t.origin.system)}${outpostTag(t.origin.outpost)}</div>
-          <div class="loc-sub">${esc(t.origin.planet)}</div>
-          <div class="loc-fresh">${freshChip(oldest)}</div>
-        </td>
-        <td class="loc">
-          <div class="term-name">${esc(t.dest.name)}</div>
-          <div class="loc-badges">${sysBadge(t.dest.system)}${outpostTag(t.dest.outpost)}</div>
-          <div class="loc-sub">${esc(t.dest.planet)}</div>
-        </td>
-        <td>${fiabiliteCell(t.fiabilite, t.age, t.partVolume)}</td>
-        <td class="num" title="${withFeeText("Marge moyenne pondérée par SCU chargé", fc)}">${fmtFee(t.margin, t.fees)}</td>
-        <td class="num roi-badge"${fc.attr}>${t.fees > 0 ? "≈ " : ""}${t.roi}%</td>
-        <td class="num"${t.units ? ` title="Caisses : ${cargoBoxesLabel(t.lines, t.origin.maxBox)}"` : ""}>${fmt(t.units)}</td>
-        <td class="num">${fmt(t.investment)}</td>
-        <td class="num profit"${fc.attr}>${fmtFee(t.profit, t.fees)}${fc.mark}</td>
-        <td class="num profit" title="${withFeeText(`Estimation ${Math.round(t.minutes)} min/voyage (distance approchée)`, fc)}">${fmtFee(t.profitHour, t.fees)}</td>
-      </tr>`;
-}
-
-// Détail déplié d'un trajet multi-commodité : le CHARGEMENT, ligne par ligne — et rien d'autre.
-// Il portait aussi un schéma « système › planète › terminal », retiré avec les autres dépliants
-// (#30) : la carte 2D du parcours montre la même géographie. Ce dépliant-ci survit parce que la
-// carte, elle, n'affiche aucun chiffre — c'est le seul endroit qui dit ce que contient une ligne
-// « 3 commodités ». La durée du trajet, qui vivait dans le schéma, reste lisible dans l'infobulle
-// de la colonne « Profit/h ».
+// `multiRowHTML` a été remplacé par vues/trajets.tsx.
 function multiCargoHTML(t) {
   const lines = t.lines.map((l) =>
     `<div class="sline">${commodityIcon(l.kind)}` +
@@ -578,44 +590,7 @@ function multiCargoHTML(t) {
 }
 
 // Ligne de tableau pour une route évaluée (partagée par « Trajets simples » et « En route »).
-function routeRowHTML(r, i) {
-  // Plafond de caisse du terminal d'ACHAT, lu du marché et non du contexte de frais : c'est une
-  // propriété physique de la station (cf. scuBoxesLabel). Le prendre dans `feeInfo` le faisait
-  // disparaître dès l'interrupteur relâché, et la ligne du tableau annonçait alors « 3×32 » à côté
-  // d'un manifeste qui, lui, affichait « 6×16 » pour la même cargaison au même terminal.
-  const maxBox = (termByName.get(r.buy.terminal) || {}).maxBox;
-  const fc = feeCell(r.feeInfo, r.fees, () => feeLoadText(r.units, maxBox), r.units > 0);
-  const cross = r.same_system ? "" : '<span class="cross">⚡ saut inter-système</span>';
-  return `
-      <tr data-row="${i}">
-        <td class="loc">
-          <div class="commodity-cell"><button class="journey-pick" data-row="${i}" title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button>${commodityIcon(r.kind)}<span class="cname">${esc(r.commodity)}</span></div>
-          <div class="loc-badges">${illegalTag(r.illegal)}${suspectTag(r)}${cross}</div>
-        </td>
-        <td class="loc">
-          <div class="term-name">${esc(r.buy.terminal)}</div>
-          <div class="loc-badges">${sysBadge(r.buy.system)}${outpostTag(r.buy.outpost)}</div>
-          <div class="loc-sub">${esc(r.buy.planet)} · ${editv(r.commodity, r.buy.terminal, "buy", "price", r.buy.price, r.buy.ovPrice, r.buy.updated)} aUEC · ${statusDot(r.buy.status, "buy")}<span class="stock" title="Stock disponible à l'achat (relevé UEX)">stock ${editv(r.commodity, r.buy.terminal, "buy", "vol", r.buy.stock, r.buy.ovVol, r.buy.updated)} SCU</span></div>
-          <div class="loc-fresh">${freshChip(r.buy.updated)}</div>
-        </td>
-        <td class="loc">
-          <div class="term-name">${esc(r.sell.terminal)}</div>
-          <div class="loc-badges">${sysBadge(r.sell.system)}${outpostTag(r.sell.outpost)}</div>
-          <div class="loc-sub">${esc(r.sell.planet)} · ${editv(r.commodity, r.sell.terminal, "sell", "price", r.sell.price, r.sell.ovPrice, r.sell.updated)} aUEC · ${statusDot(r.sell.status, "sell")}<span class="stock" title="Demande à la vente = capacité restante du terminal (relevé UEX)">demande ${editv(r.commodity, r.sell.terminal, "sell", "vol", r.sell.demand, r.sell.ovVol, r.sell.updated)} SCU</span></div>
-          <div class="loc-fresh">${freshChip(r.sell.updated)}</div>
-        </td>
-        <td>${fiabiliteCell(r.fiabilite, r.age, r.partVolume)}</td>
-        <td class="num"${fc.attr}>${fmtFee(r.margin, r.fees)}</td>
-        <td class="num roi-badge"${fc.attr}>${r.fees > 0 ? "≈ " : ""}${r.roi}%</td>
-        <td class="num"${r.units ? ` title="Caisses : ${scuBoxesLabel(r.units, maxBox)}"` : ""}>${fmt(r.units)}</td>
-        <td class="num">${fmt(r.investment)}</td>
-        <td class="num profit"${fc.attr}>${fmtFee(r.profit, r.fees)}${fc.mark}</td>
-        <td class="num profit" title="${withFeeText(`Estimation ${Math.round(r.minutes)} min/voyage`, fc)}">${fmtFee(r.profitHour, r.fees)}</td>
-      </tr>`;
-}
-
-// ---------- Vue "Boucles aller-retour" ----------
-// Corrige un segment de boucle (achat au terminal `buyT`, vente au terminal `sellT`).
+// `routeRowHTML` a été remplacé par vues/trajets.tsx, pour `#rows` ET `#enrouteRows`.
 function effLeg(leg, buyT, sellT) {
   const b = effVals(leg.commodity, buyT, "buy", leg.buyPrice, leg.stock, leg.updated);
   const s = effVals(leg.commodity, sellT, "sell", leg.sellPrice, leg.demand, leg.updated);
@@ -1255,7 +1230,7 @@ function renderEnRoute() {
   renderManifest(enrouteOrigin, $("destSystem").value, f, enrouteDest);
 
   if (enrouteOrigin == null) {
-    $("enrouteRows").innerHTML = "";
+    peindre($("enrouteRows"), null);
     emptyMsg.hidden = false;
     emptyMsg.textContent = "Choisis un terminal de départ pour voir le fret à emporter.";
     return;
@@ -1273,7 +1248,7 @@ function renderEnRoute() {
 
   deals.sort(bySort(sortKey, sortDir));
   shownEnroute = deals;
-  $("enrouteRows").innerHTML = deals.map(routeRowHTML).join("");
+  peindre($("enrouteRows"), vueTrajets({ ...propsTrajetsCommunes(), ...propsLignesSimples(), lignes: deals }));
   emptyMsg.hidden = deals.length > 0;
   if (!deals.length) emptyMsg.textContent = "Aucun fret rentable depuis ce terminal avec ces filtres.";
   notifySuperseded();

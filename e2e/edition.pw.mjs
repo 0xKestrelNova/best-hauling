@@ -103,9 +103,16 @@ test("Édition React : app.js ne vient PAS muter un nœud possédé par React (#
   await cellule.click();
   await expect(cellule.locator("input.editv-input"), "deux champs : startEdit est venu muter le nœud React").toHaveCount(1);
 
-  // Et les valeurs éditables de la vue Trajets, elles, restent gérées par app.js.
+  // Et le garde n'a pas rendu `startEdit` inerte pour autant : les valeurs éditables du MANIFESTE
+  // sont encore écrites en HTML par app.js (`editv()`, app.js:424) et s'ouvrent par la délégation.
+  // C'était la vue Trajets qui tenait ce rôle ici ; elle est passée à React avec « En route »
+  // (elles partageaient leur rendu de ligne), et le manifeste est désormais le dernier `.editv`
+  // vanilla — donc le seul endroit où les deux chemins se distinguent encore vraiment.
   await page.click("#viewRoutes");
-  const vanilla = page.locator("#rows .editv").first();
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await page.click("#viewEnroute");
+  const vanilla = page.locator("#manifest .editv").first();
+  await expect(vanilla).toBeVisible({ timeout: 8000 });
   await expect(vanilla).not.toHaveAttribute("data-react", "1");
   await vanilla.click();
   await expect(vanilla.locator("input")).toBeVisible();

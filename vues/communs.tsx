@@ -87,6 +87,7 @@ export function CelluleFiabilite({ f, age, part }: { f: number; age: number | nu
 //      le mouseup, ce qui avalait le clic suivant sur une autre cellule.
 //   3. Le `✎` reste DANS le span. Le sortir casserait la restauration (#30, cf. app.js).
 import { useState, useRef, useEffect } from "react";
+import { flushSync } from "react-dom";
 
 export type ProprietesValeurEditable = {
   valeur: number | null;
@@ -120,7 +121,15 @@ export function ValeurEditable({ valeur, commodite, terminal, cote, champ, relev
   const inconnue = valeur == null || !Number.isFinite(Number(valeur));
   const v = inconnue ? "" : String(valeur);
 
-  const ouvrir = () => { fini.current = false; setEnEdition(true); };
+  // OUVERTURE SYNCHRONE, et c'est un contrat, pas un raffinement. La version impérative faisait
+  // `span.replaceChildren(inp)` — le champ existait dès le retour du gestionnaire. React, lui,
+  // groupe les états et rend au tour suivant : le champ n'apparaîtrait qu'après.
+  //
+  // Quatorze tests dépendent de la première forme. Ils dispatchent un clic PROGRAMMATIQUE puis
+  // lisent `span.querySelector("input")` dans la foulée — sans `flushSync`, ils lisent `null`.
+  // Ce n'est pas un artefact de test : c'est le comportement que le dépôt a toujours eu, et le
+  // rendre asynchrone le changerait pour tout appelant qui mesure le DOM juste après.
+  const ouvrir = () => { fini.current = false; flushSync(() => setEnEdition(true)); };
 
   const clore = (enregistrer: boolean) => {
     if (fini.current) return;
