@@ -34,6 +34,7 @@ import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOv
 import { construireIndex, libellesOrigines, libellesStations, originMap, resolveStationLabel, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
+import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -407,63 +408,8 @@ let feesRendus = null;
 //     « Chaîne », « Commodités » et « Corrections » pour TOUTE la session — autocomplétion vide,
 //     0 tuile, « aucune chaîne rentable » — sans le moindre message, et seul un rechargement
 //     complet réparait. L'erreur remonte donc aux appelants, et l'action suivante réessaie.
-let MARKET_LOADING = null;
-function loadMarket() {
-  if (etat.MARKET) return Promise.resolve(etat.MARKET);
-  if (!MARKET_LOADING) {
-    MARKET_LOADING = fetch("data/market.json")
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((m) => (etat.MARKET = m))
-      .catch((e) => { MARKET_LOADING = null; throw e; }); // rien n'est retenu -> réessai possible
-  }
-  return MARKET_LOADING;
-}
-
-// Géométrie des systèmes pour la carte du voyage (cf. ADR-001). 1,5 ko, chargé à la demande et une
-// seule fois : la carte n'existe que s'il y a un voyage, inutile de le payer sur une page nue.
-// Un échec ne bloque rien — la carte reste simplement absente, le reste du compagnon fonctionne.
-let starmapPending = false;
-function ensureStarmap(then) {
-  if (etat.STARMAP || starmapPending) return;
-  starmapPending = true;
-  fetch("data/starmap.json")
-    .then((r) => r.json())
-    .then((s) => { etat.STARMAP = s; starmapPending = false; then(); })
-    .catch(() => { starmapPending = false; }); // silencieux : un panneau décoratif n'alarme personne
-}
-
 // Prévient que le marché est indisponible plutôt que de laisser la vue vide ET muette.
 const marketUnavailable = () => showToast("⚠ Marché indisponible — vérifie ta connexion, puis réessaie");
-
-// Exécute `then` une fois le marché chargé et les datalists peuplées. Point de passage unique de
-// toutes les vues qui ont besoin du graphe : c'est lui qui garantit que `setupEnRoute()` ne tourne
-// jamais sur un marché vide (il pose `enrouteReady`, qui figerait les datalists une fois pour toutes).
-// RÈGLE : une VUE ne se repasse jamais elle-même ici, elle passe `refresh` — le fetch dure, et
-// l'utilisateur peut avoir changé de vue entre-temps. Rappeler son propre rendu repeignait alors
-// #empty et #manifest (partagés par Trajets / Boucles / En route) par-dessus la vue quittée :
-// message « choisis un terminal de départ » sous un tableau de trajets plein, ou inversement
-// « aucune route ne correspond » masqué au-dessus d'un tableau vide. `renderJourney`, lui, n'est
-// lié à AUCUNE vue (la carte Voyage est toujours à l'écran) et se repasse donc bien lui-même.
-function withMarket(then) {
-  loadMarket().then(() => { setupEnRoute(); then(); }).catch(marketUnavailable);
-}
-
-// Les vues « Trajets » et « Boucles » lisent routes.json / loops.json, qui ne portent que des NOMS
-// de terminaux : `autoload` et `maxBox` n'existent que dans market.json, que ces deux vues n'ont
-// jamais eu besoin de charger. On le charge donc en TÂCHE DE FOND et on re-rend à l'arrivée, plutôt
-// que de retarder — ou de vider — la vue par défaut de l'app derrière un fetch de 85 ko : le tableau
-// reste lisible, ses profits simplement bruts le temps du chargement.
-// En cas d'échec on NE re-rend PAS : ce re-rendu rappellerait ensureFeeMarket, qui relancerait un
-// fetch (loadMarket ne mémorise jamais l'échec), en boucle. La prochaine action de l'utilisateur
-// réessaiera, ce qui est exactement la règle de loadMarket.
-let feeMarketPending = false;
-function ensureFeeMarket(f, then) {
-  if (!f.autoload || etat.MARKET || feeMarketPending) return;
-  feeMarketPending = true;
-  loadMarket()
-    .then(() => { feeMarketPending = false; setupEnRoute(); then(); })
-    .catch(() => { feeMarketPending = false; marketUnavailable(); });
-}
 
 // Peuple la liste des terminaux de départ (ceux où l'on peut acheter). Idempotent.
 function setupEnRoute() {
@@ -2700,6 +2646,10 @@ function syncToggles() {
 }
 
 async function init() {
+  // Les deux crochets du chargement : `donnees.ts` sait charger, il ne sait rien des `<datalist>`
+  // ni des messages. `setupEnRoute` DOIT tourner avant chaque rappel de `withMarket` — le déclarer
+  // ici une fois vaut mieux que de le répéter à seize appels.
+  brancher({ apresMarche: setupEnRoute, signalerIndisponible: marketUnavailable });
   setupSort();
   setupLoopSort();
   applySortIndicators(); // aria-sort/classes du tri par défaut, sans dépendre des attributs du HTML
