@@ -10,7 +10,7 @@
 // `.set()`. C'était déjà le constat de l'inventaire : elles étaient les seules des 53 globales
 // qu'un `import` nu pouvait partager sans accesseur. Elles n'avaient donc rien à faire dans l'état.
 
-import { journeyStations, parseStationLabel, stationLabel } from "./logic.ts";
+import { journeyStations, parseStationLabel, resolveCommodity, stationLabel } from "./logic.ts";
 import { etat } from "./etat.ts";
 import type { Marche, Terminal } from "./types.ts";
 
@@ -114,3 +114,7 @@ export function stationCourante(): number | null {
   }
   return indexOrigine();
 }
+
+/** Une commodité par son nom OU son code UEX. `null` si le marché n'est pas là ou si rien ne colle. */
+export const findCommodity = (name: string) =>
+  etat.MARKET ? resolveCommodity(etat.MARKET.commodities, name) : null;
