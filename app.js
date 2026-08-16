@@ -31,6 +31,7 @@ import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import { construireIndex, libellesOrigines, libellesStations, originMap, resolveStationLabel, stationMap, termByName } from "./marche.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -510,12 +511,9 @@ function renderLoops() {
 
 // ---------- Mode « En route » (trajet dirigé) + manifeste multi-commodité ----------
 let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
-let originMap = new Map();    // libellé « Nom — Système » -> index terminal (achat uniquement)
-let stationMap = new Map();   // libellé -> index, TOUS les terminaux (pour la vue Corrections)
 // Nom de terminal -> terminal de market.json. Pont indispensable aux frais d'autoload : routes.json
 // et loops.json ne portent QUE des noms, et les noms sont déjà la clé métier du dépôt (corrections
 // locales, jambes de voyage). Peuplée en même temps que stationMap.
-let termByName = new Map();
 let enrouteOrigin = null;     // index du terminal de départ sélectionné
 let stationSel = null;        // index de la station sélectionnée (vue Corrections)
 // Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
@@ -590,26 +588,11 @@ function ensureFeeMarket(f, then) {
 // Peuple la liste des terminaux de départ (ceux où l'on peut acheter). Idempotent.
 function setupEnRoute() {
   if (enrouteReady) return;
-  const seen = new Set();
-  const opts = [];
-  etat.MARKET.commodities.forEach((c) => c.buys.forEach((b) => {
-    if (!seen.has(b[0])) {
-      seen.add(b[0]);
-      const t = etat.MARKET.terminals[b[0]];
-      const label = stationLabel(t.name, t.system);
-      originMap.set(label, b[0]);
-      opts.push(label);
-    }
-  }));
-  opts.sort((a, b) => a.localeCompare(b, "fr"));
-  $("originList").innerHTML = opts.map((l) => `<option value="${esc(l)}"></option>`).join("");
-
+  // Les trois index viennent de `marche.ts` ; ici on ne fait plus que peindre les listes.
+  construireIndex(etat.MARKET);
+  $("originList").innerHTML = libellesOrigines().map((l) => `<option value="${esc(l)}"></option>`).join("");
   // Datalist de TOUTES les stations (achat ou vente) pour la vue Corrections.
-  const stations = etat.MARKET.terminals.map((t, i) => ({ label: stationLabel(t.name, t.system), i }));
-  stations.forEach((s) => stationMap.set(s.label, s.i));
-  etat.MARKET.terminals.forEach((t) => termByName.set(t.name, t)); // pont nom -> terminal (frais d'autoload)
-  stations.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-  $("stationList").innerHTML = stations.map((s) => `<option value="${esc(s.label)}"></option>`).join("");
+  $("stationList").innerHTML = libellesStations().map((l) => `<option value="${esc(l)}"></option>`).join("");
 
   // Datalist de TOUTES les commodités (pour l'ajout libre au manifeste).
   $("commodityList").innerHTML = etat.MARKET.commodities
@@ -1815,14 +1798,6 @@ function emptyLeg(fromIdx, toIdx) {
   return { from: ft.name, fromSystem: ft.system, to: tt.name, toSystem: tt.system, commodity: "", buyPrice: 0, sellPrice: 0, margin: 0 };
 }
 // Résout un terminal depuis le texte : libellé exact « Nom — Système », sinon par nom seul.
-function resolveStationLabel(input) {
-  const v = (input || "").trim();
-  if (!v) return null;
-  if (stationMap.has(v)) return stationMap.get(v);
-  const lc = v.toLowerCase();
-  for (const [label, idx] of stationMap) if (parseStationLabel(label).name.toLowerCase() === lc) return idx;
-  return null;
-}
 // Suggestions d'arrêts : meilleures destinations rentables depuis la fin du parcours (top 4).
 function journeyStopSuggestions() {
   const fromIdx = journeyEndIndex();
