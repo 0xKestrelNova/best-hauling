@@ -38,6 +38,7 @@ import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChar
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
 import { carteParcours } from "./vues/carte.tsx";
+import { carteDeclaration } from "./vues/declaration.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -1483,50 +1484,31 @@ let ecoulerOuvert = false;
 // Commodités, qui n'ont aucun rapport avec un voyage.
 let declarationOuverte = false;
 
-// `force` : repeindre malgré un champ en cours de saisie. Sans lui, cette carte — rendue à CHAQUE
-// rafraîchissement, donc à chaque frappe ailleurs et à chaque arrivée du marché — détruirait le
-// texte tapé et son focus. Les gestes qui changent VRAIMENT son état (ouvrir, annuler, valider)
-// forcent ; les rendus de passage s'abstiennent.
-function renderDeclaration(force = false) {
+// Le dessin vit dans `vues/declaration.tsx` ; ici il ne reste que le branchement à l'état.
+//
+// LE GARDE DE FOCUS A DISPARU, et avec lui la relecture des valeurs tapées qui le doublait. Les
+// deux existaient parce qu'un `innerHTML` détruit les champs qu'il réécrit : cette carte est rendue
+// à CHAQUE rafraîchissement — donc à chaque frappe ailleurs et à chaque arrivée du marché — et elle
+// effaçait la saisie en cours. Des champs non contrôlés sous une racine mémorisée rendent le
+// repeint inoffensif : React réutilise leur nœud et n'écrit jamais leur valeur.
+//
+// `synchrone` remplace l'ancien `force`, et ne dit plus du tout la même chose : deux appelants
+// MESURENT ou FOCALISENT juste après le rendu et ne peuvent pas attendre le lot de React. Voir
+// `renderSoute` pour le même contrat sur la carte voisine.
+function renderDeclaration(synchrone = false) {
   const box = $("holdDeclare");
   if (!box) return;
-  if (!force && box.contains(document.activeElement)) return;
   box.hidden = false;
-  // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà le
-  // repli de stationCourante(). On ne crée pas un second store, on rend le premier atteignable
-  // d'ici : deux positions divergeraient au premier aller-retour entre les deux vues. Avec un
-  // voyage, l'étape courante la dit déjà, et un champ ici mentirait.
-  const position = !JOURNEY && (SOUTE.length || declarationOuverte)
-    ? `<div class="hold-ici">
-         <label for="holdWhere">◈ Je suis à</label>
-         <input id="holdWhere" list="originList" type="text" autocomplete="off" value="${esc($("origin").value)}"
-           placeholder="Tape un terminal (ex : Megumi — Pyro)"
-           title="D'où tu pars. Ce terminal fixe le prix d'une vente et le classement de « où écouler » — c'est le même que le départ d'« En route »." />
-       </div>`
-    : "";
-  // Les valeurs tapées sont RELUES avant le repeint et réémises, comme le fait déjà `holdWhere`
-  // juste au-dessus. La garde de focus ne suffisait pas : elle protège tant que le curseur est dans
-  // la carte, mais un geste fait AILLEURS — toucher la soute, changer de vue — repeignait des
-  // champs sans `value` et effaçait la saisie en silence, le formulaire restant ouvert et vide.
-  // C'est la classe de bug que ce dépôt a déjà rencontrée deux fois (#24, et le champ #journeyStart
-  // commenté plus bas) : ici on ne se contente pas de ne pas repeindre, on rend le repeint inoffensif.
-  const saisi = (id) => esc($(id)?.value ?? "");
-  const [nomSaisi, scuSaisi, paidSaisi] = ["holdAddName", "holdAddScu", "holdAddPaid"].map(saisi);
-  const corps = declarationOuverte
-    ? `<div class="hold-add">
-         <input id="holdAddName" list="commodityList" type="text" autocomplete="off" value="${nomSaisi}" placeholder="Commodité (nom ou code UEX)" aria-label="Commodité à déclarer" />
-         <input id="holdAddScu" type="number" min="1" step="1" value="${scuSaisi}" placeholder="SCU" aria-label="SCU à bord" />
-         <input id="holdAddPaid" type="number" min="0" step="1" value="${paidSaisi}" placeholder="prix payé /SCU" aria-label="Prix payé au SCU"
-           title="Laisse vide pour du butin : minage, salvage, caisse trouvée — un coût réellement nul." />
-         <button id="holdAddOk" class="hold-sell-ok" title="Ajouter ce lot à la soute">✓ à bord</button>
-         <button id="holdAddNo" class="hold-sell-no" title="Annuler" aria-label="Annuler">✕</button>
-       </div>
-       <p class="hold-add-hint">Prix vide = <b>butin</b>, coût nul : « où écouler » comptera alors tout l'encaissement comme profit.</p>`
-    : `<button id="holdAddOpen" class="hold-add-open" title="Déclarer du fret déjà à bord : butin ramassé, vaisseau rangé plein, cargaison achetée hors de l'app">+ déclarer ce que j'ai à bord</button>`;
-  // L'en-tête n'apparaît QU'à vide : au-dessus d'une carte Soute déjà titrée, un second « ◈ Soute »
-  // ferait lire deux panneaux là où il n'y en a qu'un.
-  const tete = SOUTE.length ? "" : `<div class="hold-head"><span class="hold-title">◈ Soute</span><span class="muted">vide</span></div>`;
-  box.innerHTML = tete + position + corps;
+  peindre(box, carteDeclaration({
+    souteVide: !SOUTE.length,
+    // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà le
+    // repli de stationCourante(). On ne crée pas un second store, on rend le premier atteignable
+    // d'ici : deux positions divergeraient au premier aller-retour entre les deux vues. Avec un
+    // voyage, l'étape courante la dit déjà, et un champ ici mentirait.
+    avecPosition: !JOURNEY && !!(SOUTE.length || declarationOuverte),
+    ouvert: declarationOuverte,
+    origine: $("origin").value,
+  }), { synchrone });
 }
 
 function ouvrirDeclaration() {
@@ -1534,10 +1516,13 @@ function ouvrirDeclaration() {
   // nom saisi. On l'attend plutôt que d'ouvrir un formulaire inerte.
   if (!MARKET) { withMarket(ouvrirDeclaration); return; }
   declarationOuverte = true;
+  // SYNCHRONE, et c'est un contrat : le champ naît avec le formulaire, il n'existe donc pas avant
+  // le rendu. Différé, le `?.` ci-dessous court-circuiterait et le formulaire s'ouvrirait sans
+  // curseur — l'utilisateur taperait dans le vide. Même piège que `.hold-sell-qty` sur la soute.
   renderDeclaration(true);
   $("holdAddName")?.focus();
 }
-function fermerDeclaration() { declarationOuverte = false; renderDeclaration(true); }
+function fermerDeclaration() { declarationOuverte = false; renderDeclaration(); }
 
 // Le geste : cette commodité, ce nombre de SCU, à ce prix. Le prix est FACULTATIF et vaut 0 — du
 // butin n'a rien coûté (ADR-002). Une commodité que le marché ne connaît pas est refusée : l'app ne
@@ -1554,7 +1539,7 @@ function declarerABord() {
   if (SOUTE === avant) return; // la fonction pure a refusé : rien à persister
   saveSoute();
   declarationOuverte = false;
-  renderDeclaration(true);
+  renderDeclaration();
   refresh();
   showToast(`◈ ${fmt(units)} SCU de ${c.name} déclarés à bord — ` +
     (prix > 0 ? `${fmt(prix)} aUEC/SCU payés` : "butin, coût nul"));
@@ -1583,7 +1568,12 @@ function renderSoute(synchrone = false) {
   if (!box) return;
   // AVANT le retour anticipé : le point d'entrée « déclarer », lui, doit exister précisément quand
   // la carte n'existe pas. C'est le seul rendu appelé depuis tous les chemins qui repeignent la soute.
-  renderDeclaration();
+  //
+  // Le drapeau se PROPAGE, et ça n'a rien de décoratif : `ajusterRangeeVoyage` mesure la hauteur de
+  // `#voyageLeft` juste après `renderSoute(true)`, et `#holdDeclare` en est un enfant direct. Rendue
+  // en différé, cette carte ferait mesurer la hauteur du rendu PRÉCÉDENT. `innerHTML` étant
+  // synchrone par nature, la question ne se posait pas — le drapeau n'était donc pas transmis.
+  renderDeclaration(synchrone);
   if (!SOUTE.length) { box.hidden = true; peindre(box, null); return; }
   box.hidden = false;
   // Du fret à bord et pas de graphe : la vue par défaut ne lit que routes.json, et sans marché la
