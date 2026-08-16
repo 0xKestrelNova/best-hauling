@@ -110,19 +110,9 @@ function outpostTag(isOutpost) {
   return isOutpost ? ' <span class="outpost" title="Avant-poste : élévateur de fret parfois en panne">⚠ avant-poste</span>' : "";
 }
 
-// Icône emoji par catégorie de commodité (repère visuel). La table vit désormais dans
-// vues/communs.tsx, importée en tête : une seule source, sans quoi les deux copies divergeraient
-// sans qu'aucun test ne le voie.
-function commodityIcon(kind) {
-  const k = kind || "other";
-  const emoji = KIND_ICON[k] || KIND_ICON.other;
-  return `<span class="cicon k-${esc(k)}" title="${esc(k)}">${emoji}</span>`;
-}
-
-// Marqueur pour les commodités illégales (risque de scan / zones de sécurité).
-function illegalTag(isIllegal) {
-  return isIllegal ? ' <span class="illegal" title="Commodité illégale : contrebande, risque de scan">⛔ illégal</span>' : "";
-}
+// L'icône de commodité et le marqueur « illégal » sont rendus par `IconeCommodite` et `TagIllegal`
+// (vues/communs.tsx). Leurs versions en chaîne ont disparu avec `multiCargoHTML`, leur dernier
+// appelant. `KIND_ICON` reste importé : la table d'emoji n'a qu'une source.
 
 // ---------- Fiabilité : fraîcheur, statut de stock, aberrations ----------
 // (ageDays/pairAge et les calculs de temps/score viennent de logic.mjs)
@@ -556,6 +546,11 @@ function renderMulti(f) {
     libelleCaisses: (t) => (t.units ? cargoBoxesLabel(t.lines, t.origin.maxBox) : null),
     // Le relevé le plus ANCIEN du chargement : un trajet ne vaut pas mieux que sa ligne la moins sûre.
     releveLePlusAncien: (t) => t.lines.reduce((m, l) => { const u = lineFreshUpdated(l); return m && u ? Math.min(m, u) : m || u; }, 0),
+    // Les deux que le DÉPLIANT réclame. Elles restent ici : la première dépend du contexte de
+    // frais, la seconde du plafond de caisse du terminal d'achat — ni l'un ni l'autre n'est connu
+    // de l'îlot.
+    texteProfitLigne: lineProfitText,
+    libelleCaissesScu: scuBoxesLabel,
   }));
   empty.hidden = trips.length > 0;
   // Rappel : seuls les chargements COMBINÉS (≥ 2 commodités) sont listés ici — un trajet dont le
@@ -568,19 +563,9 @@ function renderMulti(f) {
   notifySuperseded();
 }
 
-// Ligne de tableau d'un trajet multi-commodité (mêmes colonnes que les trajets simples).
-// `multiRowHTML` a été remplacé par vues/trajets.tsx.
-function multiCargoHTML(t) {
-  const lines = t.lines.map((l) =>
-    `<div class="sline">${commodityIcon(l.kind)}` +
-    `<span class="mname">${esc(l.name)}${illegalTag(l.illegal)}</span>` +
-    `<span class="mstock">stock ${fmt(l.stock)} · dem. ${fmtVol(l.demand)}</span>` +
-    `<span class="mprice">${fmt(l.buyPrice)} → ${fmt(l.sellPrice)} · marge ${fmt(l.margin)}</span>` +
-    `<span class="mprofit profit">${lineProfitText(l.units, l, t.fee)}</span>` +
-    `<span class="mboxes" title="Caisses SCU standard à charger">📦 ${fmt(l.units)} SCU · ${scuBoxesLabel(l.units, t.origin.maxBox)}</span></div>`
-  ).join("");
-  return `<div class="multi-cargo"><div class="suggest-head">Chargement — ${t.lines.length} commodité${t.lines.length > 1 ? "s" : ""}, ${fmt(t.units)}/${fmt(t.cargo)} SCU</div>${lines}</div>`;
-}
+// Le chargement déplié d'un trajet multi est rendu par `ChargementDeplie` (vues/trajets.tsx), avec
+// l'état d'ouverture — `multiCargoHTML` y a disparu, et `commodityIcon`/`illegalTag` avec lui : ils
+// n'avaient pas d'autre appelant.
 
 // Ligne de tableau pour une route évaluée (partagée par « Trajets simples » et « En route »).
 // `routeRowHTML` a été remplacé par vues/trajets.tsx, pour `#rows` ET `#enrouteRows`.
@@ -3325,23 +3310,15 @@ async function init() {
     if (e.target.id === "manifestAddInput" && e.key === "Enter") { e.preventDefault(); addManifestCommodity(e.target.value); }
   });
   // Chargement d'un trajet multi-commodité : déplie/replie le manifeste sous la ligne cliquée.
-  // Seule table à porter encore un dépliant (#30) — ailleurs la carte 2D du parcours montre la
-  // géographie que le schéma répétait.
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest(".route-toggle");
-    if (!btn) return;
-    const tr = btn.closest("tr");
-    const next = tr.nextElementSibling;
-    if (next && next.classList.contains("schema-row")) { next.remove(); btn.classList.remove("open"); return; }
-    // Le bouton n'est émis que par les lignes multi. Si la vue n'y est plus au moment du clic
-    // (marché encore en chargement, cf. #25), on ne déplie rien plutôt que d'indexer `shownMulti`
-    // avec le numéro de ligne d'un autre tableau.
-    if (!isMultiRoutes()) return;
-    const item = shownMulti[Number(btn.dataset.row)];
-    if (!item) return;
-    tr.insertAdjacentHTML("afterend", `<tr class="schema-row"><td colspan="${tr.children.length}">${multiCargoHTML(item)}</td></tr>`);
-    btn.classList.add("open");
-  });
+  // Le dépliant (#30) n'a plus de délégation : son ouverture est un ÉTAT de `VueTrajetsMulti`, et
+  // sa ligne un frère rendu par le JSX. Celle qui vivait ici injectait une `<tr>` dans `#rows` par
+  // `insertAdjacentHTML` et posait `open` à la main sur un bouton rendu par React — deux écritures
+  // que React ne voyait pas, donc qui survivaient à ses rendus en devenant fausses (#125).
+  //
+  // La garde `isMultiRoutes()` que cette délégation portait disparaît avec elle — elle existait
+  // parce qu'un bouton cliqué après un retour en lignes simples indexait `shownMulti` avec le rang
+  // d'un autre tableau (#25). Un rappel fermé sur SON trajet ne peut pas se tromper de tableau.
+  // (`isMultiRoutes` reste : `.journey-pick` s'en sert encore, elle indexe toujours par rang.)
   // Carte du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.
   $("holdCard").addEventListener("click", (e) => {
     if (e.target.closest("#holdClear")) { viderSoute(); return; }
