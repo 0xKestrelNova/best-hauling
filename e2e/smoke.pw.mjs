@@ -952,6 +952,39 @@ test("Soute : « où écouler » classe les destinations et affiche la certitude
   await expect(page.locator("#holdCard .ec-dest")).toHaveCount(0);
 });
 
+test("« où écouler » : une apostrophe dans un nom n'est pas échappée deux fois (#118)", async ({ page }) => {
+  // `ecoulerHTML` échappait chaque nom dans `detail`, PUIS le détail entier à l'insertion : `E'tam`
+  // s'affichait `E&#39;tam`, et la ligne prenait deux hauteurs au lieu d'une.
+  //
+  // La commodité est choisie DANS LES DONNÉES, pas écrite en dur : le test doit porter sur le cas
+  // visé tant qu'un nom à apostrophe existe, et se taire franchement si l'instantané n'en offre
+  // plus — pas passer au vert en ayant mesuré autre chose.
+  await ouvrirDeclaration(page);
+  const aApostrophe = (await commodites(page)).filter((n) => /['\u2019]/.test(n));
+  test.skip(!aApostrophe.length, "aucune commodité à apostrophe dans cet instantané");
+  await page.locator("#holdAddNo").click();
+
+  let trouve = null;
+  for (const nom of aApostrophe.slice(0, 6)) {
+    await declarer(page, nom, 2200, 1000);
+    await positionner(page, "Megumi — Pyro");
+    if (!(await page.locator("#holdCard .ec-head").count())) await page.locator("#holdOffload").click();
+    await expect(page.locator("#holdCard .hold-ecouler")).toBeVisible();
+    if ((await page.locator("#holdCard .ec-dest").count()) > 0) { trouve = nom; break; }
+    await page.locator("#holdClear").click();
+  }
+  expect(trouve, "aucune commodité à apostrophe n'a de débouché depuis ce quai").not.toBeNull();
+
+  const details = await page.locator("#holdCard .ec-detail").allTextContents();
+  expect(details.length).toBeGreaterThan(0);
+  // Le nom apparaît TEL QUEL dans le détail…
+  expect(details.some((t) => t.includes(trouve))).toBe(true);
+  // …et aucune entité HTML ne s'y affiche en clair.
+  for (const t of details) {
+    expect(t, "une entité HTML s'affiche telle quelle — le détail est échappé deux fois").not.toMatch(/&(#\d+|amp|quot|lt|gt);/);
+  }
+});
+
 test("Soute : déposer à la station libère la place sans vendre", async ({ page }) => {
   await jambeChargeable(page);
   await page.locator("#journeyCard .jleg-load").first().click();
