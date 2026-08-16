@@ -228,6 +228,75 @@ test("Plan de vol : la carte garde ses écouteurs directs après un re-rendu (#6
   await expect(arrets.nth(1)).toHaveClass(/ici/);
 });
 
+// Les trois tests qui suivent gardent ce que la carte a de VÉRIFIABLE et que rien ne regardait :
+// son ciel, son bandeau et les libellés qu'elle efface. Ce sont les endroits par où un rendu
+// reconstruit dérive en silence — les assertions existantes comptent des formes et lisent des `d`,
+// aucune ne verrait un ciel qui bouge ni une espace perdue.
+
+test("Plan de vol : la carte se redessine à l'IDENTIQUE — le ciel ne scintille pas (#61)", async ({ page }) => {
+  // Le semis est déterministe PAR CONSTRUCTION (générateur congruentiel à graine fixe) et le code
+  // en fait une promesse explicite : « même ciel à chaque rendu, donc aucun scintillement ». La
+  // carte se redessine à CHAQUE refresh() : la promesse est tenue par la graine, et par rien
+  // d'autre. Une graine qui deviendrait dépendante du rendu ferait clignoter 70 étoiles sous les
+  // yeux du lecteur, avec toute la suite au vert.
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  await expect(page.locator("#journeyMap .jm-svg")).toBeVisible({ timeout: 10_000 });
+
+  const ciel = () =>
+    page.locator('#journeyMap .jm-svg > circle[fill="#dfe6f5"]').evaluateAll((els) =>
+      els.map((e) => ["cx", "cy", "r", "opacity"].map((a) => e.getAttribute(a)).join(",")));
+
+  const avant = await ciel();
+  expect(avant).toHaveLength(70);
+
+  // Trois occasions de redessiner : on quitte la vue, on y revient, et on déplace « je suis ici ».
+  await page.click("#viewRoutes");
+  await page.click("#viewPlan");
+  await page.locator("#journeyMap .jm-arret").nth(1).locator(".jm-cible").click();
+  await expect(page.locator("#journeyMap .jm-arret").nth(1)).toHaveClass(/ici/);
+
+  expect(await ciel()).toEqual(avant);
+});
+
+test("Plan de vol : le bandeau de la carte garde ses espaces et ses trois parties (#61)", async ({ page }) => {
+  // Les espaces y sont SIGNIFIANTES : « ◈ » puis le titre en gras, puis la glose en gris. Un
+  // gabarit redécoupé en plusieurs nœuds de texte les perd (piège mesuré en #111 et #116), et le
+  // titre se lirait « ◈Carte du parcoursschéma ». Aucune assertion de comptage ne le voit.
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  const bandeau = page.locator("#journeyMap .jm-label");
+  await expect(bandeau).toBeVisible({ timeout: 10_000 });
+  await expect(bandeau).toHaveText("◈ Carte du parcours schéma — rayons compressés");
+  await expect(bandeau.locator("b")).toHaveText("Carte du parcours");
+  await expect(bandeau.locator(".muted")).toHaveText("schéma — rayons compressés");
+});
+
+test("Plan de vol : les escales restent des boutons annoncés, et effacent le libellé du corps (#61)", async ({ page }) => {
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  const arret = page.locator("#journeyMap .jm-arret").first();
+  await expect(arret).toBeVisible({ timeout: 10_000 });
+
+  // La carte est un SECOND chemin vers « je suis ici » (ADR-001) : elle doit s'annoncer comme tel,
+  // sans quoi le clavier n'y accède plus — et c'est le genre d'attribut qu'une réécriture oublie.
+  await expect(arret).toHaveAttribute("role", "button");
+  await expect(arret).toHaveAttribute("tabindex", "0");
+  await expect(arret).toHaveAttribute("aria-label", /^Se placer à \S/);
+  await expect(arret).toHaveAttribute("data-i", "0"); // ce que lisent les écouteurs directs
+  await expect(page.locator("#journeyMap .jm-svg")).toHaveAttribute("aria-label", /^Carte du parcours : \S/);
+
+  // « Le libellé du corps s'efface quand une escale s'y pose : son nom est déjà écrit là. »
+  // Ça se COMPTE, et c'est le seul angle qui morde : un disque par corps, un libellé par corps NON
+  // occupé — et le parcours en occupe forcément au moins un, puisque ses escales s'y posent.
+  // (Comparer les NOMS ne prouve rien : une escale ne porte pas le nom de son corps — « The Golden
+  //  Riviera » se pose sur « Cellin ». Écrite ainsi, l'assertion passait la garde retirée.)
+  const disques = await page.locator('#journeyMap .jm-svg circle[r="3.2"]').count();
+  const libelles = await page.locator("#journeyMap .jm-corps").count();
+  expect(disques).toBeGreaterThan(0);
+  expect(libelles).toBeLessThan(disques);
+});
+
 test("Plan de vol : sans voyage, un état vide utile plutôt qu'une page blanche (#61)", async ({ page }) => {
   await page.click("#viewPlan");
   await expect(page.locator("#plan")).toBeVisible();
