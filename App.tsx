@@ -16,12 +16,23 @@
 import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
-import { getSnapshot, subscribe } from "./etat.ts";
+import { etat, getSnapshot, subscribe } from "./etat.ts";
 import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
 import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 
-/** Rend `noeud` dans le conteneur `id` s'il existe. Un conteneur absent n'est pas une erreur. */
-function Portail({ id, children }: { id: string; children: React.ReactNode }) {
+/**
+ * Rend `children` dans le conteneur `id`, et SEULEMENT si la vue `si` est celle qu'on regarde.
+ *
+ * Le garde n'est pas une optimisation prématurée, il est MESURÉ : sans lui, chaque `notifier()`
+ * réévalue TOUTES les vues montées, y compris celles que l'utilisateur ne regarde pas. Relevé avec
+ * deux vues dans l'arbre — une frappe dans `#search`, depuis la vue Trajets, évaluait la Tournée
+ * ET le Plan. À treize vues, une frappe recalculerait `commoditySummaries` sur tout le marché pour
+ * un écran que personne ne voit.
+ *
+ * Un conteneur absent n'est pas une erreur : `index.html` peut changer sans casser l'arbre.
+ */
+function Portail({ id, si, children }: { id: string; si?: string; children: React.ReactNode }) {
+  if (si != null && etat.view !== si) return null;
   const cible = document.getElementById(id);
   return cible ? createPortal(children, cible) : null;
 }
@@ -34,11 +45,11 @@ export function App() {
 
   return (
     <>
-      <Portail id="tour"><VueTourneeEcoulement /></Portail>
+      <Portail id="tour" si="tour"><VueTourneeEcoulement /></Portail>
       {/* Le Plan de vol occupe DEUX conteneurs, séparés dans `index.html` par la carte du parcours —
           un élément à écouteurs directs se déménage en frère, jamais en enfant (leçon de #24). */}
-      <Portail id="planHead"><EnTetePlan /></Portail>
-      <Portail id="planBody"><CorpsPlan /></Portail>
+      <Portail id="planHead" si="plan"><EnTetePlan /></Portail>
+      <Portail id="planBody" si="plan"><CorpsPlan /></Portail>
     </>
   );
 }
