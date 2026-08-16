@@ -34,6 +34,7 @@ import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
+import { carteManifeste, indiceManifeste, suggestions as vueSuggestions } from "./vues/manifeste.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -419,22 +420,10 @@ function fiabiliteCell(f, age, part) {
   return `<div class="score-cell" title="${esc(titre)}"><span class="scorebar ${tier}"><i style="width:${scoreBarWidth(f)}%"></i></span><b>${f}</b></div>`;
 }
 
-// Valeur éditable (clic pour corriger localement). side = "buy"|"sell", field = "price"|"vol".
-// updated = date UEX du point (mémorisée comme base de fraîcheur de la correction).
-function editv(commodity, terminal, side, field, value, ov, updated) {
-  // `data-v` et `data-u` étaient les deux seules interpolations du rendu à ne pas passer par esc().
-  // Elles reçoivent des champs UEX, que le pipeline coerce désormais en nombre (numField) — mais un
-  // instantané déjà déployé, ou un data/ servi depuis le cache du service worker, peut encore
-  // contenir n'importe quoi. Une valeur non numérique n'a de toute façon aucun sens ici : le champ
-  // number de l'éditeur la rejetterait. On la ramène donc à « inconnu » plutôt que de l'écrire.
-  const v = Number.isFinite(Number(value)) ? Number(value) : null;
-  const u = Number.isFinite(Number(updated)) ? Number(updated) : 0;
-  // value null = capacité inconnue chez UEX, affichée « n.c. » (cf. fmtVol). On n'injecte pas la
-  // chaîne "null" dans data-v, sinon le champ number la rejette à l'ouverture de l'édition.
-  const unknown = value == null || v == null;
-  const hint = unknown ? `${VOL_UNKNOWN_HINT}. Clic pour le corriger localement` : "Clic pour corriger localement ce chiffre";
-  return `<span class="editv${unknown ? " nc" : ""}${ov ? " ov" : ""}" data-c="${esc(commodity)}" data-t="${esc(terminal)}" data-s="${side}" data-f="${field}" data-v="${unknown ? "" : esc(v)}" data-u="${esc(u)}" role="button" tabindex="0" title="${hint}">${fmtVol(value)}${ov ? '<span class="ovmark" title="Corrigé localement">✎</span>' : ""}</span>`;
-}
+// La valeur éditable est rendue par `ValeurEditable` (vues/communs.tsx). `editv()` fabriquait le
+// même span en chaîne pour les vues restées impératives ; la dernière — le manifeste — est passée
+// à React, donc plus personne ne l'appelait. `e2e/edition.pw.mjs` vérifie qu'aucun `.editv` de
+// l'application n'échappe à React, ce qui est la condition de cette suppression.
 
 // Lit l'état de tous les contrôles de filtre (partagé par les deux vues).
 function readFilters() {
@@ -876,14 +865,9 @@ function resetManifeste() { oublierManifeste(); refresh(); }
 // de la carte ET à leur pose en direct à la première frappe dans un champ SCU : celle-là ne repeint
 // pas la carte (elle arracherait le champ qu'on remplit), et sans ces deux-là rien à l'écran ne
 // dirait que la carte est désormais la tienne, ni comment la rendre au calcul.
-const MANIFEST_MARQUE = '<span class="manifest-edited" title="Chargement composé à la main : ses lignes, ses SCU et cette destination sont les tiens. Les prix, eux, continuent de suivre le marché. « ↺ optimal » rend la main au calcul.">✎</span>';
-const MANIFEST_BOUTON_OPTIMAL = '<button id="manifestReset" type="button" class="manifest-reset" title="Revenir au chargement optimal calculé pour ce départ">↺ optimal</button>';
-function marquerManifesteCompose() {
-  const titre = $("manifest").querySelector(".manifest-title");
-  if (titre && !titre.querySelector(".manifest-edited")) titre.insertAdjacentHTML("beforeend", " " + MANIFEST_MARQUE);
-  const ajout = $("manifest").querySelector(".manifest-add");
-  if (ajout && !$("manifestReset")) ajout.insertAdjacentHTML("beforeend", MANIFEST_BOUTON_OPTIMAL);
-}
+// Le ✎ et le bouton « ↺ optimal » sont rendus par vues/manifeste.tsx d'après `MANIFEST_EDIT`.
+// Ils étaient injectés par `insertAdjacentHTML` DANS une carte déjà rendue, faute de pouvoir la
+// repeindre sans arracher le champ en cours de frappe — la contrainte a disparu avec l'îlot.
 
 // La composition vaut-elle pour la carte demandée ? Sinon elle est abandonnée SUR PLACE : la garder
 // en réserve la ferait ressurgir au retour sur cette route, longtemps après le geste qui l'a écrite.
@@ -937,17 +921,7 @@ const isOv = (commodity, terminal, side, field) => {
 };
 
 // `m` = manifeste courant (il porte `fee`, le contexte de frais qui l'a produit) ; `t` = ses totaux.
-function manifestTotalsHTML(m, t) {
-  const empty = m.cargo - t.scu;
-  const profitHour = (t.profit * 60) / tripMinutes(0, m.cross);
-  // Les frais sont exposés à part plutôt que fondus dans le profit : c'est le seul moyen de voir
-  // ce que coûte la manutention d'un chargement à plusieurs commodités (une base par ligne).
-  const fees = t.fees > 0 ? ` · <span class="fee-chip" title="${m.feeInfo ? esc(`${feeEndText(m.feeInfo.a)} · ${feeEndText(m.feeInfo.b)} · une transaction par commodité · estimation ±3 %`) : ""}">frais ≈ ${fmt(t.fees)}</span>` : "";
-  // `m.aBord` : la soute n'était pas vide, le manifeste ne remplit donc que la place restante.
-  // Le dire ici évite de lire « 47/47 SCU » sur un vaisseau de 96 sans comprendre pourquoi.
-  const bord = m.aBord > 0 ? ` · <span class="mbord" title="Déjà en soute, payé — cf. panneau Soute">${fmt(m.aBord)} SCU à bord</span>` : "";
-  return `Profit <b class="profit">${fmtFee(t.profit, t.fees)}</b> aUEC${fees} · <b>${fmt(t.scu)}</b>/${fmt(m.cargo)} SCU${bord}${empty > 0 ? ` · ${fmt(empty)} SCU vides` : ""} · invest. ${fmt(t.invest)} · ~${fmtFee(profitHour, t.fees)}/h`;
-}
+// Les totaux du manifeste sont rendus par vues/manifeste.tsx (`<Totaux>`).
 
 // Espace/budget restants d'après les SCU actuellement affectés.
 // m = contexte de manifeste { lines, cargo, f, originIdx, destIdx, origin, dest } ; par défaut
@@ -967,31 +941,9 @@ const suggestionsFor = (m = currentManifest) => suggestionsFrom(MARKET, m, effVa
 
 // HTML des suggestions de remplissage pour un contexte de manifeste (En route ou jambe de voyage).
 // `addAttrs` = attributs data-* posés sur le bouton d'ajout, propres à l'appelant.
-function suggestionsHTML(m, addAttrs = "") {
-  const rem = manifestRemaining(m);
-  if (rem.cargoLeft <= 0) return "";
-  const sugg = suggestionsFor(m).map((it) => ({ it, u: addableUnits(it, rem) })).filter((x) => x.u >= 1)
-    // Frais actifs : une commodité dont la manutention mange la marge fait PERDRE de l'argent, et
-    // le manifeste optimal l'écarte déjà (manifestsFrom). La proposer en tête, juste sous le
-    // manifeste qui vient de la refuser, serait une contradiction à l'écran.
-    .filter((x) => !m.fee || lineNet(x.u, x.it, m.fee) > 0)
-    .slice(0, 6);
-  if (!sugg.length) return `<div class="suggest-head">${fmt(rem.cargoLeft)} SCU libres — aucune autre commodité rentable vers cette destination.</div>`;
-  return `<div class="suggest-head">Remplir les ${fmt(rem.cargoLeft)} SCU libres — suggestions :</div>` +
-    sugg.map(({ it, u }) =>
-      `<div class="sline">${commodityIcon(it.kind)}` +
-      `<span class="mname">${esc(it.name)}${illegalTag(it.illegal)}</span>` +
-      `<span class="mstock">stock ${fmt(it.stock)} · dem. ${fmtVol(it.demand)}</span>` +
-      `<span class="mprice">${fmt(it.buyPrice)} → ${fmt(it.sellPrice)} · marge ${fmt(it.margin)}</span>` +
-      `<button class="suggest-add" data-name="${esc(it.name)}"${addAttrs} title="Ajouter au manifeste">+ ${fmt(u)} SCU</button></div>`
-    ).join("");
-}
-
-function renderSuggestions() {
-  const box = $("manifestSuggest");
-  if (!box || !currentManifest) return;
-  box.innerHTML = suggestionsHTML(currentManifest);
-}
+// Les suggestions de remplissage sont rendues par vues/manifeste.tsx (`<Suggestions>`), pour la
+// carte comme pour une jambe du compagnon. `suggestionsHTML` produisait le MÊME balisage en chaîne
+// et n'a plus lieu d'être : deux fabriques du même bloc auraient fini par diverger.
 
 function addSuggestion(name) {
   const it = suggestionsFor().find((x) => x.name === name);
@@ -1032,99 +984,59 @@ function removeManifestLine(name) {
 // L'état vient de manifestJourneyState (pur, testé) — le rendu ne décide de rien.
 // Le bouton n'existe QUE dans l'état « ajouter », donc la branche REMPLACER d'addToJourney, qui
 // efface un voyage sans prévenir, est inatteignable depuis cette carte.
-function manifestJourneyHTML(m) {
-  if (!m.lines.length) return `<span class="journey-hint">Manifeste vide — ajoute une commodité pour l'engager.</span>`;
-  const st = manifestJourneyState(JOURNEY, m.origin, m.dest);
-  if (st.etat === "ajouter") {
-    const neuf = !JOURNEY;
-    return `<button id="manifestToJourney" class="chain-pick" title="${neuf ? "Démarrer un voyage avec ce chargement" : "Ajouter ce chargement à la suite du voyage"}">▶ ${neuf ? "Démarrer un voyage" : "Ajouter au voyage"}</button>`;
-  }
-  // « Déjà » est l'état NORMAL après tout ▶ (En route est pré-rempli avec la jambe courante) et
-  // celui où l'on retombe après un ajout réussi : la phrase fait donc office de confirmation, à
-  // l'endroit exact du clic. Un bouton y serait un clic mort.
-  if (st.etat === "deja") return `<span class="journey-hint">✓ C'est déjà la jambe ${st.leg + 1} de ton voyage.</span>`;
-  if (!st.fin) return "";
-  return `<span class="journey-hint">Ce chargement part de <b>${esc(m.origin.name)}</b>, mais le voyage se termine à <b>${esc(st.fin)}</b> — seul un chargement au départ de <b>${esc(st.fin)}</b> s'y ajoute.</span>`;
-}
+// Le bouton « ▶ Ajouter au voyage » et ses phrases sont rendus par vues/manifeste.tsx.
 
 // Dessine le manifeste courant : totaux + lignes (SCU/prix/stock éditables) + suggestions.
+// Tout ce qui suit dépend de l'ÉTAT GLOBAL (le marché, les corrections, le parcours, la
+// composition à la main) ; la mise en forme, elle, vit dans l'îlot.
 function paintManifest() {
   const m = currentManifest;
-  const card = $("manifest");
-  const totals = manifestTotals(m.lines, m.fee);
-  card.hidden = false;
-  card.innerHTML =
-    `<div class="manifest-head">
-      <span class="manifest-title">◈ Manifeste — ${esc(m.origin.name)}${sysBadge(m.origin.system)} → ${esc(m.dest.name)}${sysBadge(m.dest.system)}${m.cross ? ' <span class="cross">⚡ inter-système</span>' : ""}${MANIFEST_EDIT ? " " + MANIFEST_MARQUE : ""}</span>
-      <span class="manifest-tot" id="manifestTot">${manifestTotalsHTML(m, totals)}</span>
-      ${manifestJourneyHTML(m)}
-      <button id="copyManifest" class="copy-btn" title="Copier le plan de chargement">⧉ Copier</button>
-    </div>
-    <div class="manifest-lines">` +
-    m.lines.map((l, i) => {
-      const carry = l.sellPrice == null; // pas vendable à cette destination -> à écouler ailleurs
-      // Symétrique : aucun point d'achat au départ -> le fret est DÉJÀ en soute (butin, minage,
-      // salvage). Afficher un prix « 0 » éditable le ferait passer pour un achat gratuit sur place.
-      const acq = !!l.acquired;
-      const demCell = carry ? '<span class="muted">—</span>' : editv(l.name, m.dest.name, "sell", "vol", l.demand, isOv(l.name, m.dest.name, "sell", "vol"), l.sellUpdated);
-      const sellCell = carry ? '<span class="carry-tag" title="Pas vendable à cette destination — à écouler ailleurs">vend ailleurs</span>' : editv(l.name, m.dest.name, "sell", "price", l.sellPrice, isOv(l.name, m.dest.name, "sell", "price"), l.sellUpdated);
-      const stockCell = acq ? '<span class="muted">—</span>' : editv(l.name, m.origin.name, "buy", "vol", l.stock, isOv(l.name, m.origin.name, "buy", "vol"), l.buyUpdated);
-      const buyCell = acq ? '<span class="carry-tag" title="Introuvable à l\'achat ici — fret déjà en soute (butin, minage, salvage). Ajuste les SCU à ce que tu transportes.">acquis ailleurs</span>' : editv(l.name, m.origin.name, "buy", "price", l.buyPrice, isOv(l.name, m.origin.name, "buy", "price"), l.buyUpdated);
-      const lineFees = lineHaulFee(l.units, l, m.fee);
-      // Une ligne « vend ailleurs » n'a pas de profit ICI (elle sera écoulée plus loin), mais elle
-      // a bien été CHARGÉE ici : ses frais sont retranchés du total. Les taire laissait le total
-      // baisser sans qu'aucune ligne à l'écran ne l'explique.
-      const profitCell = carry
-        ? `<span class="mprofit muted"${lineFees > 0 ? ' title="Chargée ici, vendue ailleurs : seul le chargement est facturé sur ce trajet"' : ""}>${lineProfitText(l.units, l, m.fee)}</span>`
-        : `<span class="mprofit profit">${lineProfitText(l.units, l, m.fee)}</span>`;
-      return `<div class="mline${carry ? " carry" : ""}${acq ? " acquired" : ""}">${commodityIcon(l.kind)}` +
-        `<span class="mqtywrap"><input type="number" class="mqty-input" min="0" value="${l.units}" data-i="${i}" data-cap="${l.cap}" title="Ajuste librement — tu peux dépasser le stock UEX (vol de fret, relevé périmé…)" aria-label="SCU ${esc(l.name)}"><span class="munit">SCU</span></span>` +
-        `<span class="mname">${esc(l.name)}${illegalTag(l.illegal)}<button class="mline-del" data-name="${esc(l.name)}" title="Retirer du manifeste" aria-label="Retirer">✕</button></span>` +
-        `<span class="mstock">stock ${stockCell} · dem. ${demCell}</span>` +
-        `<span class="mprice">${buyCell} → ${sellCell}</span>` +
-        profitCell +
-        `<span class="mboxes" title="Caisses SCU standard à charger">📦 ${scuBoxesLabel(l.units, m.origin.maxBox)}</span></div>`;
-    }).join("") +
-    `</div>
-    <div class="manifest-add">
-      <input id="manifestAddInput" list="commodityList" placeholder="Ajouter n'importe quelle commodité (même non vendable ici)…" autocomplete="off" aria-label="Ajouter une commodité" />
-      <button id="manifestAddBtn" type="button" class="copy-btn">+ Ajouter</button>
-      ${MANIFEST_EDIT ? MANIFEST_BOUTON_OPTIMAL : ""}
-    </div>
-    <div id="manifestSuggest" class="manifest-suggest"></div>`;
-  renderSuggestions();
+  $("manifest").hidden = false;
+  peindre($("manifest"), carteManifeste({
+    m,
+    generation: manifestGen,
+    compose: !!MANIFEST_EDIT,
+    parcours: JOURNEY,
+    suggestions: suggestionsFor(m),
+    restant: manifestRemaining(m),
+    fmt, fmtVol, fmtFee, signe,
+    libelleCaisses: (units) => scuBoxesLabel(units, m.origin.maxBox),
+    texteBoutFrais: feeEndText,
+    minutesTrajet: tripMinutes(0, m.cross),
+    estCorrige: isOv,
+    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
+    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
+      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
+      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
+      updateOvBadge();
+      refresh();
+    },
+  }));
 }
 
 // Recalcule totaux + profit par ligne d'après les SCU saisis, et rafraîchit les suggestions.
+//
+// Elle REPEINT la carte, ce que la version impérative s'interdisait (« elle arracherait le champ
+// qu'on remplit »). Ce n'est plus vrai : le champ SCU est NON CONTRÔLÉ dans l'îlot, donc React
+// garde le même nœud DOM au re-rendu et ne touche ni à sa valeur ni à son curseur. C'est ce qui
+// permet de supprimer les trois écritures en place (`.mprofit`, `.mboxes`, `#manifestTot`) — un
+// nœud possédé par React et muté hors de React, c'est précisément ce que le garde de #113 interdit.
 function updateManifestTotals() {
   if (!currentManifest) return;
-  const pair = currentManifest.fee;
   document.querySelectorAll("#manifest .mqty-input").forEach((inp) => {
     const i = Number(inp.dataset.i);
-    const cap = Number(inp.dataset.cap);
     let u = Math.floor(Number(inp.value));
     if (!Number.isFinite(u) || u < 0) u = 0;
     // Le dépassement du stock UEX est autorisé (vol de fret, relevé périmé…) : on ne plafonne
-    // plus à `cap`, on le signale visuellement pour que ce soit un choix conscient.
-    inp.classList.toggle("over-stock", u > cap);
-    // La LIGNE, pas ses attributs data-* : elle seule porte `carry`/`acquired`, donc le nombre
-    // d'opérations réellement facturées. Recalculer à partir de la seule marge affichait un profit
-    // qui contredisait le total juste au-dessus.
+    // plus à `cap`, on le signale visuellement — la classe `over-stock` est posée au rendu.
     const l = currentManifest.lines[i];
-    if (!l) return;
-    l.units = u;
-    const line = inp.closest(".mline");
-    line.querySelector(".mprofit").textContent = lineProfitText(u, l, pair);
-    line.querySelector(".mboxes").textContent = "📦 " + scuBoxesLabel(u, currentManifest.origin.maxBox);
+    if (l) l.units = u;
   });
-  const totals = manifestTotals(currentManifest.lines, pair); // unités déjà synchronisées ci-dessus
-  $("manifestTot").innerHTML = manifestTotalsHTML(currentManifest, totals);
   // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
   // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
   // champ. Ce que ça écrit tient en deux nombres par ligne.
   retenirManifeste();
-  marquerManifesteCompose();
-  renderSuggestions();
+  paintManifest();
 }
 
 // Copie le plan de chargement en texte (pour un 2e écran / des notes).
@@ -1170,6 +1082,7 @@ function copierTexte(texte, btn, libelle) {
   }).catch(() => showToast("⚠ Presse-papiers refusé — la copie n'a pas eu lieu"));
 }
 
+let manifestGen = 0; // cf. l'affectation de `currentManifest`, plus bas
 function renderManifest(origin, destSystem, f, destTerminal) {
   const card = $("manifest");
   currentManifest = null;
@@ -1211,6 +1124,15 @@ function renderManifest(origin, destSystem, f, destTerminal) {
   // risque donc pas de le reconstruire AUTREMENT que ce qui a servi à choisir la destination.
   man.feeInfo = feeCtx(f, man.origin.name, man.dest.name, man.origin, man.dest);
   currentManifest = man;
+  // La GÉNÉRATION distingue les deux façons de repeindre la carte, et c'est tout ce qui reste du
+  // comportement de l'ancien `card.innerHTML` :
+  //   - ici, le manifeste vient d'être RECALCULÉ (départ changé, « ↺ optimal », correction de
+  //     prix…) : les champs SCU doivent adopter les nouvelles valeurs, donc ils se remontent ;
+  //   - depuis `updateManifestTotals`, on est EN TRAIN de taper : la génération ne bouge pas, le
+  //     champ garde son nœud, sa valeur et son curseur.
+  // Sans elle, un champ non contrôlé garderait à jamais ce que l'utilisateur y a tapé — « ↺
+  // optimal » remettait `value="96"` dans l'attribut pendant que le champ affichait encore 30.
+  manifestGen++;
   paintManifest();
 }
 
@@ -2119,7 +2041,13 @@ function renderLegSuggestions(i, lines) {
   const box = document.querySelector(`.jman-suggest[data-leg="${i}"]`);
   if (!box) return;
   const ctx = legSuggestCtx(JOURNEY.legs[i], lines, readFilters());
-  box.innerHTML = ctx ? suggestionsHTML(ctx, ` data-leg="${i}"`) : "";
+  // Même composant que la carte : `data-leg` part sur le bouton d'ajout, la délégation qui le lit
+  // ne bouge pas. La carte du compagnon est encore écrite en innerHTML, donc ce conteneur est
+  // recréé à chaque rendu — la WeakMap de pont.js lui redonne simplement une racine neuve.
+  peindre(box, ctx ? vueSuggestions({
+    suggestions: suggestionsFor(ctx), restant: manifestRemaining(ctx), frais: ctx.fee,
+    fmt, fmtVol, attributsAjout: { "data-leg": i },
+  }) : null);
 }
 // Ajoute une commodité suggérée à une jambe, remplie au max possible.
 function addLegSuggestion(i, name) {
@@ -2321,10 +2249,12 @@ function renderJourney() {
         `<span class="jman-profit profit">${lineProfitText(l.units, l, pair)}</span>` +
         `<button class="jman-del" data-leg="${i}" data-name="${esc(l.name)}" title="Retirer">✕</button></div>`
       ).join("") || '<div class="muted jman-empty">Aucune commodité.</div>';
-      const sctx = legSuggestCtx(leg, lines, f);
+      // Le conteneur part VIDE : `renderLegSuggestions` le peint juste après l'écriture de la
+      // carte, avec le même composant React que le manifeste d'« En route ». L'incruster ici
+      // demanderait une seconde fabrique du même bloc, en chaîne — c'est ce qu'on vient de retirer.
       editor = `<div class="jman">${rows}
         <div class="jman-add"><input class="jman-add-input" list="commodityList" data-leg="${i}" placeholder="+ commodité (même non vendable)…" autocomplete="off"><button class="jman-add-btn" data-leg="${i}">+</button>${edited ? `<button class="jman-reset" data-leg="${i}" title="Revenir au manifeste optimal">↺ optimal</button>` : ""}</div>
-        <div class="jman-suggest manifest-suggest" data-leg="${i}">${sctx ? suggestionsHTML(sctx, ` data-leg="${i}"`) : ""}</div>
+        <div class="jman-suggest manifest-suggest" data-leg="${i}"></div>
       </div>`;
     }
     return `<div class="jleg${i === JOURNEY.current ? " current" : ""}${expanded ? " expanded" : ""}">
@@ -2355,6 +2285,10 @@ function renderJourney() {
      ${suggestBlock}
      <div class="journey-meta">${n} saut${n > 1 ? "s" : ""} · marge cumulée <b class="profit">${fmt(journeyMargin(JOURNEY))}</b> aUEC/SCU</div>`;
 
+  // Après `card.innerHTML` : le conteneur des suggestions vient d'être (re)créé, il faut le peindre.
+  // Une seule jambe est dépliée à la fois, donc une seule en porte un.
+  if (MARKET && journeyExpandedLeg != null && JOURNEY.legs[journeyExpandedLeg])
+    renderLegSuggestions(journeyExpandedLeg, legEffectiveLines(JOURNEY.legs[journeyExpandedLeg], journeyExpandedLeg, f));
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
   renderJourneyMap();
   renderSoute();
@@ -3008,45 +2942,12 @@ async function copyShareLink() {
   }
 }
 
-// ---------- Édition inline d'une valeur corrigeable ----------
-// Remplace le span par un champ ; à la validation, enregistre la correction et rafraîchit.
-function startEdit(span) {
-  if (span.querySelector("input")) return;
-  const { c, t, s, f: field, v, u } = span.dataset;
-  // Contenu d'origine (chiffre formaté + éventuel ✎), conservé pour pouvoir annuler l'édition
-  // sans re-render global. `replaceChildren` détache ces nœuds mais ne les détruit pas.
-  const original = [...span.childNodes];
-  const inp = document.createElement("input");
-  inp.type = "number"; inp.min = "0"; inp.value = v; inp.className = "editv-input";
-  span.replaceChildren(inp);
-  inp.focus(); inp.select();
-  let done = false;
-  const commit = (save) => {
-    if (done) return; done = true;
-    // CONSULTER un chiffre ne doit rien écrire. Sans cette comparaison, cliquer une valeur puis
-    // cliquer ailleurs créait une correction locale IDENTIQUE au relevé UEX : compteur « ✎
-    // Corrections (n) », marqueur « corrigé localement » sur la cellule, et plus tard un toast
-    // « correction périmée par une mise à jour UEX » à propos d'une correction fantôme.
-    if (save && inp.value !== v) {
-      // Un VOLUME rebat les quantités de tout chargement qui touche ce point : on fige d'abord les
-      // jambes déjà planifiées (avant d'écrire, pour capturer les SCU encore en vigueur). Un PRIX
-      // ne change aucune quantité — il ne fige rien, il met juste les bénéfices à jour.
-      if (field === "vol") pinLegsForVolume(c, t, s);
-      setOverride(c, t, s, field, inp.value === "" ? null : inp.value, Number(u));
-      updateOvBadge();
-      refresh(); // re-render la vue courante ET le voyage avec la valeur corrigée
-      return;
-    }
-    // Rien n'a changé : on remet l'affichage tel quel. Un refresh() global détruirait le nœud
-    // entre le mousedown et le mouseup, ce qui avalait le clic suivant sur une autre cellule.
-    span.replaceChildren(...original);
-  };
-  inp.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(true); }
-    else if (e.key === "Escape") { e.preventDefault(); commit(false); }
-  });
-  inp.addEventListener("blur", () => commit(true));
-}
+// L'édition en place vit désormais dans `ValeurEditable` (vues/communs.tsx), qui la gère PAR SON
+// ÉTAT. `startEdit` la faisait en mutant le span (`replaceChildren`) depuis une délégation posée
+// sur `document` : c'est la seule situation où les deux modèles se contredisaient vraiment. Les
+// trois comportements qu'elle avait durement acquis — consulter n'écrit rien, Échap ne re-rend
+// pas la vue, le ✎ reste DANS le span — sont portés par le composant, et couverts par
+// `e2e/edition.pw.mjs`.
 
 // Met à jour le libellé du bouton de vue « Corrections » (compteur).
 function updateOvBadge() {
@@ -3745,21 +3646,10 @@ async function init() {
   document.addEventListener("change", (e) => {
     if (e.target.classList && e.target.classList.contains("jman-qty")) editLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target.value);
   });
-  // Corrections locales : clic (ou Entrée/Espace) sur une valeur éditable ; bouton reset.
-  // `data-react` : le nœud est rendu par un îlot React, qui gère son édition PAR SON ÉTAT. Sans ce
-  // garde, `startEdit` viendrait le muter (`replaceChildren`) et React écraserait la saisie au
-  // rendu suivant, sans savoir qu'elle avait eu lieu — la classe de bug de #24, #28, #38 et #55.
-  document.addEventListener("click", (e) => {
-    const span = e.target.closest(".editv");
-    if (span && !span.dataset.react && !span.querySelector("input")) startEdit(span);
-  });
-  document.addEventListener("keydown", (e) => {
-    if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("editv")) {
-      if (e.target.dataset.react) return;
-      e.preventDefault();
-      startEdit(e.target);
-    }
-  });
+  // Les deux délégations qui ouvraient l'édition (clic, Entrée/Espace) ont disparu avec
+  // `startEdit` : `ValeurEditable` porte ses propres `onClick`/`onKeyDown`. Le garde `data-react`
+  // qu'elles consultaient n'a plus rien à garder — mais l'attribut RESTE sur le composant, c'est
+  // lui que `e2e/edition.pw.mjs` interroge pour vérifier qu'aucun `.editv` n'échappe à React.
   // Raccourcis clavier : / (recherche), 1 à 8 (vues). Ignorés pendant la saisie.
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
