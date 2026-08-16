@@ -36,8 +36,90 @@
 // `useSyncExternalStore` compare par `Object.is`. Un objet muté en place rend toujours la même
 // référence : React ne re-rendrait JAMAIS. D'où `version`, incrémentée par `notifier()`.
 
-/** L'état partagé. Une propriété par globale déménagée d'`app.js`. */
-export const etat: Record<string, unknown> = {};
+import type {
+  BoardCommodites, Boucle, Chargements, CompositionManifeste, Entrepots,
+  IntentionLigne, Lot, Marche, Parcours, Route, Starmap, StoreCorrections,
+} from "./types.ts";
+
+/**
+ * L'état partagé. Une propriété par globale déménagée d'`app.js` — MÊME nom, MÊME valeur initiale,
+ * MÊME commentaire. Le déménagement est mécanique : rien n'est renommé, rien n'est regroupé, aucune
+ * valeur ne change. Les propriétés que `app.js` n'a pas encore branchées sont simplement inutilisées.
+ */
+export interface Etat {
+  // ── Données chargées une fois ───────────────────────────────────────────────────────────────
+  // `[]` et jamais `null` : `render()` et `renderLoops()` font `.filter()` SANS garde, et les
+  // écouteurs sont posés avant le `try` d'amorçage — un clic après un chargement en échec atteint
+  // bien le rendu.
+  ROUTES: Route[];
+  LOOPS: Boucle[];
+  MARKET: Marche | null;            // graphe d'échange, chargé à la demande
+  STARMAP: Starmap | null;          // géométrie des systèmes pour la carte (ADR-001)
+
+  // ── Magasins persistés (localStorage) ───────────────────────────────────────────────────────
+  SOUTE: Lot[];
+  CHARGEMENTS: Chargements;
+  DEPOTS: Entrepots;
+  AUTOLOAD_K: Record<string, unknown>;
+  MANIFEST_EDIT: CompositionManifeste | null; // { from, fromSystem, to, toSystem, lines[] } ou null
+  OVERRIDES: StoreCorrections;
+
+  // ── Compagnon de voyage ─────────────────────────────────────────────────────────────────────
+  JOURNEY: Parcours | null;
+  JOURNEY_EDITS: Record<string, IntentionLigne[]>;
+  JOURNEY_PINS: Record<string, boolean>;
+  journeyExpandedLeg: number;       // index de la jambe dépliée en édition (-1 = aucune)
+
+  // ── Interface : vue courante, tris, sélections ──────────────────────────────────────────────
+  view: string;
+  sortKey: string;
+  sortDir: number;                  // -1 = décroissant, 1 = croissant
+  loopSortKey: string;
+  loopSortDir: number;
+  commMode: string;                 // margin | code | kind | custom
+  commSortKey: string;
+  commSortDir: number;
+  commSelected: string | null;
+  commBoard: BoardCommodites;
+  venteEnCours: string | null;      // commodité dont le champ « vendu » est ouvert
+  ecoulerOuvert: boolean;
+  declarationOuverte: boolean;
+}
+
+// `sortDir` et ses jumeaux sont typés `number` et non `1 | -1` : trois écritures composées
+// (`etat.sortDir *= -1`) refuseraient un type littéral. `number` est la seule annotation honnête.
+export const etat: Etat = {
+  ROUTES: [],
+  LOOPS: [],
+  MARKET: null,
+  STARMAP: null,
+
+  SOUTE: [],
+  CHARGEMENTS: {},
+  DEPOTS: {},
+  AUTOLOAD_K: {},
+  MANIFEST_EDIT: null,
+  OVERRIDES: {},
+
+  JOURNEY: null,
+  JOURNEY_EDITS: {},
+  JOURNEY_PINS: {},
+  journeyExpandedLeg: -1,
+
+  view: "routes",
+  sortKey: "profit",
+  sortDir: -1,
+  loopSortKey: "profit",
+  loopSortDir: -1,
+  commMode: "margin",
+  commSortKey: "margin",
+  commSortDir: -1,
+  commSelected: null,
+  commBoard: "market",
+  venteEnCours: null,
+  ecoulerOuvert: false,
+  declarationOuverte: false,
+};
 
 let version = 0;
 const abonnes = new Set<() => void>();
