@@ -11,6 +11,7 @@
 //
 // Ce qu'ils ne font PAS : lire une globale, ni décider. Le calcul reste dans logic.ts (d'où
 // `ageDays` et `scoreBarWidth` viennent), et l'état reste dans app.js.
+import { TEXTE_CAPACITE_INCONNUE, fmtVol } from "../format.ts";
 import { ageDays, scoreBarWidth } from "../logic.ts";
 
 // Le badge de système. Sa classe porte le nom en minuscules — `.sys.pyro`, `.sys.stanton` — et
@@ -115,13 +116,11 @@ export type ProprietesValeurEditable = {
   /** true quand une correction locale porte déjà sur ce point : le ✎ s'affiche. */
   corrige: boolean;
   /** Rend « n.c. » pour une capacité qu'UEX ne publie pas — ni zéro, ni illimitée. */
-  fmtVol: (n: number | null) => string;
   /** Appelé UNIQUEMENT si la valeur a changé. app.js écrit alors la correction et re-rend. */
   onCorriger: (valeur: string) => void;
-  texteCapaciteInconnue: string;
 };
 
-export function ValeurEditable({ valeur, commodite, terminal, cote, champ, releve, corrige, fmtVol, onCorriger, texteCapaciteInconnue }: ProprietesValeurEditable) {
+export function ValeurEditable({ valeur, commodite, terminal, cote, champ, releve, corrige, onCorriger }: ProprietesValeurEditable) {
   const [enEdition, setEnEdition] = useState(false);
   const saisie = useRef<HTMLInputElement>(null);
   const fini = useRef(false);
@@ -190,7 +189,7 @@ export function ValeurEditable({ valeur, commodite, terminal, cote, champ, relev
       data-v={inconnue ? "" : v} data-u={String(Number(releve) || 0)}
       role="button"
       tabIndex={0}
-      title={inconnue ? `${texteCapaciteInconnue}. Clic pour le corriger localement` : "Clic pour corriger localement ce chiffre"}
+      title={inconnue ? `${TEXTE_CAPACITE_INCONNUE}. Clic pour le corriger localement` : "Clic pour corriger localement ce chiffre"}
       onClick={ouvrir}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ouvrir(); } }}
     >

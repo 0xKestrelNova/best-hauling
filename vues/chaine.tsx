@@ -8,6 +8,7 @@
 //
 // La répartition suit celle des deux vues précédentes : le CALCUL vient de logic.ts (pur, testé),
 // l'ÉTAT reste dans app.js — qui passe ici les seules fonctions dépendant de lui, celles des frais.
+import { fmt, fmtFee } from "../format.ts";
 import { Fragment } from "react";
 import { manifestTotals, tripMinutes, lineNet } from "../logic.ts";
 import type { Chaine, LigneManifeste, PaireFrais, Terminal } from "../types.ts";
@@ -22,8 +23,6 @@ export type ProprietesChaine = {
   // `terminal(i)` résout un index en terminal : c'est MARKET qui les porte, et MARKET est une
   // globale de app.js. L'îlot ne la connaît pas, il reçoit le résolveur.
   terminal: (idx: number) => Terminal;
-  fmt: Fmt;
-  fmtFee: (n: number, fees: number) => string;
   // Les frais dépendent de l'état (interrupteur d'autoload, relevés par station) : app.js les
   // calcule et l'îlot n'en reçoit que le résultat.
   celluleFrais: (lignes: LigneManifeste[], fee: PaireFrais | null, a: Terminal, b: Terminal, scu: number, fees: number) => CelluleFrais;
@@ -32,8 +31,8 @@ export type ProprietesChaine = {
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
 
-function LigneDeSaut({ l, fee, fmt, texteProfitLigne }: {
-  l: LigneManifeste; fee: PaireFrais | null; fmt: Fmt;
+function LigneDeSaut({ l, fee, texteProfitLigne }: {
+  l: LigneManifeste; fee: PaireFrais | null;
   texteProfitLigne: ProprietesChaine["texteProfitLigne"];
 }) {
   return (
@@ -53,7 +52,7 @@ function LigneDeSaut({ l, fee, fmt, texteProfitLigne }: {
   );
 }
 
-export function VueChaine({ chaine, cargo, terminal, fmt, fmtFee, celluleFrais, texteProfitLigne }: ProprietesChaine) {
+export function VueChaine({ chaine, cargo, terminal, celluleFrais, texteProfitLigne }: ProprietesChaine) {
   const totaux = chaine.legs.map((leg) => manifestTotals(leg.lines || [], leg.fee));
   const invest = totaux[0] ? totaux[0].invest : 0;
   const totalFees = totaux.reduce((s, t) => s + t.fees, 0);
@@ -111,7 +110,7 @@ export function VueChaine({ chaine, cargo, terminal, fmt, fmtFee, celluleFrais, 
                 </div>
                 <div className="chain-lines">
                   {lignes.map((l, j) => (
-                    <LigneDeSaut key={j} l={l} fee={leg.fee} fmt={fmt} texteProfitLigne={texteProfitLigne} />
+                    <LigneDeSaut key={j} l={l} fee={leg.fee} texteProfitLigne={texteProfitLigne} />
                   ))}
                 </div>
               </div>

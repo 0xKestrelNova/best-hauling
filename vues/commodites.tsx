@@ -12,6 +12,7 @@
 //
 // Ce qui passe ici : #commGrid (le gros du rendu, une tuile par commodité) et #commHint (le texte
 // d'aide, qui change avec le board).
+import { TEXTE_CAPACITE_INCONNUE, fmt, fmtVol } from "../format.ts";
 import type { ResumeCommodite } from "../types.ts";
 import { IconeCommodite, TagIllegal, BadgeSysteme } from "./communs.tsx";
 
@@ -30,10 +31,9 @@ export type ProprietesGrille = {
    *  ratio à la marge max en Marché) et l'une des deux lit une globale. */
   palier: (c: ResumeCommodite) => string;
   valeurCompacte: (n: number) => string;
-  fmt: Fmt;
 };
 
-function Tuile({ c, butin, selection, transportees, codesAmbigus, palier, valeurCompacte, fmt }: {
+function Tuile({ c, butin, selection, transportees, codesAmbigus, palier, valeurCompacte }: {
   c: ResumeCommodite;
 } & Omit<ProprietesGrille, "lignes">) {
   const val = butin ? c.bestSell : c.margin;
@@ -120,18 +120,15 @@ export type ProprietesDetail = {
   /** Le nom de la commodité, porté par `data-c` sur chaque valeur éditable. */
   nomCommodite: string;
   butin: boolean;
-  fmt: Fmt;
-  fmtVol: (n: number | null) => string;
   /** Une correction locale porte-t-elle déjà sur ce point ? */
   estCorrige: (terminal: string, cote: "buy" | "sell", champ: "price" | "vol") => boolean;
   /** app.js écrit la correction — il sait figer les jambes, mettre le compteur à jour et re-rendre. */
   corriger: (terminal: string, cote: "buy" | "sell", champ: "price" | "vol", valeur: string, releve: number) => void;
   legendeAchat: Record<number, [string, string]>;
   legendeVente: Record<number, [string, string]>;
-  texteCapaciteInconnue: string;
 };
 
-function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteCommodite; cote: "buy" | "sell" } & Omit<ProprietesDetail, "points" | "butin" | "fmt">) {
+function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteCommodite; cote: "buy" | "sell" } & Omit<ProprietesDetail, "points" | "butin">) {
   // Le champ de volume porte un NOM différent selon le côté — `stock` à l'achat, `demand` à la
   // vente — et c'est voulu : ce ne sont pas la même chose. `demand: null` veut dire « capacité
   // inconnue chez UEX », ni zéro ni illimitée.
@@ -143,8 +140,6 @@ function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteComm
       valeur={valeur ?? null}
       commodite={r.nomCommodite} terminal={p.terminal} cote={cote} champ={champ} releve={p.updated}
       corrige={r.estCorrige(p.terminal, cote, champ)}
-      fmtVol={r.fmtVol}
-      texteCapaciteInconnue={r.texteCapaciteInconnue}
       onCorriger={(v) => r.corriger(p.terminal, cote, champ, v, p.updated)}
     />
   );
@@ -170,7 +165,7 @@ function LignePoint({ p, cote, ...r }: { p: PointAchatCommodite | PointVenteComm
 
 function TablePoints({ lignes, entete, cote, ...r }: {
   lignes: (PointAchatCommodite | PointVenteCommodite)[]; entete: string; cote: "buy" | "sell";
-} & Omit<ProprietesDetail, "points" | "butin" | "fmt">) {
+} & Omit<ProprietesDetail, "points" | "butin">) {
   if (!lignes.length) return <p className="muted">Aucun point.</p>;
   return (
     <table className="comm-points">
@@ -180,7 +175,7 @@ function TablePoints({ lignes, entete, cote, ...r }: {
   );
 }
 
-export function VueDetailCommodite({ points: p, butin, fmt, ...r }: ProprietesDetail) {
+export function VueDetailCommodite({ points: p, butin, ...r }: ProprietesDetail) {
   const meilleur = p.sells[0];
   return (
     <>

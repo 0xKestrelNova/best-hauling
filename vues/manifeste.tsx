@@ -18,6 +18,7 @@
 // `value` d'un champ non contrôlé au re-rendu, donc la frappe survit pendant que le profit, les
 // caisses et les totaux se recalculent — le comportement exact de l'ancienne mise à jour en place.
 // Le passer en contrôlé rendrait la valeur au rendu et déplacerait le curseur en fin de champ.
+import { TEXTE_CAPACITE_INCONNUE, fmt, fmtFee, fmtVol, signe } from "../format.ts";
 import { Fragment } from "react";
 import { manifestTotals, lineHaulFee, lineNet, addableUnits, manifestJourneyState } from "../logic.ts";
 import type {
@@ -51,15 +52,10 @@ export type ProprietesManifeste = {
   suggestions: CandidatChargement[];
   /** L'espace et le budget qu'il reste — `manifestRemaining`, qui lit les filtres. */
   restant: RestantManifeste;
-  fmt: Fmt;
-  fmtVol: Fmt;
-  fmtFee: (n: number, fees: number) => string;
-  signe: (n: number, texte: string) => string;
   libelleCaisses: (units: number) => string;
   texteBoutFrais: (bout: unknown) => string;
   minutesTrajet: number;
   estCorrige: (commodite: string, terminal: string, cote: string, champ: string) => boolean;
-  texteCapaciteInconnue: string;
   corriger: (commodite: string, terminal: string, cote: string, champ: string, valeur: string, releve: number) => void;
 };
 
@@ -72,12 +68,10 @@ export type ProprietesSuggestions = {
   suggestions: CandidatChargement[];
   restant: RestantManifeste;
   frais: PaireFrais | null;
-  fmt: Fmt;
-  fmtVol: Fmt;
   attributsAjout?: Record<string, string | number>;
 };
 
-export function Suggestions({ suggestions, restant, frais, fmt, fmtVol, attributsAjout = {} }: ProprietesSuggestions) {
+export function Suggestions({ suggestions, restant, frais, attributsAjout = {} }: ProprietesSuggestions) {
   if (restant.cargoLeft <= 0) return null;
   const retenues = suggestions
     .map((it) => ({ it, u: addableUnits(it, restant) }))
@@ -120,7 +114,7 @@ export function Suggestions({ suggestions, restant, frais, fmt, fmtVol, attribut
 // Les totaux, en une phrase.
 // ---------------------------------------------------------------------------------------------
 function Totaux({ p, totaux }: { p: ProprietesManifeste; totaux: { profit: number; invest: number; scu: number; fees: number } }) {
-  const { m, fmt, fmtFee } = p;
+  const { m } = p;
   const vides = m.cargo - totaux.scu;
   const profitHeure = (totaux.profit * 60) / p.minutesTrajet;
   // Les frais sont exposés à part plutôt que fondus dans le profit : c'est le seul moyen de voir
@@ -229,9 +223,7 @@ function Ligne({ p, l, i }: { p: ProprietesManifeste; l: LigneManifeste; i: numb
       champ={champ}
       releve={releve}
       corrige={p.estCorrige(l.name, terminal, cote, champ)}
-      fmtVol={p.fmtVol}
       onCorriger={(v) => p.corriger(l.name, terminal, cote, champ, v, releve)}
-      texteCapaciteInconnue={p.texteCapaciteInconnue}
     />
   );
 
@@ -240,9 +232,9 @@ function Ligne({ p, l, i }: { p: ProprietesManifeste; l: LigneManifeste; i: numb
   // sans qu'aucune ligne à l'écran ne l'explique.
   const texteProfit = carry
     ? fraisLigne > 0
-      ? p.fmtFee(-fraisLigne, fraisLigne)
+      ? fmtFee(-fraisLigne, fraisLigne)
       : "—"
-    : p.signe(lineNet(l.units, l, m.fee), p.fmtFee(lineNet(l.units, l, m.fee), fraisLigne));
+    : signe(lineNet(l.units, l, m.fee), fmtFee(lineNet(l.units, l, m.fee), fraisLigne));
 
   return (
     <div className={"mline" + (carry ? " carry" : "") + (acq ? " acquired" : "")}>
@@ -354,7 +346,7 @@ export function CarteManifeste(p: ProprietesManifeste) {
         ) : null}
       </div>
       <div id="manifestSuggest" className="manifest-suggest">
-        <Suggestions suggestions={p.suggestions} restant={p.restant} frais={m.fee} fmt={p.fmt} fmtVol={p.fmtVol} />
+        <Suggestions suggestions={p.suggestions} restant={p.restant} frais={m.fee} />
       </div>
     </>
   );

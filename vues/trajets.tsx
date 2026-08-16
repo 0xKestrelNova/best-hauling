@@ -12,6 +12,7 @@
 //
 // Le `<thead>` et son tri restent eux aussi dans index.html, câblés par `setupSort` : React ne
 // possède que le corps du tableau, comme pour Boucles.
+import { TEXTE_CAPACITE_INCONNUE, fmt, fmtFee, fmtVol } from "../format.ts";
 import { useState } from "react";
 import type { LigneManifeste, PaireFrais, Route } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite, ValeurEditable, PastilleStatut } from "./communs.tsx";
@@ -20,11 +21,7 @@ type Fmt = (n: number) => string;
 type CelluleFrais = { attr: string; mark: string; text: string };
 
 export type ProprietesCommunes = {
-  fmt: Fmt;
-  fmtVol: (n: number | null) => string;
-  fmtFee: (n: number, fees: number) => string;
   avecTexteFrais: (base: string, cell: CelluleFrais) => string;
-  texteCapaciteInconnue: string;
   legendeAchat: Record<number, [string, string]>;
   legendeVente: Record<number, [string, string]>;
   corriger: (commodite: string, terminal: string, cote: "buy" | "sell", champ: "price" | "vol", valeur: string, releve: number) => void;
@@ -80,9 +77,8 @@ function LigneSimple({ r, celluleFrais, suspect, libelleCaisses, choisirTrajet, 
     const p = cote === "buy" ? r.buy : r.sell;
     const volume = cote === "buy" ? r.buy.stock : r.sell.demand;
     const editable = (champ: "price" | "vol", valeur: number | null | undefined, corrige: boolean) => (
-      <ValeurEditable valeur={valeur ?? null} corrige={corrige} fmtVol={c.fmtVol}
+      <ValeurEditable valeur={valeur ?? null} corrige={corrige}
                       commodite={r.commodity} terminal={p.terminal} cote={cote} champ={champ} releve={p.updated}
-                      texteCapaciteInconnue={c.texteCapaciteInconnue}
                       onCorriger={(v) => c.corriger(r.commodity, p.terminal, cote, champ, v, p.updated)} />
     );
     return (
@@ -120,16 +116,16 @@ function LigneSimple({ r, celluleFrais, suspect, libelleCaisses, choisirTrajet, 
       {bout("buy")}
       {bout("sell")}
       <td><CelluleFiabilite f={r.fiabilite} age={r.age} part={r.partVolume} /></td>
-      <td className="num" title={titreFrais}>{c.fmtFee(r.margin, r.fees)}</td>
+      <td className="num" title={titreFrais}>{fmtFee(r.margin, r.fees)}</td>
       <td className="num roi-badge" title={titreFrais}>{r.fees > 0 ? "≈ " : ""}{r.roi}%</td>
-      <td className="num" title={caisses ? `Caisses : ${caisses}` : undefined}>{c.fmt(r.units)}</td>
-      <td className="num">{c.fmt(r.investment)}</td>
+      <td className="num" title={caisses ? `Caisses : ${caisses}` : undefined}>{fmt(r.units)}</td>
+      <td className="num">{fmt(r.investment)}</td>
       <td className="num profit" title={titreFrais}>
-        {c.fmtFee(r.profit, r.fees)}
+        {fmtFee(r.profit, r.fees)}
         {fc.mark ? <> <span className="nofee">⊘</span></> : null}
       </td>
       <td className="num profit" title={c.avecTexteFrais(`Estimation ${Math.round(r.minutes)} min/voyage`, fc)}>
-        {c.fmtFee(r.profitHour, r.fees)}
+        {fmtFee(r.profitHour, r.fees)}
       </td>
     </tr>
   );
@@ -200,12 +196,10 @@ const COLONNES = 10;
 // `<tbody>` : React n'en savait rien, ne le déplaçait pas au re-tri et ne l'effaçait pas au
 // changement de mode. Il survivait donc aux rendus en devenant faux (#125). Rendu ici, il n'a plus
 // d'existence propre : il est une conséquence de l'état, comme le reste du tableau.
-function ChargementDeplie({ t, colonnes, texteProfitLigne, libelleCaissesScu, fmt, fmtVol }: {
+function ChargementDeplie({ t, colonnes, texteProfitLigne, libelleCaissesScu }: {
   t: LigneMulti; colonnes: number;
   texteProfitLigne: ProprietesMulti["texteProfitLigne"];
   libelleCaissesScu: ProprietesMulti["libelleCaissesScu"];
-  fmt: Fmt;
-  fmtVol: ProprietesCommunes["fmtVol"];
 }) {
   return (
     <tr className="schema-row">
@@ -243,7 +237,7 @@ function LigneComposee({ t, celluleFrais, libelleCaisses, releveLePlusAncien, te
   const fc = celluleFrais(t);
   const titreFrais = fc.text || undefined;
   const caisses = libelleCaisses(t);
-  const noms = t.lines.map((l) => `${l.name} (${c.fmt(l.units)} SCU)`).join(" · ");
+  const noms = t.lines.map((l) => `${l.name} (${fmt(l.units)} SCU)`).join(" · ");
 
   const bout = (p: LigneMulti["origin"] | LigneMulti["dest"], fraicheur: number | null) => (
     <td className="loc">
@@ -287,22 +281,22 @@ function LigneComposee({ t, celluleFrais, libelleCaisses, releveLePlusAncien, te
       {bout(t.origin, releveLePlusAncien(t))}
       {bout(t.dest, null)}
       <td><CelluleFiabilite f={t.fiabilite} age={t.age} part={t.partVolume} /></td>
-      <td className="num" title={c.avecTexteFrais("Marge moyenne pondérée par SCU chargé", fc)}>{c.fmtFee(t.margin, t.fees)}</td>
+      <td className="num" title={c.avecTexteFrais("Marge moyenne pondérée par SCU chargé", fc)}>{fmtFee(t.margin, t.fees)}</td>
       <td className="num roi-badge" title={titreFrais}>{t.fees > 0 ? "≈ " : ""}{t.roi}%</td>
-      <td className="num" title={caisses ? `Caisses : ${caisses}` : undefined}>{c.fmt(t.units)}</td>
-      <td className="num">{c.fmt(t.investment)}</td>
+      <td className="num" title={caisses ? `Caisses : ${caisses}` : undefined}>{fmt(t.units)}</td>
+      <td className="num">{fmt(t.investment)}</td>
       <td className="num profit" title={titreFrais}>
-        {c.fmtFee(t.profit, t.fees)}
+        {fmtFee(t.profit, t.fees)}
         {fc.mark ? <> <span className="nofee">⊘</span></> : null}
       </td>
       <td className="num profit" title={c.avecTexteFrais(`Estimation ${Math.round(t.minutes)} min/voyage`, fc)}>
-        {c.fmtFee(t.profitHour, t.fees)}
+        {fmtFee(t.profitHour, t.fees)}
       </td>
     </tr>
   );
 
   return deplie
-    ? <>{ligne}<ChargementDeplie t={t} colonnes={COLONNES} texteProfitLigne={texteProfitLigne} libelleCaissesScu={libelleCaissesScu} fmt={c.fmt} fmtVol={c.fmtVol} /></>
+    ? <>{ligne}<ChargementDeplie t={t} colonnes={COLONNES} texteProfitLigne={texteProfitLigne} libelleCaissesScu={libelleCaissesScu} /></>
     : ligne;
 }
 

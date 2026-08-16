@@ -10,6 +10,7 @@
 // La carte SVG du parcours reste HORS de cet îlot : `#journeyMap` vit entre `#planHead` et
 // `#planBody` (et non dedans), parce qu'un élément à écouteurs directs se déménage en FRÈRE, jamais
 // en enfant d'un conteneur réécrit — c'est la leçon de #24, rappelée par l'ADR-004.
+import { fmt, signe } from "../format.ts";
 import { Fragment } from "react";
 import { IconeCommodite } from "./communs.tsx";
 
@@ -39,9 +40,7 @@ export type DonneesPlan = {
   marchePret: boolean;
   /** Le `kind` d'une commodité, pour son icône. app.js le résout : MARKET est une globale. */
   kindDe: (nom: string) => string | null;
-  fmt: Fmt;
   fmtProfit: (n: number, fees: number) => string;
-  signe: (n: number, texte: string) => string;
 };
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
@@ -92,18 +91,18 @@ function CarteSoute({ d }: { d: DonneesPlan }) {
                 <span>{g.name}</span>
               </span>
               <span className="plan-hold-bar" aria-hidden="true"><i style={{ width: part.toFixed(1) + "%" }} /></span>
-              <span className="plan-hold-scu"><b>{d.fmt(g.units)}</b> SCU</span>
+              <span className="plan-hold-scu"><b>{fmt(g.units)}</b> SCU</span>
               <span className="plan-hold-paid" title={"Prix payé au SCU" + (g.lots.length > 1 ? " (moyenne des lots)" : "")}>
-                @ {d.fmt(Math.round(g.paidMoyen))}
+                @ {fmt(Math.round(g.paidMoyen))}
               </span>
             </div>
           );
         })}
       </div>
       <div className="plan-card-meta">
-        <b>{d.fmt(d.scu)}</b> SCU à bord
-        {d.libre != null ? <> · <b>{d.fmt(d.libre)}</b> SCU libres</> : null}
-        {" · capital engagé "}<b>{d.fmt(d.invest)}</b> aUEC
+        <b>{fmt(d.scu)}</b> SCU à bord
+        {d.libre != null ? <> · <b>{fmt(d.libre)}</b> SCU libres</> : null}
+        {" · capital engagé "}<b>{fmt(d.invest)}</b> aUEC
       </div>
     </div>
   );
@@ -141,13 +140,13 @@ function CarteParcours({ d }: { d: DonneesPlan }) {
                 <span className="plan-leg-n">{j.i + 1}</span>
                 <span className="plan-leg-route">{j.from} → {j.to}</span>
                 <span className="plan-leg-state">{j.faite ? "faite" : j.courante ? "courante" : "à venir"}{j.chargee ? " · chargée" : ""}</span>
-                <span className={"plan-leg-profit " + classeProfit(j.profit)}>{d.signe(j.profit, d.fmtProfit(j.profit, j.fees))}</span>
+                <span className={"plan-leg-profit " + classeProfit(j.profit)}>{signe(j.profit, d.fmtProfit(j.profit, j.fees))}</span>
               </div>
               <div className="plan-leg-cargo">
                 {j.lines.length
                   ? j.lines.map((l, k) => (
                       <span className="plan-cargo-item" key={k}>
-                        <IconeCommodite kind={l.kind} />{l.name} <b>{d.fmt(l.units)} SCU</b>
+                        <IconeCommodite kind={l.kind} />{l.name} <b>{fmt(l.units)} SCU</b>
                       </span>
                     ))
                   : <span className="plan-muted">aucun fret rentable</span>}
@@ -159,10 +158,10 @@ function CarteParcours({ d }: { d: DonneesPlan }) {
         <p className="plan-muted">Calcul des manifestes…</p>
       )}
       <div className="plan-card-meta">
-        <b>{d.nbSauts}</b> saut{d.nbSauts > 1 ? "s" : ""} · <b>{d.reste}</b> à faire · <b>{d.fmt(d.totalScu)}</b> SCU transportés ·
+        <b>{d.nbSauts}</b> saut{d.nbSauts > 1 ? "s" : ""} · <b>{d.reste}</b> à faire · <b>{fmt(d.totalScu)}</b> SCU transportés ·
         {" profit "}
         {d.marchePret
-          ? <b className={classeProfit(d.totalProfit)}>{d.signe(d.totalProfit, d.fmtProfit(d.totalProfit, d.totalFees))}</b>
+          ? <b className={classeProfit(d.totalProfit)}>{signe(d.totalProfit, d.fmtProfit(d.totalProfit, d.totalFees))}</b>
           : "…"}
         {d.marchePret ? " aUEC" : ""}
       </div>

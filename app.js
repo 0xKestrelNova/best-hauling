@@ -28,6 +28,7 @@ import {
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { peindre } from "./pont.js";
 import { etat, notifier } from "./etat.ts";
+import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -77,12 +78,9 @@ let showShipCard = () => {};
 const STATE_KEY = "best-hauling-state";
 
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => (n == null || !isFinite(n) ? "—" : Math.round(n).toLocaleString("fr-FR"));
 // Volume dont le null veut dire « capacité non communiquée par UEX » et non « zéro » :
 // `scu_sell` n'est renseigné que sur une minorité de points de vente. Un « — » s'y lisait
 // « aucune demande » alors qu'aucun plafond n'est appliqué dans ce cas — d'où « n.c. ».
-const fmtVol = (n) => (n == null ? "n.c." : fmt(n));
-const VOL_UNKNOWN_HINT = "Capacité non communiquée par UEX : aucun plafond de volume n'est appliqué";
 
 // Échappe toute chaîne insérée dans innerHTML. Les données UEX sont communautaires
 // (nicknames de terminaux, etc. potentiellement soumis par des utilisateurs) : on les
@@ -223,7 +221,6 @@ const feeResolver = (f) => (f.autoload ? (t) => autoloadPoint(t, kFor(t && t.nam
 // Un montant qui incorpore des frais d'autoload est une ESTIMATION : la formule colle aux 18
 // relevés à 2,8 % près, et `k` varie de 40 % entre les deux seules stations mesurées. Le « ≈ » le
 // dit, partout où le chiffre a été amputé.
-const fmtFee = (n, fees) => (fees > 0 ? "≈ " + fmt(n) : fmt(n));
 const kFmt = (k) => k.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
 const kText = (e) => `×${kFmt(e.k)} ${e.measured ? "(relevé)" : "(k global)"}`;
 function feeEndText(e) {
@@ -277,7 +274,6 @@ function feeCell(ctx, fees, what, bounded) {
 // manifeste optimal), pas un détail de rendu. Signe compris — un net négatif se dit.
 // Préfixe un montant de son signe RÉEL. Un « + » posé d'office écrivait « +-1 234 » dès que les
 // frais mangeaient la marge, en vert, sur le seul chiffre qui disait de ne pas charger la ligne.
-const signe = (n, texte) => (n < 0 ? texte : "+" + texte);
 // Texte de la cellule « profit » d'une ligne de manifeste. Partagé par le premier rendu et par la
 // mise à jour en direct : deux conventions différentes et éditer une quantité changerait le sens
 // de la cellule. Une ligne « vend ailleurs » n'a pas de profit sur ce trajet — elle a quand même
@@ -403,9 +399,7 @@ const EMPTY_DEFAULT = "Aucune route ne correspond aux filtres.";
 // jambes déjà planifiées, et `#empty` reste écrit ici (il est partagé par trois vues).
 function propsTrajetsCommunes() {
   return {
-    fmt, fmtVol, fmtFee,
     avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
-    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
     corriger: (commodite, terminal, cote, champ, valeur, releve) => {
@@ -559,9 +553,7 @@ function renderLoops() {
   // câblés par setupLoopSort. React ne possède que le corps du tableau.
   peindre($("loopRows"), vueBoucles({
     lignes: rows,
-    fmt,
     celluleFrais: (l) => feeCell(l.feeInfo, l.fees, () => `${fmt(l.unitsOut)} + ${fmt(l.unitsBack)} SCU, 4 opérations (charge et décharge à chaque bout)`, l.units > 0),
-    fmtFee,
     avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
     // On entre dans le cycle par la FIN du parcours : la boucle l'étend au lieu de le remplacer.
     // `journeyEnd(JOURNEY)` est relu DANS le corps de la flèche, donc au clic — et surtout PAS
@@ -942,12 +934,10 @@ function paintManifest() {
     parcours: etat.JOURNEY,
     suggestions: suggestionsFor(m),
     restant: manifestRemaining(m),
-    fmt, fmtVol, fmtFee, signe,
     libelleCaisses: (units) => scuBoxesLabel(units, m.origin.maxBox),
     texteBoutFrais: feeEndText,
     minutesTrajet: tripMinutes(0, m.cross),
     estCorrige: isOv,
-    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
     corriger: (commodite, terminal, cote, champ, valeur, releve) => {
       if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
       setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
@@ -1157,8 +1147,6 @@ function renderChain() {
     chaine: chain,
     cargo: f.cargo,
     terminal: (idx) => etat.MARKET.terminals[idx],
-    fmt,
-    fmtFee,
     celluleFrais: (lignes, fee, a, b, scu, fees) =>
       feeCell(feeCtx(f, a.name, b.name, a, b), fees, () => feeCargoText(lignes, a.maxBox), scu > 0),
     texteProfitLigne: lineProfitText,
@@ -1391,7 +1379,6 @@ function renderEntrepots(synchrone = false) {
     })),
     scuTotal: holdScu(tous),
     invest: holdByCommodity(tous).reduce((s, g) => s + g.invest, 0),
-    fmt,
   }), { synchrone });
 }
 
@@ -1534,7 +1521,6 @@ function renderSoute(synchrone = false) {
     // Le `kind` n'est pas persisté dans le lot : c'est une propriété de la commodité, pas de la
     // transaction. On le relit au marché quand il est là, et on s'en passe sinon.
     kindDe: (nom) => { const c = etat.MARKET && findCommodity(nom); return c ? c.kind : null; },
-    fmt,
   }), { synchrone });
 }
 
@@ -2029,7 +2015,7 @@ function renderJourney({ frappe = false } = {}) {
       texteTotal, nombreTotal,
       suggestions: sctx ? {
         suggestions: suggestionsFor(sctx), restant: manifestRemaining(sctx), frais: sctx.fee,
-        fmt, fmtVol, attributsAjout: { "data-leg": i },
+        attributsAjout: { "data-leg": i },
       } : null,
     };
   });
@@ -2041,7 +2027,6 @@ function renderJourney({ frappe = false } = {}) {
     jambes,
     suggestionsArret: etat.MARKET ? journeyStopSuggestions() : null,
     generation: journeyGen,
-    fmt, signe,
   }), { synchrone: true });
 
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
@@ -2064,7 +2049,6 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
     n, totalProfit, totalScu, totalFees, systems,
     materials: etat.MARKET ? journeyCarriedCommodities().size : 0,
     marchePret: !!etat.MARKET,
-    fmt, signe,
   }), { synchrone: true });
 }
 
@@ -2181,7 +2165,7 @@ function renderPlan() {
     base: d.f.useCargo && d.f.cargo > 0 ? d.f.cargo : d.scu,
     marchePret: !!etat.MARKET,
     kindDe: (nom) => { const c = etat.MARKET && findCommodity(nom); return c ? c.kind : null; },
-    fmt, fmtProfit: fmtFee, signe,
+    fmtProfit: fmtFee,
   }));
 }
 
@@ -2838,8 +2822,6 @@ function renderCorrections() {
       tuiles: tuilesStation(stationSel, q),
       filtre: !!q,
       nbCorrections: Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length,
-      fmtVol,
-      texteCapaciteInconnue: VOL_UNKNOWN_HINT,
       // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME fige d'abord les jambes planifiées.
       corriger: (commodite, cote, champ, valeur, releve) => {
         if (champ === "vol") pinLegsForVolume(commodite, t.name, cote);
@@ -2919,8 +2901,6 @@ function paintCommodityDetail() {
     points: p,
     nomCommodite: p.name,
     butin: loot,
-    fmt,
-    fmtVol,
     estCorrige: (terminal, cote, champ) => isOv(p.name, terminal, cote, champ),
     // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME doit d'abord figer les jambes déjà
     // planifiées (avant d'écrire, pour capturer les SCU encore en vigueur), qu'un PRIX ne fige
@@ -2933,7 +2913,6 @@ function paintCommodityDetail() {
     },
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
-    texteCapaciteInconnue: VOL_UNKNOWN_HINT,
   }));
 }
 // Reflète le board courant dans les contrôles. « Marge » n'a aucun sens quand l'acquisition est
@@ -2969,7 +2948,6 @@ function peindreGrilleCommodites() {
     // du Butin vient de logic.ts (valeurTiers, par rang). L'îlot ne connaît ni l'une ni l'autre.
     palier: (c) => (etat.commBoard === "loot" ? commTiers.get(c.name) || "t-none" : marginTier(c.margin)),
     valeurCompacte: compactValue,
-    fmt,
   }));
 }
 
