@@ -64,6 +64,9 @@ export function loadJourneyEdits(): void {
 export function saveJourneyEdits(): void { try { localStorage.setItem(JOURNEY_EDITS_KEY, JSON.stringify(etat.JOURNEY_EDITS)); } catch {} }
 // Le RANG de la jambe fait partie de la clé : sans lui, un parcours A→B→A→B partageait un seul
 // manifeste entre ses jambes 1 et 3 (éditer l'une réécrivait l'autre, la supprimer supprimait l'autre).
+/** Cette jambe est-elle déjà chargée en soute ? Le registre des chargements en est la seule preuve. */
+export const jambeChargee = (leg: Jambe, i: number): boolean => !!etat.CHARGEMENTS[legKey(leg, i)];
+
 export const legKey = (leg: Jambe, i: number): string => `${i}|${leg.from}|${leg.to}`;
 
 // Indices des terminaux d'une jambe, ou null si le marché ne les connaît pas (encore).
