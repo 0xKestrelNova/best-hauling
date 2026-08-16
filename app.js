@@ -35,6 +35,7 @@ import { vueStation, vueBandeCorrections, inviteStation } from "./vues/correctio
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
 import { carteManifeste, indiceManifeste, suggestions as vueSuggestions } from "./vues/manifeste.tsx";
+import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -1440,28 +1441,17 @@ function renderEntrepots() {
   const box = $("depotsCard");
   if (!box) return;
   const stations = Object.entries(DEPOTS).filter(([, lots]) => Array.isArray(lots) && lots.length);
-  if (!stations.length) { box.hidden = true; return; }
+  if (!stations.length) { box.hidden = true; peindre(box, null); return; }
   box.hidden = false;
   const tous = stations.flatMap(([, lots]) => lots);
-  const invest = holdByCommodity(tous).reduce((s, g) => s + g.invest, 0);
-  const blocs = stations.map(([label, lots]) => {
-    const { name, system } = parseStationLabel(label);
-    const lignes = holdByCommodity(lots).map((g) => `<div class="hold-line">
-        <span class="hold-name">${esc(g.name)}</span>
-        <span class="hold-scu"><b>${fmt(g.units)}</b> SCU</span>
-        <span class="hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}">@ ${fmt(Math.round(g.paidMoyen))}</span>
-        <button class="depot-take" data-station="${esc(label)}" data-name="${esc(g.name)}" data-units="${g.units}" title="Remettre ces ${fmt(g.units)} SCU en soute, à leur prix payé">↑ reprendre</button>
-      </div>`).join("");
-    return `<div class="depot-station"><div class="depot-lieu">${esc(name)}${sysBadge(system)} <span class="muted">${fmt(holdScu(lots))} SCU</span></div>${lignes}</div>`;
-  }).join("");
-  // Le bouton de sortie vit dans l'en-tête, sur le modèle exact du `⧉ Copier` du manifeste. Il
-  // n'existe donc que quand la carte est visible — inutile de le masquer à part : la carte entière
-  // sort dès qu'il ne dort plus rien nulle part.
-  box.innerHTML =
-    `<div class="hold-head"><span class="hold-title">⬓ Entrepôts</span>
-       <button id="copyDepots" class="copy-btn" title="Copier la liste du fret déposé, dates comprises">⧉ Copier</button></div>
-     <div class="depot-stations">${blocs}</div>
-     <div class="hold-meta"><b>${fmt(holdScu(tous))}</b> SCU déposés · capital immobilisé <b>${fmt(invest)}</b> aUEC</div>`;
+  peindre(box, carteEntrepots({
+    stations: stations.map(([label, lots]) => ({
+      label, lieu: parseStationLabel(label), scu: holdScu(lots), groupes: holdByCommodity(lots),
+    })),
+    scuTotal: holdScu(tous),
+    invest: holdByCommodity(tous).reduce((s, g) => s + g.invest, 0),
+    fmt,
+  }));
 }
 
 // La liste de ce qui dort en entrepôt, en texte, dans le presse-papiers : elle ne quittait jamais
@@ -1472,39 +1462,9 @@ function copierEntrepots() {
 
 // « Où écouler ce qui reste ? » — le détour manuel par la vue Commodités, en un panneau.
 let ecoulerOuvert = false;
-function ecoulerHTML() {
-  if (!ecoulerOuvert || !MARKET) return "";
-  const idx = stationCourante();
-  // Une soute DÉCLARÉE peut exister sans le moindre voyage : le panneau n'a alors pas de point de
-  // départ. Rendre "" laissait le clic sans effet visible — on dit ce qui manque, et où le saisir.
-  if (idx == null) {
-    return `<div class="hold-ecouler"><p class="muted">Dis d'abord <b>où tu es</b> : le classement part d'un terminal.
-      Le champ <b>◈ Je suis à</b>, juste dessous, l'attend.</p></div>`;
-  }
-  const f = readFilters();
-  const dest = offloadPlan(MARKET, SOUTE, idx, f, effVals, feeResolver(f), 5);
-  if (!dest.length) {
-    return `<div class="hold-ecouler"><p class="muted">Aucune destination ne reprend ce fret avec ces filtres.
-      Tu peux le <b>déposer</b> à une station : il n'est alors ni vendu ni perdu.</p></div>`;
-  }
-  const lignes = dest.map((d) => {
-    const cert = d.certitude === "connue"
-      ? `<span class="ec-sur" title="Capacité publiée par UEX">${fmt(d.garanti)} SCU garantis</span>`
-      : d.certitude === "inconnue"
-        ? `<span class="ec-flou" title="UEX ne publie pas la capacité de ce point : ni zéro, ni illimitée">capacité inconnue</span>`
-        : `<span class="ec-flou" title="Capacité publiée pour une partie seulement">${fmt(d.garanti)} SCU garantis, reste inconnu</span>`;
-    const detail = d.lignes.map((l) => `${esc(l.name)} ${fmt(l.absorbe)}${l.reste > 0 ? `/${fmt(l.absorbe + l.reste)}` : ""}`).join(" · ");
-    // Vendre sous le prix payé peut rester le bon choix — libérer la soute vaut parfois une perte —
-    // mais ça ne doit jamais passer inaperçu derrière un chiffre positif.
-    const perte = d.aPerte ? ` · <span class="ec-perte" title="Le prix ici est inférieur à ce que tu as payé">sous le prix payé</span>` : "";
-    return `<div class="ec-dest">
-        <span class="ec-nom">${esc(d.terminal)}${sysBadge(d.system)}${d.cross ? ' <span class="cross">⚡</span>' : ""}${outpostTag(d.outpost)}</span>
-        <span class="ec-profit ${d.profit < 0 ? "perte" : "profit"}" title="Ce que ça rapporte, prix d'achat déduit${d.profit < 0 ? " — négatif : tu vendrais à perte ici" : ""}. Encaissement brut : ${fmt(Math.round(d.encaisse))} aUEC.">${d.profit >= 0 ? "+" : ""}${fmt(Math.round(d.profit))}</span>
-        <span class="ec-detail">${esc(detail)} · ${cert}${perte}${d.reste > 0 ? ` · <b>${fmt(d.reste)}</b> SCU resteraient à bord` : " · <b>soute vidée</b>"}</span>
-      </div>`;
-  }).join("");
-  return `<div class="hold-ecouler"><div class="ec-head">Où écouler — classé par ce que ça rapporte, prix d'achat déduit</div>${lignes}</div>`;
-}
+// Le panneau « où écouler » est rendu par vues/soute.tsx (`<OuEcouler>`). Le CALCUL, lui, reste
+// ici : `offloadPlan` a besoin du marché, des filtres et du résolveur de corrections — et il n'est
+// appelé que si le panneau est ouvert, parce qu'il parcourt tous les terminaux à chaque rendu.
 
 // ---------- Déclarer « j'ai ça à bord » : la deuxième entrée de la soute (#55) ----------
 // Le repli que l'ADR-002 réservait (option D) et n'avait jamais câblé. Jusqu'ici rien n'entrait en
@@ -1608,76 +1568,46 @@ function poserPosition(v) {
 function viderSoute() { SOUTE = []; saveSoute(); renderSoute(); refresh(); }
 function retirerLot(i) { SOUTE = SOUTE.filter((_, j) => j !== i); saveSoute(); renderSoute(); refresh(); }
 
-function renderSoute() {
+// `synchrone` : la délégation du bouton « vendu » sélectionne le champ de quantité JUSTE APRÈS ce
+// rendu (`…querySelector(".hold-sell-qty")?.select()`). Un rendu React groupé n'aurait pas encore
+// créé le champ, le `?.` court-circuiterait, et le champ s'ouvrirait sans le focus — visible au
+// relevé : sa bordure passait de l'ambre pleine à l'ambre à 30 %.
+function renderSoute(synchrone = false) {
   const box = $("holdCard");
   if (!box) return;
   // AVANT le retour anticipé : le point d'entrée « déclarer », lui, doit exister précisément quand
   // la carte n'existe pas. C'est le seul rendu appelé depuis tous les chemins qui repeignent la soute.
   renderDeclaration();
-  if (!SOUTE.length) { box.hidden = true; return; }
+  if (!SOUTE.length) { box.hidden = true; peindre(box, null); return; }
   box.hidden = false;
   // Du fret à bord et pas de graphe : la vue par défaut ne lit que routes.json, et sans marché la
   // carte ne sait ni nommer une icône, ni proposer une vente, ni classer « où écouler ». Ça se
   // voyait peu tant qu'on ne pouvait charger que depuis « En route » — qui le charge ; une soute
   // déclarée, elle, peut naître sur Trajets et y rester.
   if (!MARKET) withMarket(renderSoute);
-  const groupes = holdByCommodity(SOUTE);
   const ici = stationCourante();
-  const scu = holdScu(SOUTE);
   const f = readFilters();
-  const libre = f.useCargo && f.cargo > 0 ? freeCargo(SOUTE, f.cargo) : null;
-  const invest = groupes.reduce((s, g) => s + g.invest, 0);
-  // Le `kind` n'est pas persisté dans le lot : c'est une propriété de la commodité, pas de la
-  // transaction. On le relit au marché quand il est là, et on s'en passe sinon.
-  const icone = (nom) => {
-    const c = MARKET && findCommodity(nom);
-    return c ? commodityIcon(c.kind) : "";
-  };
-  const lignes = groupes.map((g) => {
-    // Un lot DÉCLARÉ n'a pas de terminal d'achat (`from` vide) : le dire, plutôt qu'afficher « ? »
-    // qui laisse croire à une donnée perdue. C'est un fait, pas un trou.
-    const ouCharge = (l) => (l.from ? `Chargé à ${esc(l.from)}` : "Déclaré à la main — aucun terminal d'achat");
-    // Le détail des lots n'apparaît que s'il y en a plusieurs : sinon c'est du bruit.
-    const lots = g.lots.length > 1
-      ? `<div class="hold-lots">${g.lots.map((l) => `<span class="hold-lot" title="${ouCharge(l)}">${fmt(l.units)} SCU @ ${fmt(l.paid)}<button class="hold-del" data-i="${l.i}" title="Retirer ce lot" aria-label="Retirer">✕</button></span>`).join("")}</div>`
-      : `<button class="hold-del solo" data-i="${g.lots[0].i}" title="Retirer ce lot" aria-label="Retirer">✕</button>`;
-    // Coût nul : « où écouler » comptera tout l'encaissement comme profit. C'est juste — du butin
-    // n'a rien coûté — mais ça change le sens du chiffre, et ça ne doit pas se deviner.
-    const butin = g.invest === 0
-      ? ` <span class="hold-butin" title="Rien payé pour ce fret : « où écouler » compte donc tout l'encaissement comme profit">butin</span>`
-      : "";
-    const sansAchat = g.lots.every((l) => !l.from) ? " — déclaré à la main, aucun terminal d'achat" : "";
-    // Vendre suppose de savoir OÙ l'on est, et que le comptoir reprenne la commodité.
-    const pt = ici != null && MARKET ? sellableAt(MARKET, ici, g.name, effVals) : null;
-    // Vendre suppose que le comptoir reprenne la commodité ; DÉPOSER, non — c'est justement la
-    // sortie quand il n'en veut pas. Les deux ouvrent le même champ de quantité.
-    // `data-idx` fige la station telle qu'elle a été résolue POUR CE RENDU : c'est elle qui a fixé
-    // le prix annoncé juste à côté. Sans lui, `vendreIci` relisait `stationCourante()` au clic et
-    // pouvait encaisser ailleurs qu'à l'endroit dont l'utilisateur venait de lire le chiffre.
-    const vente = venteEnCours === g.name
-      ? `<span class="hold-sell open" data-idx="${ici}"><input class="hold-sell-qty" type="number" min="0" max="${g.units}" value="${g.units}" aria-label="SCU de ${esc(g.name)}" />
-           ${pt ? `<button class="hold-sell-ok" data-name="${esc(g.name)}" title="Vendre ici à ${fmt(pt.price)} aUEC/SCU">✓ vendre</button>` : ""}
-           <button class="hold-store" data-name="${esc(g.name)}" title="Déposer à la station : ni vendu, ni perdu">⬓ déposer</button>
-           <button class="hold-sell-no" title="Annuler">✕</button></span>`
-      : ici != null
-        ? `<button class="hold-sell-btn" data-name="${esc(g.name)}" title="${pt
-            ? `Vendre ou déposer ici — ${fmt(pt.price)} aUEC/SCU${pt.demand == null ? ", capacité inconnue chez UEX" : `, capacité annoncée ${fmt(pt.demand)} SCU`}`
-            : "Ce comptoir ne reprend pas cette commodité — tu peux quand même l'y déposer"}">${pt ? "vendu" : "déposer"}</button>`
-        : "";
-    return `<div class="hold-line">
-        <span class="hold-name">${icone(g.name)}${esc(g.name)}</span>
-        <span class="hold-scu"><b>${fmt(g.units)}</b> SCU</span>
-        <span class="hold-paid" title="Prix payé au SCU${g.lots.length > 1 ? " (moyenne des lots)" : ""}${sansAchat}">@ ${fmt(Math.round(g.paidMoyen))}</span>${butin}
-        ${vente}
-        ${lots}
-      </div>`;
-  }).join("");
-  box.innerHTML =
-    `<div class="hold-head"><span class="hold-title">◈ Soute</span><button id="holdClear" class="journey-clear" title="Vider la soute (le fret est débarqué)" aria-label="Vider la soute">✕</button></div>
-     <div class="hold-lines">${lignes}</div>
-     <div class="hold-meta"><b>${fmt(scu)}</b> SCU à bord${libre != null ? ` · <b>${fmt(libre)}</b> libres` : ""} · capital engagé <b>${fmt(invest)}</b> aUEC
-       <button id="holdOffload" class="hold-offload">${ecoulerOuvert ? "▾" : "▸"} où écouler ?</button></div>
-     ${ecoulerHTML()}`;
+  peindre(box, carteSoute({
+    groupes: holdByCommodity(SOUTE),
+    ici,
+    scu: holdScu(SOUTE),
+    libre: f.useCargo && f.cargo > 0 ? freeCargo(SOUTE, f.cargo) : null,
+    invest: holdByCommodity(SOUTE).reduce((s, g) => s + g.invest, 0),
+    venteEnCours,
+    ecoulerOuvert,
+    positionConnue: ici != null,
+    marchePret: !!MARKET,
+    // Le classement n'est calculé QUE si le panneau est ouvert : `offloadPlan` parcourt tous les
+    // terminaux, et cette carte se repeint à chaque rafraîchissement de l'application.
+    ecoulement: ecoulerOuvert && MARKET && ici != null
+      ? offloadPlan(MARKET, SOUTE, ici, f, effVals, feeResolver(f), 5)
+      : null,
+    pointVente: (nom) => (ici != null && MARKET ? sellableAt(MARKET, ici, nom, effVals) : null),
+    // Le `kind` n'est pas persisté dans le lot : c'est une propriété de la commodité, pas de la
+    // transaction. On le relit au marché quand il est là, et on s'en passe sinon.
+    kindDe: (nom) => { const c = MARKET && findCommodity(nom); return c ? c.kind : null; },
+    fmt,
+  }), { synchrone });
 }
 
 // ---------- Carte 2D du parcours (ADR-001) ----------
@@ -3526,7 +3456,7 @@ async function init() {
     const deposer = e.target.closest(".hold-store");
     if (deposer) { const b = deposer.closest(".hold-sell"); deposerIci(deposer.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const ouvrir = e.target.closest(".hold-sell-btn");
-    if (ouvrir) { venteEnCours = ouvrir.dataset.name; renderSoute(); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
+    if (ouvrir) { venteEnCours = ouvrir.dataset.name; renderSoute(true); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
     if (e.target.closest(".hold-sell-no")) { venteEnCours = null; renderSoute(); return; }
     const ok = e.target.closest(".hold-sell-ok");
     if (ok) { const b = ok.closest(".hold-sell"); vendreIci(ok.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
