@@ -1,6 +1,6 @@
 # ADR-011 : Finir la refonte — ce qu'on n'aurait pas écrit
 
-**Statut :** Proposé
+**Statut :** Accepté
 **Date :** 2026-08-16
 **Décideur :** 0xKestrelNova (propriétaire du dépôt)
 **Issue :** #96 · **Jalon :** v2.0.0
