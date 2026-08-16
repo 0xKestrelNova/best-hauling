@@ -1385,6 +1385,29 @@ const memeStation = (nom) => new RegExp(nom.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 // Parcours encodé dans le lien partageable (paramètre `j` du hash), ou null.
 const lienVoyage = (page) => page.evaluate(() => new URLSearchParams(location.hash.slice(1)).get("j"));
 
+test("Manifeste : après un message d'invite, la carte REVIENT (#120)", async ({ page }) => {
+  // `#manifest` est possédé par React depuis #96. Les trois messages d'invite y écrivaient encore
+  // en `innerHTML`, ce qui détache les nœuds de React sans que React le sache : la racine mémorisée
+  // dans pont.js appliquait ensuite ses différences sur des nœuds hors du document. Le message
+  // restait à l'écran pour de bon, et rien ne levait.
+  //
+  // Aucun test ne faisait l'aller-RETOUR : c'est le seul chemin où ça se voit.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const lignes = await page.locator("#manifest .mline").count();
+  expect(lignes).toBeGreaterThan(0);
+
+  await page.uncheck("#useCargo");
+  await expect(page.locator("#manifest .manifest-hint")).toContainText("Active la");
+  await expect(page.locator("#manifest .mline")).toHaveCount(0);
+
+  await page.check("#useCargo");
+  await expect(
+    page.locator("#manifest .mline").first(),
+    "la carte n'est pas revenue — un innerHTML a détaché l'arbre React de #manifest",
+  ).toBeVisible({ timeout: 8000 });
+  await expect(page.locator("#manifest .manifest-hint")).toHaveCount(0);
+});
+
 test("Manifeste -> voyage : sans voyage, le bouton en démarre un", async ({ page }) => {
   await manifesteDepuis(page, "Megumi — Pyro");
   await expect(page.locator("#manifestToJourney")).toHaveText(/Démarrer un voyage/);
