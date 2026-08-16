@@ -103,17 +103,21 @@ test("Édition React : app.js ne vient PAS muter un nœud possédé par React (#
   await cellule.click();
   await expect(cellule.locator("input.editv-input"), "deux champs : startEdit est venu muter le nœud React").toHaveCount(1);
 
-  // Et le garde n'a pas rendu `startEdit` inerte pour autant : les valeurs éditables du MANIFESTE
-  // sont encore écrites en HTML par app.js (`editv()`, app.js:424) et s'ouvrent par la délégation.
-  // C'était la vue Trajets qui tenait ce rôle ici ; elle est passée à React avec « En route »
-  // (elles partageaient leur rendu de ligne), et le manifeste est désormais le dernier `.editv`
-  // vanilla — donc le seul endroit où les deux chemins se distinguent encore vraiment.
+  // Et il n'y a plus AUCUN `.editv` en dehors de React : le manifeste était le dernier écrit en
+  // HTML par app.js, il est passé à l'îlot avec la carte. `editv()` et `startEdit()` ont donc été
+  // supprimés — ce test est ce qui autorise leur suppression, et ce qui la rattraperait si un
+  // rendu impératif revenait par la bande.
+  const vues = ["#viewRoutes", "#viewLoops", "#viewChain", "#viewCommodities", "#viewCorrections", "#viewTour", "#viewPlan"];
+  for (const v of vues) {
+    await page.click(v);
+    await page.waitForTimeout(150);
+  }
   await page.click("#viewRoutes");
   await page.locator("#rows tr").first().locator(".journey-pick").click();
   await page.click("#viewEnroute");
-  const vanilla = page.locator("#manifest .editv").first();
-  await expect(vanilla).toBeVisible({ timeout: 8000 });
-  await expect(vanilla).not.toHaveAttribute("data-react", "1");
-  await vanilla.click();
-  await expect(vanilla.locator("input")).toBeVisible();
+  await expect(page.locator("#manifest .editv").first()).toBeVisible({ timeout: 8000 });
+
+  const orphelins = await page.evaluate(() =>
+    [...document.querySelectorAll(".editv")].filter((e) => !e.dataset.react).length);
+  expect(orphelins, "un `.editv` n'est pas possédé par React — startEdit a été supprimé, il ne s'ouvrira pas").toBe(0);
 });
