@@ -12,7 +12,8 @@
 //
 // Le `<thead>` et son tri restent eux aussi dans index.html, câblés par `setupSort` : React ne
 // possède que le corps du tableau, comme pour Boucles.
-import type { Route } from "../types.ts";
+import { useState } from "react";
+import type { LigneManifeste, PaireFrais, Route } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite, ValeurEditable, PastilleStatut } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
@@ -143,7 +144,15 @@ export function VueTrajets({ lignes, celluleFrais, suspect, libelleCaisses, ...c
 export type LigneMulti = {
   origin: { name: string; system: string; planet: string; outpost: boolean; maxBox?: number };
   dest: { name: string; system: string; planet: string; outpost: boolean };
-  lines: { name: string; kind: string; units: number; illegal: boolean }[];
+  /** Le chargement ENTIER, et non les quatre champs de la pastille : le dépliant lit aussi le
+   *  stock, la demande, les deux prix et la marge. Il était nourri par un gabarit d'app.js, qui
+   *  lisait le même objet — c'est le type qui était trop étroit, pas la donnée qui manquait. */
+  lines: LigneManifeste[];
+  /** Les deux index du couple. Ils font la CLÉ STABLE d'une ligne : `multiTrips` ne produit qu'un
+   *  trajet par couple origine/destination, alors que le rang, lui, change à chaque tri. */
+  originIdx: number; destIdx: number;
+  fee: PaireFrais | null;
+  cargo: number;
   cross: boolean;
   fiabilite: number; age: number | null; partVolume: number;
   margin: number; roi: number; units: number; investment: number;
@@ -157,15 +166,68 @@ export type ProprietesMulti = ProprietesCommunes & {
   libelleCaisses: (t: LigneMulti) => string | null;
   /** Le relevé le plus ANCIEN du chargement : un trajet ne vaut pas mieux que sa ligne la moins sûre. */
   releveLePlusAncien: (t: LigneMulti) => number;
+  /** Ce que rapporte UNE ligne du chargement, frais compris. Reste à app.js : dépend du contexte
+   *  de frais, que l'îlot ne connaît pas. */
+  texteProfitLigne: (units: number, l: LigneManifeste, fee: PaireFrais | null) => string;
+  /** « 8×32 · 1×16 · … » — dépend du plafond de caisse du terminal d'achat. */
+  libelleCaissesScu: (units: number, maxBox?: number) => string;
 };
+
+/** L'identité d'un trajet, indépendante de son RANG. C'est ce qui fait qu'un dépliant ouvert suit
+ *  sa ligne quand le classement change, au lieu de rester en place et de décrire un autre trajet
+ *  (#125). `multiTrips` groupe par destination et boucle sur les origines : le couple est unique. */
+const cleTrajet = (t: LigneMulti) => `${t.originIdx}->${t.destIdx}`;
 
 const MAX_ICONES = 6;
 
-function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien, ...c }: {
+/** Les colonnes d'une ligne multi, que le dépliant doit enjamber d'un `colSpan`. Le gabarit lisait
+ *  `tr.children.length` sur le nœud déjà posé ; ici la ligne est écrite juste en dessous, et ses
+ *  `<td>` se comptent à l'œil : loc, origine, destination, fiabilité, marge, ROI, SCU, invest,
+ *  profit, profit/h. */
+const COLONNES = 10;
+
+// Le chargement déplié, en FRÈRE de sa ligne — une `<tr>` de plus, comme le faisait le gabarit.
+// Il était injecté à la main dans `#rows` par `insertAdjacentHTML` alors que React possède ce
+// `<tbody>` : React n'en savait rien, ne le déplaçait pas au re-tri et ne l'effaçait pas au
+// changement de mode. Il survivait donc aux rendus en devenant faux (#125). Rendu ici, il n'a plus
+// d'existence propre : il est une conséquence de l'état, comme le reste du tableau.
+function ChargementDeplie({ t, colonnes, texteProfitLigne, libelleCaissesScu, fmt, fmtVol }: {
+  t: LigneMulti; colonnes: number;
+  texteProfitLigne: ProprietesMulti["texteProfitLigne"];
+  libelleCaissesScu: ProprietesMulti["libelleCaissesScu"];
+  fmt: Fmt;
+  fmtVol: ProprietesCommunes["fmtVol"];
+}) {
+  return (
+    <tr className="schema-row">
+      <td colSpan={colonnes}>
+        <div className="multi-cargo">
+          <div className="suggest-head">{`Chargement — ${t.lines.length} commodité${t.lines.length > 1 ? "s" : ""}, ${fmt(t.units)}/${fmt(t.cargo)} SCU`}</div>
+          {t.lines.map((l, k) => (
+            <div className="sline" key={k}>
+              <IconeCommodite kind={l.kind} />
+              <span className="mname">{l.name}<TagIllegal illegal={l.illegal} /></span>
+              <span className="mstock">{`stock ${fmt(l.stock as number)} · dem. ${fmtVol(l.demand as number | null)}`}</span>
+              <span className="mprice">{`${fmt(l.buyPrice)} → ${fmt(l.sellPrice)} · marge ${fmt(l.margin)}`}</span>
+              <span className="mprofit profit">{texteProfitLigne(l.units, l, t.fee)}</span>
+              <span className="mboxes" title="Caisses SCU standard à charger">{`📦 ${fmt(l.units)} SCU · ${libelleCaissesScu(l.units, t.origin.maxBox)}`}</span>
+            </div>
+          ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, deplie, basculer, ...c }: {
   t: LigneMulti; i: number;
   celluleFrais: ProprietesMulti["celluleFrais"];
   libelleCaisses: ProprietesMulti["libelleCaisses"];
   releveLePlusAncien: ProprietesMulti["releveLePlusAncien"];
+  texteProfitLigne: ProprietesMulti["texteProfitLigne"];
+  libelleCaissesScu: ProprietesMulti["libelleCaissesScu"];
+  deplie: boolean;
+  basculer: () => void;
 } & ProprietesCommunes) {
   const n = t.lines.length;
   const fc = celluleFrais(t);
@@ -182,14 +244,21 @@ function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien,
     </td>
   );
 
-  return (
+  const ligne = (
     <tr data-row={i}>
       <td className="loc">
         <div className="commodity-cell">
           <BoutonVoyage i={i} />
-          {/* `.route-toggle` déplie le chargement. Sa délégation lit `shownMulti[dataset.row]` :
-              l'index doit correspondre au rang, comme pour `.journey-pick`. */}
-          <button className="route-toggle" data-row={i} title="Voir le chargement" aria-label="Voir le chargement">📦</button>
+          {/* La classe `open` est DÉRIVÉE de l'état, et n'est plus posée à la main sur le nœud :
+              c'est ce qui la faisait survivre à un re-rendu, React ne réécrivant jamais un
+              `className` littéral constant (#125). */}
+          <button
+            className={deplie ? "route-toggle open" : "route-toggle"}
+            onClick={basculer}
+            title="Voir le chargement"
+            aria-label="Voir le chargement"
+            aria-expanded={deplie}
+          >📦</button>
           <span className="multi-icons" title={noms}>
             {t.lines.slice(0, MAX_ICONES).map((l, k) => <IconeCommodite key={k} kind={l.kind} />)}
             {n > MAX_ICONES ? <span className="muted">+{n - MAX_ICONES}</span> : null}
@@ -221,15 +290,35 @@ function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien,
       </td>
     </tr>
   );
+
+  return deplie
+    ? <>{ligne}<ChargementDeplie t={t} colonnes={COLONNES} texteProfitLigne={texteProfitLigne} libelleCaissesScu={libelleCaissesScu} fmt={c.fmt} fmtVol={c.fmtVol} /></>
+    : ligne;
 }
 
-export function VueTrajetsMulti({ lignes, celluleFrais, libelleCaisses, releveLePlusAncien, ...c }: ProprietesMulti) {
+export function VueTrajetsMulti({ lignes, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, ...c }: ProprietesMulti) {
+  // L'état du dépliant vit ICI, dans l'îlot, et il est porté par la CLÉ du trajet — jamais par son
+  // rang. Un `Set` et non un seul ouvert : rien n'a jamais empêché d'en déplier plusieurs, et ce
+  // correctif n'est pas l'endroit pour changer ça.
+  const [ouverts, setOuverts] = useState<Set<string>>(() => new Set());
+  const basculer = (cle: string) =>
+    setOuverts((avant) => {
+      const apres = new Set(avant);
+      if (!apres.delete(cle)) apres.add(cle);
+      return apres;
+    });
+
   return (
     <>
-      {lignes.map((t, i) => (
-        <LigneComposee key={i} t={t} i={i} celluleFrais={celluleFrais} libelleCaisses={libelleCaisses}
-                       releveLePlusAncien={releveLePlusAncien} {...c} />
-      ))}
+      {lignes.map((t, i) => {
+        const cle = cleTrajet(t);
+        return (
+          <LigneComposee key={cle} t={t} i={i} celluleFrais={celluleFrais} libelleCaisses={libelleCaisses}
+                         releveLePlusAncien={releveLePlusAncien} texteProfitLigne={texteProfitLigne}
+                         libelleCaissesScu={libelleCaissesScu}
+                         deplie={ouverts.has(cle)} basculer={() => basculer(cle)} {...c} />
+        );
+      })}
     </>
   );
 }
