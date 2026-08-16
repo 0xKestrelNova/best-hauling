@@ -35,6 +35,7 @@ import { construireIndex, indexDepartChaine, indexOrigine, libellesOrigines, lib
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
+import { monterRacine } from "./main.tsx";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -1779,32 +1780,6 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
 // incompatibles, et l'écran doit le dire : sans ça l'app se contredit sous les yeux de
 // l'utilisateur, qui lit deux ordres opposés du même fret.
 
-function renderTour() {
-  const box = $("tour");
-  if (!box) return;
-  if (!etat.SOUTE.length) {
-    peindre(box, messageSouteVide());
-    return;
-  }
-  // Le graphe d'échange porte les débouchés. On passe `refresh` et non `renderTour` : c'est la règle
-  // de withMarket — le fetch dure, et l'utilisateur peut avoir changé de vue entre-temps.
-  if (!etat.MARKET) { withMarket(refresh); peindre(box, messageChargement()); return; }
-  // Le champ de la vue prime sur la position du voyage : on peut vouloir simuler depuis ailleurs.
-  const saisi = $("tourFrom").value.trim();
-  const ici = saisi ? resolveStationLabel(saisi) : stationCourante();
-  if (ici == null) {
-    peindre(box, messageOuEsTu());
-    return;
-  }
-  const f = readFilters();
-  const systeme = etat.MARKET.terminals[ici].system;
-  const toutSysteme = $("tourScope").value === "all";
-  // Portée par défaut = le système où l'on se trouve (27 terminaux en Pyro, 80 en Stanton, 7 en Nyx
-  // sur 114). L'ouvrir est un geste explicite, et le saut apparaît alors comme une ligne de coût.
-  const ft = { ...f, sysFilter: toutSysteme ? f.sysFilter : systeme };
-  const { tournee, alternative } = tourneesEcoulement(etat.MARKET, etat.SOUTE, ici, ft, effVals, feeResolver(f));
-  peindre(box, vueTournee({ tournee, alternative, systeme, toutSysteme, fmt }));
-}
 
 // ---------- Plan de vol : la vue de conclusion (ADR-004) ----------
 // Une CONCLUSION, pas un tableau de bord : on y arrive une fois tout paramétré, pour REGARDER le
@@ -1945,7 +1920,6 @@ function refresh() {
   else if (etat.view === "corrections") renderCorrections();
   else if (etat.view === "commodities") renderCommodities();
   else if (etat.view === "plan") renderPlan();
-  else if (etat.view === "tour") renderTour();
   else render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
@@ -2628,6 +2602,9 @@ async function init() {
   // ni des messages. `setupEnRoute` DOIT tourner avant chaque rappel de `withMarket` — le déclarer
   // ici une fois vaut mieux que de le répéter à seize appels.
   brancher({ apresMarche: setupEnRoute, signalerIndisponible: marketUnavailable });
+  // La racine unique. Elle s'abonne à `etat` : à partir d'ici, une vue qui y vit se re-rend
+  // toute seule à chaque `notifier()`, sans que `refresh()` ait à la nommer.
+  monterRacine();
   setupSort();
   setupLoopSort();
   applySortIndicators(); // aria-sort/classes du tri par défaut, sans dépendre des attributs du HTML
