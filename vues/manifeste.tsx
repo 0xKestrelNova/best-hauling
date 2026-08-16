@@ -360,8 +360,49 @@ export function CarteManifeste(p: ProprietesManifeste) {
   );
 }
 
-/** Les trois messages qui remplacent la carte quand il n'y a rien à charger. */
-export const indiceManifeste = (noeud: React.ReactNode) => <div className="manifest-hint">{noeud}</div>;
+// ---------------------------------------------------------------------------------------------
+// LES TROIS MESSAGES qui remplacent la carte quand il n'y a rien à charger.
+//
+// Ils passent par React, comme elle, et ce n'est pas une question d'uniformité : `#manifest`
+// appartient à React, et un `innerHTML` y détacherait les nœuds qu'il a créés sans qu'il le sache.
+// La racine étant mémorisée dans la WeakMap de `pont.js`, le rendu suivant appliquerait ses
+// différences sur des nœuds hors du document — le message resterait à l'écran pour de bon, et rien
+// ne lèverait. C'est ce qui est arrivé (#120), et le seul chemin qui le montre est l'aller-RETOUR
+// message → carte, qu'aucun test ne faisait.
+//
+// Ils sont exportés en FABRIQUES et non en composants JSX à composer côté appelant : `app.js`
+// reste du `.js` sans JSX — le renommer déplacerait le fichier que nomment le déploiement, `sw.js`
+// et `csp.test.mjs`.
+// ---------------------------------------------------------------------------------------------
+const Indice = ({ children }: { children: React.ReactNode }) => <div className="manifest-hint">{children}</div>;
+
+export const indiceSouteInactive = () => (
+  <Indice>
+    {"Active la "}
+    <b>soute (SCU)</b>
+    {" pour calculer un manifeste de remplissage."}
+  </Indice>
+);
+
+export const indiceSoutePleine = (scuABord: string) => (
+  <Indice>
+    {"Soute pleine : "}
+    <b>{`${scuABord} SCU`}</b>
+    {" déjà à bord. Vends ou dépose du fret pour charger autre chose."}
+  </Indice>
+);
+
+/** `scuLibres` non nul quand la soute n'était pas vide : la phrase dit alors dans quoi on cherchait. */
+export const indiceAucunChargement = (scuLibres: string | null) =>
+  scuLibres == null ? (
+    <Indice>Aucun chargement rentable depuis ce terminal vers cette destination.</Indice>
+  ) : (
+    <Indice>
+      {"Aucun chargement rentable depuis ce terminal vers cette destination dans les "}
+      <b>{`${scuLibres} SCU`}</b>
+      {" qui restent libres."}
+    </Indice>
+  );
 
 export const carteManifeste = (p: ProprietesManifeste) => <CarteManifeste {...p} />;
 export const suggestions = (p: ProprietesSuggestions) => <Suggestions {...p} />;
