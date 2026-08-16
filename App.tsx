@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 
 import { getSnapshot, subscribe } from "./etat.ts";
 import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
+import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 
 /** Rend `noeud` dans le conteneur `id` s'il existe. Un conteneur absent n'est pas une erreur. */
 function Portail({ id, children }: { id: string; children: React.ReactNode }) {
@@ -32,8 +33,12 @@ export function App() {
   useSyncExternalStore(subscribe, getSnapshot);
 
   return (
-    <Portail id="tour">
-      <VueTourneeEcoulement />
-    </Portail>
+    <>
+      <Portail id="tour"><VueTourneeEcoulement /></Portail>
+      {/* Le Plan de vol occupe DEUX conteneurs, séparés dans `index.html` par la carte du parcours —
+          un élément à écouteurs directs se déménage en frère, jamais en enfant (leçon de #24). */}
+      <Portail id="planHead"><EnTetePlan /></Portail>
+      <Portail id="planBody"><CorpsPlan /></Portail>
+    </>
   );
 }

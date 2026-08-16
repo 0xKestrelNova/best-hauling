@@ -36,7 +36,8 @@ import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResol
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { monterRacine } from "./main.tsx";
-import { legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import { planData, planHypotheses } from "./vues/plan-vue.tsx";
+import { jambeChargee, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -1011,7 +1012,6 @@ function chargerJambe(i) {
 // L'état « chargée » est PORTÉ par le registre, jamais déduit des lots : la soute se vide par
 // d'autres chemins que « annuler », et aucun ne défait le chargement — le fret est parti, il n'est
 // pas revenu au rayon.
-const jambeChargee = (leg, i) => !!etat.CHARGEMENTS[legKey(leg, i)];
 
 // « Où suis-je ? » — l'étape courante du voyage, ou à défaut le terminal de départ d'« En route ».
 // C'est ce terminal qui fixe le prix d'une vente et qui porte le marqueur « refusé ici ».
@@ -1706,80 +1706,6 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
 // donne la place libre ; l'autoload décide si les profits sont nets ou bruts, et son état n'est
 // autrement lisible que sur une case à cocher — masquée ici. Les taire rendrait la conclusion
 // silencieusement ambiguë : on lirait un profit sans savoir s'il est net.
-function planHypotheses(f) {
-  return [
-    $("ship").value.trim() || "aucun vaisseau",
-    f.useCargo && f.cargo > 0 ? `soute ${fmt(f.cargo)} SCU` : "soute non limitée",
-    f.useBudget && f.budget > 0 ? `budget ${fmt(f.budget)} aUEC` : "budget non limité",
-    f.autoload ? `profits nets (k = ${String(globalK()).replace(".", ",")})` : "profits bruts",
-  ];
-}
-
-// Tout ce que la vue montre, calculé UNE fois : le rendu et la copie lisent la même chose, sinon
-// le texte collé dans un salon dériverait de l'écran qui l'a produit.
-// Aucun calcul neuf (ADR-004 : « C'est un déménagement d'interface, les chiffres ne changent pas ») :
-// les manifestes par jambe passent par legEffectiveLines, exactement comme le compagnon de voyage.
-function planData() {
-  const f = readFilters();
-  const groupes = holdByCommodity(etat.SOUTE);
-  const stations = etat.JOURNEY ? journeyStations(etat.JOURNEY) : [];
-  const jambes = (etat.JOURNEY && etat.MARKET ? etat.JOURNEY.legs : []).map((leg, i) => {
-    const lines = legEffectiveLines(leg, i, f) || [];
-    const t = lines.length ? manifestTotals(lines, (legFeeCtx(leg, f) || {}).pair) : { profit: 0, fees: 0 };
-    return {
-      i, from: leg.from, to: leg.to, lines,
-      scu: lines.reduce((s, l) => s + l.units, 0),
-      profit: t.profit, fees: t.fees,
-      courante: i === etat.JOURNEY.current,
-      faite: i < etat.JOURNEY.current,
-      chargee: jambeChargee(leg, i),
-    };
-  });
-  return {
-    f, groupes, stations, jambes,
-    scu: holdScu(etat.SOUTE),
-    libre: f.useCargo && f.cargo > 0 ? freeCargo(etat.SOUTE, f.cargo) : null,
-    invest: groupes.reduce((s, g) => s + g.invest, 0),
-    totalProfit: jambes.reduce((s, j) => s + j.profit, 0),
-    totalFees: jambes.reduce((s, j) => s + j.fees, 0),
-    totalScu: jambes.reduce((s, j) => s + j.scu, 0),
-    reste: etat.JOURNEY ? Math.max(0, etat.JOURNEY.legs.length - etat.JOURNEY.current) : 0,
-  };
-}
-
-// La soute EN GRAND : ce qu'il y a à bord commodité par commodité, la place libre, ce qui a été
-// payé. Le #holdCard du bandeau dit la même chose dans un encart latéral — mais il porte la vente,
-// le dépôt et le retrait de lot. Ici, aucun bouton : c'est la même donnée, en lecture.
-// `planHoldHTML` a été remplacé par vues/plan.tsx.
-// Le parcours étape par étape, la jambe en cours et son manifeste, et ce qu'il reste à faire.
-// `planRouteHTML` a été remplacé par vues/plan.tsx.
-function renderPlan() {
-  const head = $("planHead"), body = $("planBody");
-  if (!head || !body) return;
-  // Les manifestes par jambe vivent dans le graphe d'échange, que la vue par défaut ne charge pas.
-  // On passe `refresh` et non `renderPlan` : c'est la règle de withMarket — le fetch dure, et
-  // l'utilisateur peut avoir changé de vue entre-temps.
-  if (etat.JOURNEY && !etat.MARKET) withMarket(refresh);
-  const d = planData();
-  peindre(head, enTetePlan(planHypotheses(d.f)));
-  // L'îlot ne lit AUCUNE globale : app.js lui passe tout, y compris le résolveur de `kind` (MARKET)
-  // et la base des barres de soute — la CAPACITÉ quand elle est connue, le chargement sinon. Une
-  // barre sans dénominateur ne voudrait rien dire.
-  peindre(body, corpsPlan({
-    hypotheses: planHypotheses(d.f),
-    stations: d.stations,
-    courante: etat.JOURNEY ? etat.JOURNEY.current : -1,
-    jambes: d.jambes,
-    groupes: d.groupes,
-    scu: d.scu, libre: d.libre, invest: d.invest,
-    totalScu: d.totalScu, totalProfit: d.totalProfit, totalFees: d.totalFees,
-    reste: d.reste, nbSauts: etat.JOURNEY ? etat.JOURNEY.legs.length : 0,
-    base: d.f.useCargo && d.f.cargo > 0 ? d.f.cargo : d.scu,
-    marchePret: !!etat.MARKET,
-    kindDe: (nom) => { const c = etat.MARKET && findCommodity(nom); return c ? c.kind : null; },
-    fmtProfit: fmtFee,
-  }));
-}
 
 // Le récapitulatif EN TEXTE (ADR-004 §8). Pas une image : la CSP pose `img-src 'self' https:` sans
 // `data:`, ce qui bloque le procédé habituel (<foreignObject> sérialisé en data: URI). Et le texte
@@ -1835,7 +1761,6 @@ function refresh() {
   else if (etat.view === "chain") renderChain();
   else if (etat.view === "corrections") renderCorrections();
   else if (etat.view === "commodities") renderCommodities();
-  else if (etat.view === "plan") renderPlan();
   else render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
@@ -2560,7 +2485,9 @@ async function init() {
   // La marque ramène à TRAJETS, la vue principale — pas au Plan de vol (ADR-004 §5). Un <button>
   // natif : Entrée et Espace y viennent sans rien ajouter.
   $("brandHome").addEventListener("click", () => switchView("routes"));
-  // Copie du récapitulatif : écouteur DÉLÉGUÉ sur l'en-tête, que renderPlan réécrit à chaque rendu.
+  // Copie du récapitulatif : écouteur DÉLÉGUÉ sur `#planHead`, que React repeint à chaque rendu.
+  // Posé sur le CONTENEUR et non sur le bouton, il survit donc aux rendus — même règle qu'avant,
+  // pour une autre raison (c'était `renderPlan` qui réécrivait, c'est l'arbre maintenant).
   $("planHead").addEventListener("click", (e) => {
     if (e.target.closest("#planCopy")) copierPlan();
   });
