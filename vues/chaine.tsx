@@ -15,7 +15,7 @@ import type { Chaine, LigneManifeste, PaireFrais, Terminal } from "../types.ts";
 import { IconeCommodite, TagIllegal, BadgeSysteme } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
-type CelluleFrais = { attr: string; mark: string; text: string };
+type CelluleFrais = { mark: string; text: string };
 
 export type ProprietesChaine = {
   chaine: Chaine;

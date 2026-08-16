@@ -18,7 +18,7 @@ import type { LigneManifeste, PaireFrais, Route } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite, ValeurEditable, PastilleStatut } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
-type CelluleFrais = { attr: string; mark: string; text: string };
+type CelluleFrais = { mark: string; text: string };
 
 export type ProprietesCommunes = {
   avecTexteFrais: (base: string, cell: CelluleFrais) => string;

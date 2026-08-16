@@ -22,7 +22,7 @@ type Fmt = (n: number) => string;
 // Ce que `feeCell` (app.js) rend déjà : un title, un marqueur, et le texte brut. On le reçoit tel
 // quel plutôt que de le recalculer — c'est app.js qui connaît le contexte de frais, et le
 // dupliquer ferait diverger deux façons de dire le même montant.
-type CelluleFrais = { attr: string; mark: string; text: string };
+type CelluleFrais = { mark: string; text: string };
 
 // La boucle ÉVALUÉE : la ligne de data/loops.json enrichie par `evaluateLoop` (app.js) des champs
 // que `loopMetrics` calcule. `_fromHere` est posé par la vue quand la boucle part de la fin du
