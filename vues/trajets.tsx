@@ -48,20 +48,25 @@ export type ProprietesTrajets = ProprietesCommunes & {
    *  station, lue du marché et non du contexte de frais (sans quoi elle disparaît quand
    *  l'interrupteur d'autoload est relâché). */
   libelleCaisses: (r: LigneTrajet) => string | null;
+  /** ▶ : faire ce trajet. Reçoit LA ligne, jamais son rang — voir `BoutonVoyage`. */
+  choisirTrajet: (r: LigneTrajet) => void;
 };
 
-function BoutonVoyage({ i }: { i: number }) {
-  // `data-row` est un CONTRAT : une délégation posée sur `document` lit `shownRoutes[dataset.row]`.
+// La CLASSE reste le contrat — 28 clics e2e passaient par elle avant ce lot — mais le rang a
+// disparu du bouton, qui est fermé sur SA ligne : il ne peut plus désigner autre chose. C'est ce
+// qui remplace `shownRoutes[dataset.row]`, un tableau rempli au RENDU et relu au CLIC.
+function BoutonVoyage({ choisir }: { choisir: () => void }) {
   return (
-    <button className="journey-pick" data-row={i} title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button>
+    <button className="journey-pick" onClick={choisir} title="Faire ce trajet — compagnon de voyage" aria-label="Sélectionner ce trajet">▶</button>
   );
 }
 
-function LigneSimple({ r, i, celluleFrais, suspect, libelleCaisses, ...c }: {
-  r: LigneTrajet; i: number;
+function LigneSimple({ r, celluleFrais, suspect, libelleCaisses, choisirTrajet, ...c }: {
+  r: LigneTrajet;
   celluleFrais: ProprietesTrajets["celluleFrais"];
   suspect: ProprietesTrajets["suspect"];
   libelleCaisses: ProprietesTrajets["libelleCaisses"];
+  choisirTrajet: ProprietesTrajets["choisirTrajet"];
 } & ProprietesCommunes) {
   const fc = celluleFrais(r);
   const titreFrais = fc.text || undefined;
@@ -99,10 +104,10 @@ function LigneSimple({ r, i, celluleFrais, suspect, libelleCaisses, ...c }: {
   };
 
   return (
-    <tr data-row={i}>
+    <tr>
       <td className="loc">
         <div className="commodity-cell">
-          <BoutonVoyage i={i} />
+          <BoutonVoyage choisir={() => choisirTrajet(r)} />
           <IconeCommodite kind={r.kind} />
           <span className="cname">{r.commodity}</span>
         </div>
@@ -130,11 +135,12 @@ function LigneSimple({ r, i, celluleFrais, suspect, libelleCaisses, ...c }: {
   );
 }
 
-export function VueTrajets({ lignes, celluleFrais, suspect, libelleCaisses, ...c }: ProprietesTrajets) {
+export function VueTrajets({ lignes, celluleFrais, suspect, libelleCaisses, choisirTrajet, ...c }: ProprietesTrajets) {
   return (
     <>
       {lignes.map((r, i) => (
-        <LigneSimple key={i} r={r} i={i} celluleFrais={celluleFrais} suspect={suspect} libelleCaisses={libelleCaisses} {...c} />
+        <LigneSimple key={i} r={r} celluleFrais={celluleFrais} suspect={suspect}
+                     libelleCaisses={libelleCaisses} choisirTrajet={choisirTrajet} {...c} />
       ))}
     </>
   );
@@ -171,6 +177,9 @@ export type ProprietesMulti = ProprietesCommunes & {
   texteProfitLigne: (units: number, l: LigneManifeste, fee: PaireFrais | null) => string;
   /** « 8×32 · 1×16 · … » — dépend du plafond de caisse du terminal d'achat. */
   libelleCaissesScu: (units: number, maxBox?: number) => string;
+  /** ▶ : faire ce chargement. À passer EXPLICITEMENT — `propsLignesSimples()` d'app.js, qui porte
+   *  celui des lignes simples, n'est PAS étalée ici. */
+  choisirTrajet: (t: LigneMulti) => void;
 };
 
 /** L'identité d'un trajet, indépendante de son RANG. C'est ce qui fait qu'un dépliant ouvert suit
@@ -219,13 +228,14 @@ function ChargementDeplie({ t, colonnes, texteProfitLigne, libelleCaissesScu, fm
   );
 }
 
-function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, deplie, basculer, ...c }: {
-  t: LigneMulti; i: number;
+function LigneComposee({ t, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, choisirTrajet, deplie, basculer, ...c }: {
+  t: LigneMulti;
   celluleFrais: ProprietesMulti["celluleFrais"];
   libelleCaisses: ProprietesMulti["libelleCaisses"];
   releveLePlusAncien: ProprietesMulti["releveLePlusAncien"];
   texteProfitLigne: ProprietesMulti["texteProfitLigne"];
   libelleCaissesScu: ProprietesMulti["libelleCaissesScu"];
+  choisirTrajet: ProprietesMulti["choisirTrajet"];
   deplie: boolean;
   basculer: () => void;
 } & ProprietesCommunes) {
@@ -245,10 +255,10 @@ function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien,
   );
 
   const ligne = (
-    <tr data-row={i}>
+    <tr>
       <td className="loc">
         <div className="commodity-cell">
-          <BoutonVoyage i={i} />
+          <BoutonVoyage choisir={() => choisirTrajet(t)} />
           {/* La classe `open` est DÉRIVÉE de l'état, et n'est plus posée à la main sur le nœud :
               c'est ce qui la faisait survivre à un re-rendu, React ne réécrivant jamais un
               `className` littéral constant (#125). */}
@@ -296,7 +306,7 @@ function LigneComposee({ t, i, celluleFrais, libelleCaisses, releveLePlusAncien,
     : ligne;
 }
 
-export function VueTrajetsMulti({ lignes, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, ...c }: ProprietesMulti) {
+export function VueTrajetsMulti({ lignes, celluleFrais, libelleCaisses, releveLePlusAncien, texteProfitLigne, libelleCaissesScu, choisirTrajet, ...c }: ProprietesMulti) {
   // L'état du dépliant vit ICI, dans l'îlot, et il est porté par la CLÉ du trajet — jamais par son
   // rang. Un `Set` et non un seul ouvert : rien n'a jamais empêché d'en déplier plusieurs, et ce
   // correctif n'est pas l'endroit pour changer ça.
@@ -310,12 +320,12 @@ export function VueTrajetsMulti({ lignes, celluleFrais, libelleCaisses, releveLe
 
   return (
     <>
-      {lignes.map((t, i) => {
+      {lignes.map((t) => {
         const cle = cleTrajet(t);
         return (
-          <LigneComposee key={cle} t={t} i={i} celluleFrais={celluleFrais} libelleCaisses={libelleCaisses}
+          <LigneComposee key={cle} t={t} celluleFrais={celluleFrais} libelleCaisses={libelleCaisses}
                          releveLePlusAncien={releveLePlusAncien} texteProfitLigne={texteProfitLigne}
-                         libelleCaissesScu={libelleCaissesScu}
+                         libelleCaissesScu={libelleCaissesScu} choisirTrajet={choisirTrajet}
                          deplie={ouverts.has(cle)} basculer={() => basculer(cle)} {...c} />
         );
       })}
