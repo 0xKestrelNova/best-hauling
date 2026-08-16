@@ -50,6 +50,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: 24
+          # Cache du registre npm : l'assemblage passe désormais par `vite build`, donc ce job
+          # installe. `node --test` ci-dessous n'en a toujours pas besoin (Node 24 exécute le TS en
+          # effaçant les annotations) et tourne AVANT l'installation, comme avant.
+          cache: npm
 
       - name: Tests
         run: node --test
@@ -64,13 +68,28 @@ jobs:
           FORCE: ${{ github.event_name != 'schedule' && '1' || '' }}
         run: node scripts/build-data.mjs
 
+      # L'assemblage passe par le BUILD, et plus par une liste de fichiers écrite à la main.
+      #
+      # Celle-ci nommait encore `logic.mjs`, qui n'existe plus depuis son passage en TypeScript : le
+      # `cp` aurait échoué à la première mise en ligne de la v2. Et même le nom corrigé, elle aurait
+      # publié les SOURCES — `logic.ts`, `vues/*.tsx`, un `index.html` chargeant des modules qu'aucun
+      # navigateur n'exécute. Rien de tout ça ne se voyait : le cron ne tourne que sur la branche par
+      # défaut, et la CI e2e sert `dist/`, jamais `_site/`.
+      #
+      # `vite build` émet un site complet dans `dist/` : bundles hachés, `sw.js` dont le plugin de
+      # précache réécrit le SHELL avec ce qui a RÉELLEMENT été produit, et `data/*.json` recopiés à
+      # la fin du build — donc les données que l'étape précédente vient de régénérer.
+      - name: Construire le site
+        if: steps.build.outputs.changed != 'false'
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:site
+
       - name: Assembler le site
         if: steps.build.outputs.changed != 'false'
         run: |
-          mkdir -p _site/data _site/fonts
-          cp index.html app.js rail.js logic.mjs style.css manifest.webmanifest sw.js icon.svg _site/
-          cp fonts/* _site/fonts/
-          cp data/*.json _site/data/
+          mkdir -p _site
+          cp -r dist/. _site/
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5
         if: steps.build.outputs.changed != 'false'

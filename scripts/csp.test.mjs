@@ -53,13 +53,31 @@ test("aucun <script> inline dans index.html : script-src 'self' le bloquerait", 
   assert.deepEqual(inlines, []);
 });
 
-test("tout script d'index.html est précaché (sw.js) ET copié à l'assemblage (update-data.yml)", () => {
+test("tout script d'index.html est précaché (sw.js)", () => {
   const srcs = [...html.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(srcs.includes("rail.js"), "ancre : la bascule du rail est bien devenue un fichier");
   const shell = lire("sw.js").match(/const SHELL = \[([^\]]+)\]/)[1];
-  const cp = lire(".github", "workflows", "update-data.yml").match(/^ *cp (.*) _site\/$/m)[1].split(/\s+/);
   for (const src of srcs) {
     assert.ok(shell.includes(`"./${src}"`), `${src} manque à SHELL : hors-ligne, il ne serait pas servi`);
-    assert.ok(cp.includes(src), `${src} manque au cp de l'assemblage : 404 sur le site publié`);
   }
+});
+
+// La seconde moitié de ce test vérifiait que chaque script figurait dans la ligne `cp` de
+// l'assemblage. Elle CHANGE DE CIBLE plutôt que de disparaître (ADR-008 §7) : il n'y a plus de
+// liste à la main, donc plus rien à comparer nom par nom — mais le risque qu'elle couvrait, lui,
+// AUGMENTE avec un build. Un site publié depuis les sources ne casse rien de visible en CI : les
+// e2e servent `dist/`, jamais `_site/`.
+//
+// Ce que garde ce test, c'est donc l'INVARIANT : l'assemblage passe par le build. C'est
+// exactement ce qui manquait quand la liste nommait encore `logic.mjs`, disparu depuis son passage
+// en TypeScript (#131).
+test("l'assemblage du site passe par le BUILD, jamais par une liste de fichiers à la main (#131)", () => {
+  const wf = lire(".github", "workflows", "update-data.yml");
+  assert.match(wf, /npm ci/, "l'assemblage doit installer avant de construire");
+  assert.match(wf, /npm run build:site/, "l'assemblage doit lancer le build Vite");
+  assert.match(wf, /cp -r dist\/\. _site\//, "l'assemblage doit publier `dist/`, le site réellement produit");
+  assert.ok(
+    !/^ *cp +index\.html/m.test(wf),
+    "la liste de fichiers à la main est revenue : elle publierait les SOURCES, et se périme en silence"
+  );
 });
