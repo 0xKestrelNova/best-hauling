@@ -13,6 +13,7 @@
 //
 // Le calcul n'est pas ici : `tourneesEcoulement` vit dans logic.ts, pure et couverte par les tests
 // unitaires. Ce fichier ne fait que présenter.
+import { fmt } from "../format.ts";
 import { Fragment } from "react";
 import type { Tournee, Destination } from "../types.ts";
 
@@ -20,7 +21,7 @@ import type { Tournee, Destination } from "../types.ts";
 // script d'entrée), et le dupliquer ici ferait diverger deux formatages de nombres.
 type Fmt = (n: number) => string;
 
-type ProprietesArret = { a: Destination; rang: number; fmt: Fmt };
+type ProprietesArret = { a: Destination; rang: number };
 
 // Le badge de système. Sa classe porte le nom en minuscules — `.sys.pyro`, `.sys.stanton` — et
 // style.css la teinte via les jetons. C'est l'une des 29 classes que le dépôt n'écrit que par
@@ -31,7 +32,7 @@ const BadgeSysteme = ({ system }: { system: string }) => (
 
 const MAX_LIGNES = 12;
 
-function ArretDeTournee({ a, rang, fmt }: ProprietesArret) {
+function ArretDeTournee({ a, rang }: ProprietesArret) {
   const visibles = a.lignes.slice(0, MAX_LIGNES);
   const reste = a.lignes.length - visibles.length;
 
@@ -92,10 +93,9 @@ export type ProprietesTournee = {
   alternative: Tournee | null;
   systeme: string;
   toutSysteme: boolean;
-  fmt: Fmt;
 };
 
-export function VueTournee({ tournee: t, alternative: alt, systeme, toutSysteme, fmt }: ProprietesTournee) {
+export function VueTournee({ tournee: t, alternative: alt, systeme, toutSysteme }: ProprietesTournee) {
   if (!t.arrets.length && !t.sansDebouche.length) {
     return (
       <div className="tour-vide">
@@ -155,7 +155,7 @@ export function VueTournee({ tournee: t, alternative: alt, systeme, toutSysteme,
       ) : null}
 
       <div className="tour-arrets">
-        {t.arrets.map((a, i) => <ArretDeTournee key={i} a={a} rang={i + 1} fmt={fmt} />)}
+        {t.arrets.map((a, i) => <ArretDeTournee key={i} a={a} rang={i + 1} />)}
       </div>
 
       {/* L'alternative « un arrêt de plus », chiffrée. L'ordre reste lexicographique STRICT : la

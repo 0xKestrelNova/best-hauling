@@ -15,6 +15,7 @@
 //     et le détruisait à chaque rendu. La carte étant passée à React, ce détour n'a plus de raison
 //     d'être — et un conteneur peint à part DANS une carte possédée par React est précisément le
 //     piège de #120.
+import { fmt, fmtFee, signe } from "../format.ts";
 import { Fragment } from "react";
 import { PointFraicheur, IconeCommodite, TagIllegal } from "./communs.tsx";
 import { Suggestions, type ProprietesSuggestions } from "./manifeste.tsx";
@@ -74,8 +75,6 @@ export type ProprietesVoyage = {
   suggestionsArret: SuggestionArret[] | null;
   /** Bougée à chaque rendu SAUF pendant la frappe — elle remonte les champs SCU des jambes. */
   generation: number;
-  fmt: Fmt;
-  signe: (n: number, texte: string) => string;
 };
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
@@ -190,7 +189,7 @@ function JambeVoyage({ p, j }: { p: ProprietesVoyage; j: Jambe }) {
             {j.chargee ? "⬢ à bord" : "✓ chargé"}
           </button>
         ) : null}
-        <span className={"jleg-profit " + classeProfit(j.nombreTotal)}>{p.signe(j.nombreTotal, j.texteTotal)}</span>
+        <span className={"jleg-profit " + classeProfit(j.nombreTotal)}>{signe(j.nombreTotal, j.texteTotal)}</span>
         <span className="jleg-caret">{j.depliee ? "▾" : "▸"}</span>
       </div>
       <div className="jleg-cargo">
@@ -208,7 +207,7 @@ function JambeVoyage({ p, j }: { p: ProprietesVoyage; j: Jambe }) {
                 <TagIllegal illegal={l.illegal} />
               </span>
               {" "}
-              <b>{`${p.fmt(l.units)} SCU`}</b>
+              <b>{`${fmt(l.units)} SCU`}</b>
             </span>
           ))
         )}
@@ -266,11 +265,11 @@ export function CarteVoyage(p: ProprietesVoyage) {
             <button
               className="jstop-suggest"
               data-label={s.label}
-              title={`Ajouter ${s.terminal} — via ${s.commodity}, +${p.fmt(s.margin)} marge/SCU`}
+              title={`Ajouter ${s.terminal} — via ${s.commodity}, +${fmt(s.margin)} marge/SCU`}
               key={s.label}
             >
               {`+ ${s.terminal} `}
-              <span className="muted">{`+${p.fmt(s.margin)}`}</span>
+              <span className="muted">{`+${fmt(s.margin)}`}</span>
             </button>
           ))}
         </div>
@@ -281,7 +280,7 @@ export function CarteVoyage(p: ProprietesVoyage) {
       )}
       <div className="journey-meta">
         {`${n} saut${n > 1 ? "s" : ""} · marge cumulée `}
-        <b className="profit">{p.fmt(p.margeCumulee)}</b>
+        <b className="profit">{fmt(p.margeCumulee)}</b>
         {" aUEC/SCU"}
       </div>
     </>
@@ -299,8 +298,6 @@ export type ProprietesRecap = {
   systems: number;
   materials: number;
   marchePret: boolean;
-  fmt: Fmt;
-  signe: (n: number, texte: string) => string;
 };
 
 const Kpi = ({ v, lbl }: { v: string | number; lbl: string }) => (
@@ -316,15 +313,15 @@ export function RecapVoyage(p: ProprietesRecap) {
       <div className="recap-head">◈ Résumé du voyage</div>
       <div
         className={"recap-profit " + classeProfit(p.totalProfit)}
-        title={p.totalFees > 0 ? `Frais d'autoload ≈ ${p.fmt(p.totalFees)} aUEC déjà déduits — estimation (±3 %)` : undefined}
+        title={p.totalFees > 0 ? `Frais d'autoload ≈ ${fmt(p.totalFees)} aUEC déjà déduits — estimation (±3 %)` : undefined}
       >
-        {p.marchePret ? p.signe(p.totalProfit, (p.totalFees > 0 ? "≈ " : "") + p.fmt(p.totalProfit)) : "…"}
+        {p.marchePret ? signe(p.totalProfit, (p.totalFees > 0 ? "≈ " : "") + fmt(p.totalProfit)) : "…"}
         {" "}
         <span>aUEC</span>
       </div>
       <div className="recap-kpis">
         <Kpi v={p.n} lbl={"saut" + (p.n > 1 ? "s" : "")} />
-        <Kpi v={p.marchePret ? p.fmt(p.totalScu) : "…"} lbl="SCU" />
+        <Kpi v={p.marchePret ? fmt(p.totalScu) : "…"} lbl="SCU" />
         <Kpi v={p.systems} lbl={"système" + (p.systems > 1 ? "s" : "")} />
         <Kpi v={p.marchePret ? p.materials : "…"} lbl={"matériau" + (p.materials > 1 ? "x" : "")} />
       </div>

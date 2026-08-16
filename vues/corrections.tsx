@@ -12,6 +12,7 @@
 // repartait à vide au moindre re-rendu — un filtre tapé, une correction ailleurs. React
 // réconcilierait sans doute correctement, mais changer ce garde ET migrer la vue dans la même PR
 // rendrait un échec inexploitable. Il reste donc à app.js, à revoir séparément.
+import { TEXTE_CAPACITE_INCONNUE, fmtVol } from "../format.ts";
 import { Fragment } from "react";
 import type { Terminal } from "../types.ts";
 import { BadgeSysteme, IconeCommodite, TagIllegal, ValeurEditable } from "./communs.tsx";
@@ -73,9 +74,9 @@ function HeroStation({ t, total, filtre, nbCorrections }: {
 // Il ne porte PAS de gestionnaire : la délégation d'app.js le prend déjà par ses `data-*`, et elle
 // sait ce que React ignore — qu'un retour de VOLUME doit d'abord figer les jambes déjà planifiées,
 // et où retrouver la date de base de la correction. Lui ajouter un onClick doublerait l'action.
-function RetourUEX({ commodite, terminal, cote, champ, brut, fmtVol }: {
+function RetourUEX({ commodite, terminal, cote, champ, brut }: {
   commodite: string; terminal: string; cote: "buy" | "sell"; champ: "price" | "vol";
-  brut: number | null; fmtVol: Fmt;
+  brut: number | null;
 }) {
   const quoi = champ === "price" ? "le prix" : cote === "buy" ? "le stock" : "la demande";
   const v = Number.isFinite(Number(brut)) ? Number(brut) : null;
@@ -108,14 +109,12 @@ export type ProprietesStation = {
   tuiles: TuileCommodite[];
   filtre: boolean;
   nbCorrections: number;
-  fmtVol: Fmt;
-  texteCapaciteInconnue: string;
   corriger: (commodite: string, cote: "buy" | "sell", champ: "price" | "vol", valeur: string, releve: number) => void;
 };
 
-function Tuile({ t, terminal, fmtVol, texteCapaciteInconnue, corriger }: {
+function Tuile({ t, terminal, corriger }: {
   t: TuileCommodite; terminal: string;
-} & Pick<ProprietesStation, "fmtVol" | "texteCapaciteInconnue" | "corriger">) {
+} & Pick<ProprietesStation, "corriger">) {
   return (
     <div className={"scomm " + (t.achat ? "achat" : "vente")}>
       <div className="scomm-name">
@@ -131,14 +130,12 @@ function Tuile({ t, terminal, fmtVol, texteCapaciteInconnue, corriger }: {
           <Fragment key={c.cote}>
             <div className="scomm-side">
               <span className="scomm-lbl">{c.libelle}</span>
-              <ValeurEditable valeur={c.prix} corrige={c.prixCorrige} fmtVol={fmtVol}
+              <ValeurEditable valeur={c.prix} corrige={c.prixCorrige}
                               commodite={t.nom} terminal={terminal} cote={c.cote} champ="price" releve={c.releve}
-                              texteCapaciteInconnue={texteCapaciteInconnue}
                               onCorriger={(v) => corriger(t.nom, c.cote, "price", v, c.releve)} />
               {" aUEC · "}{c.unite}{" "}
-              <ValeurEditable valeur={c.volume} corrige={c.volumeCorrige} fmtVol={fmtVol}
+              <ValeurEditable valeur={c.volume} corrige={c.volumeCorrige}
                               commodite={t.nom} terminal={terminal} cote={c.cote} champ="vol" releve={c.releve}
-                              texteCapaciteInconnue={texteCapaciteInconnue}
                               onCorriger={(v) => corriger(t.nom, c.cote, "vol", v, c.releve)} />
             </div>
             {/* Les boutons de retour vivent sur LEUR PROPRE ligne, sous les valeurs. Glissés parmi
@@ -148,7 +145,7 @@ function Tuile({ t, terminal, fmtVol, texteCapaciteInconnue, corriger }: {
               <div className="scomm-undos">
                 {retours.map((r) => (
                   <RetourUEX key={r.champ} commodite={t.nom} terminal={terminal} cote={c.cote}
-                             champ={r.champ} brut={r.brut} fmtVol={fmtVol} />
+                             champ={r.champ} brut={r.brut} />
                 ))}
               </div>
             ) : null}

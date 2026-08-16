@@ -9,6 +9,7 @@
 // logic.ts et déjà testés. app.js ne passe ici que ce qui dépend de l'état global — la station
 // courante, le point de vente résolu, l'icône d'une commodité (qui se relit au MARCHÉ), et les
 // deux interrupteurs d'affichage (`venteEnCours`, `ecoulerOuvert`).
+import { fmt } from "../format.ts";
 import { Fragment } from "react";
 import type { GroupeSoute, Destination, VenteAuTerminal, Lot, Station } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, IconeCommodite } from "./communs.tsx";
@@ -38,7 +39,6 @@ export type ProprietesSoute = {
   /** Le `kind` d'une commodité — relu au marché, absent du lot (c'est une propriété de la
    *  commodité, pas de la transaction). */
   kindDe: (nom: string) => string | null;
-  fmt: Fmt;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -75,13 +75,13 @@ function OuEcouler({ p }: { p: ProprietesSoute }) {
     <div className="hold-ecouler">
       <div className="ec-head">Où écouler — classé par ce que ça rapporte, prix d'achat déduit</div>
       {dest.map((d) => (
-        <LigneEcoulement d={d} fmt={p.fmt} key={d.idx} />
+        <LigneEcoulement d={d} key={d.idx} />
       ))}
     </div>
   );
 }
 
-function LigneEcoulement({ d, fmt }: { d: Destination; fmt: Fmt }) {
+function LigneEcoulement({ d }: { d: Destination }) {
   const cert =
     d.certitude === "connue" ? (
       <span className="ec-sur" title="Capacité publiée par UEX">{`${fmt(d.garanti)} SCU garantis`}</span>
@@ -137,7 +137,6 @@ function LigneEcoulement({ d, fmt }: { d: Destination; fmt: Fmt }) {
 // Une commodité à bord : ce qu'elle est, ce qu'elle a coûté, et les deux sorties (vendre, déposer).
 // ---------------------------------------------------------------------------------------------
 function LigneSoute({ p, g }: { p: ProprietesSoute; g: GroupeSoute }) {
-  const { fmt } = p;
   // Un lot DÉCLARÉ n'a pas de terminal d'achat (`from` vide) : le dire, plutôt qu'afficher « ? »
   // qui laisse croire à une donnée perdue. C'est un fait, pas un trou.
   const ouCharge = (l: Lot) => (l.from ? `Chargé à ${l.from}` : "Déclaré à la main — aucun terminal d'achat");
@@ -232,15 +231,15 @@ export function CarteSoute(p: ProprietesSoute) {
           (mesuré : 410,78 → 408,11 px). Les séparateurs sont donc collés au texte qui les précède,
           et l'espace avant le bouton est explicite. */}
       <div className="hold-meta">
-        <b>{p.fmt(p.scu)}</b>
+        <b>{fmt(p.scu)}</b>
         {p.libre != null ? " SCU à bord · " : " SCU à bord · capital engagé "}
         {p.libre != null ? (
           <>
-            <b>{p.fmt(p.libre)}</b>
+            <b>{fmt(p.libre)}</b>
             {" libres · capital engagé "}
           </>
         ) : null}
-        <b>{p.fmt(p.invest)}</b>
+        <b>{fmt(p.invest)}</b>
         {" aUEC\n       "}
         <button id="holdOffload" className="hold-offload">{p.ecoulerOuvert ? "▾ où écouler ?" : "▸ où écouler ?"}</button>
       </div>
@@ -264,10 +263,9 @@ export type ProprietesEntrepots = {
   stations: StationEntrepot[];
   scuTotal: number;
   invest: number;
-  fmt: Fmt;
 };
 
-export function CarteEntrepots({ stations, scuTotal, invest, fmt }: ProprietesEntrepots) {
+export function CarteEntrepots({ stations, scuTotal, invest }: ProprietesEntrepots) {
   return (
     <>
       {/* Le bouton de sortie vit dans l'en-tête, sur le modèle exact du `⧉ Copier` du manifeste. Il

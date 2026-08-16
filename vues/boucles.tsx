@@ -13,6 +13,7 @@
 // Ce qui reste dans app.js, et doit y rester tant que Trajets n'est pas migrée : l'écriture de
 // `#empty`, le `<p>` de message vide PARTAGÉ par Trajets, Boucles et « En route ». Le déplacer ici
 // le ferait disparaître des deux autres vues.
+import { fmt, fmtFee } from "../format.ts";
 import type { Boucle } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite } from "./communs.tsx";
 
@@ -37,19 +38,16 @@ export type BoucleEvaluee = Boucle & {
 
 export type ProprietesBoucles = {
   lignes: BoucleEvaluee[];
-  fmt: Fmt;
   // Les trois fonctions que app.js garde : elles connaissent l'état des frais, que l'îlot ignore.
   celluleFrais: (l: BoucleEvaluee) => CelluleFrais;
-  fmtFee: (n: number, fees: number) => string;
   avecTexteFrais: (base: string, cell: CelluleFrais) => string;
   /** ▶ : ajouter cette boucle au voyage. Reçoit LA boucle, jamais son rang. */
   choisirBoucle: (l: BoucleEvaluee) => void;
 };
 
-function LigneBoucle({ l, fmt, celluleFrais, fmtFee, avecTexteFrais, choisirBoucle }: {
-  l: BoucleEvaluee; fmt: Fmt;
+function LigneBoucle({ l, celluleFrais, avecTexteFrais, choisirBoucle }: {
+  l: BoucleEvaluee;
   celluleFrais: ProprietesBoucles["celluleFrais"];
-  fmtFee: ProprietesBoucles["fmtFee"];
   avecTexteFrais: ProprietesBoucles["avecTexteFrais"];
   choisirBoucle: ProprietesBoucles["choisirBoucle"];
 }) {
@@ -114,11 +112,11 @@ function LigneBoucle({ l, fmt, celluleFrais, fmtFee, avecTexteFrais, choisirBouc
   );
 }
 
-export function VueBoucles({ lignes, fmt, celluleFrais, fmtFee, avecTexteFrais, choisirBoucle }: ProprietesBoucles) {
+export function VueBoucles({ lignes, celluleFrais, avecTexteFrais, choisirBoucle }: ProprietesBoucles) {
   return (
     <>
       {lignes.map((l, i) => (
-        <LigneBoucle key={i} l={l} fmt={fmt} celluleFrais={celluleFrais} fmtFee={fmtFee}
+        <LigneBoucle key={i} l={l} celluleFrais={celluleFrais}
                      avecTexteFrais={avecTexteFrais} choisirBoucle={choisirBoucle} />
       ))}
     </>
