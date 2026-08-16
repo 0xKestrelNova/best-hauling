@@ -10,7 +10,8 @@
 // `.set()`. C'était déjà le constat de l'inventaire : elles étaient les seules des 53 globales
 // qu'un `import` nu pouvait partager sans accesseur. Elles n'avaient donc rien à faire dans l'état.
 
-import { parseStationLabel, stationLabel } from "./logic.ts";
+import { journeyStations, parseStationLabel, stationLabel } from "./logic.ts";
+import { etat } from "./etat.ts";
 import type { Marche, Terminal } from "./types.ts";
 
 /** Libellé « Nom — Système » → index du terminal, ACHAT uniquement (le départ d'« En route »). */
@@ -78,4 +79,38 @@ export function resolveStationLabel(input: string | null | undefined): number | 
     if (parseStationLabel(label).name.toLowerCase() === lc) return idx;
   }
   return null;
+}
+
+const champ = (id: string): string =>
+  (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? "";
+
+/**
+ * L'index du terminal de DÉPART, dérivé du champ `#origin`. Vif, et non mis en cache.
+ *
+ * Il l'était : une globale `enrouteOrigin` que `resolveOrigin()` rafraîchissait à quatre endroits,
+ * dont un dont le commentaire disait tout — « re-résout depuis le champ, il peut avoir été posé par
+ * le parcours, sans événement input ». Une valeur dérivée qu'il faut penser à recalculer est une
+ * valeur qui sera un jour lue périmée. La dérivation coûte une lecture de champ et un accès de
+ * `Map` ; le cache coûtait une classe de bugs.
+ */
+export const indexOrigine = (): number | null => indexDepart("origin");
+
+/** Le même, pour le départ de la vue « Chaîne » — même champ de nature, même piège évité. */
+export const indexDepartChaine = (): number | null => indexDepart("chainOrigin");
+
+const indexDepart = (id: string): number | null => {
+  const v = champ(id);
+  return originMap.has(v) ? (originMap.get(v) as number) : null;
+};
+
+/**
+ * Où l'on se trouve : l'étape courante du parcours s'il y en a un, sinon le départ d'« En route ».
+ * `null` est un état normal — la vente est alors impossible, et son bouton absent.
+ */
+export function stationCourante(): number | null {
+  if (etat.JOURNEY) {
+    const ici = journeyStations(etat.JOURNEY)[etat.JOURNEY.current];
+    if (ici) return stationMap.get(stationLabel(ici.name, ici.system)) ?? null;
+  }
+  return indexOrigine();
 }

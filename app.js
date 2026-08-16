@@ -31,7 +31,7 @@ import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
-import { construireIndex, libellesOrigines, libellesStations, originMap, resolveStationLabel, stationMap, termByName } from "./marche.ts";
+import { construireIndex, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
@@ -395,7 +395,6 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // Nom de terminal -> terminal de market.json. Pont indispensable aux frais d'autoload : routes.json
 // et loops.json ne portent QUE des noms, et les noms sont déjà la clé métier du dépôt (corrections
 // locales, jambes de voyage). Peuplée en même temps que stationMap.
-let enrouteOrigin = null;     // index du terminal de départ sélectionné
 let stationSel = null;        // index de la station sélectionnée (vue Corrections)
 // Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
 // une saisie en cours y survit (#24).
@@ -427,7 +426,6 @@ function setupEnRoute() {
   monteStationPicker();
 
   enrouteReady = true;
-  resolveOrigin(); // au cas où une valeur a été restaurée
 }
 
 // Sélecteur de station de la vue Corrections : les 114 terminaux rangés système › zone › station
@@ -490,10 +488,6 @@ function vignetteStation(s) {
 }
 
 // Résout le terminal de départ depuis le texte du champ (libellé exact).
-function resolveOrigin() {
-  const v = $("origin").value.trim();
-  enrouteOrigin = originMap.has(v) ? originMap.get(v) : null;
-}
 
 // Résout le terminal d'ARRIVÉE forcé (En route) depuis le champ (libellé exact), ou null.
 let enrouteDest = null;
@@ -774,7 +768,7 @@ function renderManifest(origin, destSystem, f, destTerminal) {
   // depuis #96 : un `innerHTML` y détacherait les nœuds qu'il a créés sans qu'il le sache, et la
   // racine mémorisée dans pont.js appliquerait ensuite ses différences hors du document — le
   // message resterait à l'écran pour de bon, sans lever (#120).
-  if (enrouteOrigin == null) { card.hidden = true; peindre(card, null); return; }
+  if (indexOrigine() == null) { card.hidden = true; peindre(card, null); return; }
   if (!f.useCargo || !(f.cargo > 0)) {
     card.hidden = false;
     peindre(card, indiceSouteInactive());
@@ -832,14 +826,13 @@ function renderEnRoute() {
   // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
   if (!etat.MARKET) { $("empty").hidden = true; withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
-  resolveOrigin(); // re-résout depuis le champ (peut avoir été posé par le parcours, sans événement input)
   resolveDest();
   const f = readFilters();
   const emptyMsg = $("empty");
 
-  renderManifest(enrouteOrigin, $("destSystem").value, f, enrouteDest);
+  renderManifest(indexOrigine(), $("destSystem").value, f, enrouteDest);
 
-  if (enrouteOrigin == null) {
+  if (indexOrigine() == null) {
     peindre($("enrouteRows"), null);
     emptyMsg.hidden = false;
     emptyMsg.textContent = "Choisis un terminal de départ pour voir le fret à emporter.";
@@ -852,7 +845,7 @@ function renderEnRoute() {
   // Le contexte de frais descend DANS enRouteDeals : elle ne garde qu'UNE vente par commodité, donc
   // une destination meilleure en net n'entrerait jamais dans la liste — et la carte Manifeste, juste
   // au-dessus, afficherait la destination inverse (bestManifest, lui, tranche déjà sur le net).
-  let deals = enRouteDeals(etat.MARKET, enrouteOrigin, destSystem, enrouteDest, f, feeResolver(f))
+  let deals = enRouteDeals(etat.MARKET, indexOrigine(), destSystem, enrouteDest, f, feeResolver(f))
     .filter((r) => routePasses(r, ef))
     .map((r) => evaluate(r, f));
 
@@ -864,13 +857,7 @@ function renderEnRoute() {
 }
 
 // ---------- Vue « Chaîne » (multi-sauts A -> B -> C ...) ----------
-let chainOrigin = null; // index du terminal de départ de la chaîne
 let shownChain = null;  // chaîne actuellement affichée (pour l'ajout au voyage)
-
-function resolveChainOrigin() {
-  const v = $("chainOrigin").value.trim();
-  chainOrigin = originMap.has(v) ? originMap.get(v) : null;
-}
 
 // buildChainAdjacency vit dans logic.mjs (fonction pure) ; appelée avec MARKET + effVals.
 
@@ -878,18 +865,17 @@ function resolveChainOrigin() {
 function renderChain() {
   if (!etat.MARKET) { withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
-  resolveChainOrigin();
   const box = $("chainOut");
   const f = readFilters();
   shownChain = null;
   const hint = (noeud) => { peindre(box, noeud); notifySuperseded(); };
-  if (chainOrigin == null) return hint(indiceDepart());
+  if (indexDepartChaine() == null) return hint(indiceDepart());
   if (!f.useCargo || !(f.cargo > 0)) return hint(indiceSoute());
   const hops = Number($("hops").value) || 3;
   // Les frais sont estampillés sur chaque leg par buildChainAdjacency — seul endroit de la chaîne
   // où les deux terminaux d'un saut coexistent — puis consommés par bestChain, dont l'élagage et la
   // sélection portent alors sur le profit NET.
-  const chain = bestChain(buildChainAdjacency(etat.MARKET, f, effVals, feeResolver(f)), chainOrigin, hops, { cargo: f.cargo });
+  const chain = bestChain(buildChainAdjacency(etat.MARKET, f, effVals, feeResolver(f)), indexDepartChaine(), hops, { cargo: f.cargo });
   if (!chain || !chain.legs.length) return hint(indiceAucune());
   shownChain = chain;
   // Le calcul de présentation vit dans l'îlot (il n'appelle que logic.ts) ; app.js ne lui passe que
@@ -1028,13 +1014,6 @@ const jambeChargee = (leg, i) => !!etat.CHARGEMENTS[legKey(leg, i)];
 
 // « Où suis-je ? » — l'étape courante du voyage, ou à défaut le terminal de départ d'« En route ».
 // C'est ce terminal qui fixe le prix d'une vente et qui porte le marqueur « refusé ici ».
-function stationCourante() {
-  if (etat.JOURNEY) {
-    const ici = journeyStations(etat.JOURNEY)[etat.JOURNEY.current];
-    if (ici) return stationMap.get(stationLabel(ici.name, ici.system));
-  }
-  return enrouteOrigin; // peut être null : la vente est alors impossible, et le bouton absent
-}
 
 // Vend `units` SCU ici. Si le comptoir n'a pas tout pris, le reste est marqué REFUSÉ à cette
 // station : il traversera la vente implicite du départ sans être effacé.
@@ -1219,7 +1198,6 @@ function declarerABord() {
 // stationCourante() lit sans voyage, et lui que le permalien transporte déjà.
 function poserPosition(v) {
   $("origin").value = v;
-  resolveOrigin();
   refresh();
 }
 
@@ -2683,7 +2661,7 @@ async function init() {
   $("viewPlan").addEventListener("click", () => switchView("plan"));
   $("viewTour").addEventListener("click", () => switchView("tour"));
   // Terminal à SAISIE LIBRE (datalist, mais rien n'oblige à choisir dedans) : même debounce que
-  // #origin et #chainOrigin, faute de quoi chaque frappe re-rendrait ET réécrirait le hash.
+  // #origin et #indexDepartChaine(), faute de quoi chaque frappe re-rendrait ET réécrirait le hash.
   $("tourFrom").addEventListener("input", refreshDebounced);
   $("tourScope").addEventListener("input", refresh); // <select> : un seul événement, immédiat
   // La marque ramène à TRAJETS, la vue principale — pas au Plan de vol (ADR-004 §5). Un <button>
@@ -2712,11 +2690,11 @@ async function init() {
   // par 10 s : taper deux noms de terminal suffisait à le franchir. Les résolveurs restent DANS le
   // rappel, donc dans le même ordre qu'avant ; renderEnRoute / renderChain / renderCorrections les
   // rejouent de toute façon avant de peindre.
-  $("origin").addEventListener("input", debounce(() => { resolveOrigin(); refresh(); }));
+  $("origin").addEventListener("input", debounce(refresh));
   $("destSystem").addEventListener("input", refresh); // <select> : un seul événement, immédiat
   $("destTerminal").addEventListener("input", refreshDebounced); // terminal d'arrivée forcé
   // Contrôles « Chaîne ».
-  $("chainOrigin").addEventListener("input", debounce(() => { resolveChainOrigin(); refresh(); }));
+  $("chainOrigin").addEventListener("input", debounce(refresh));
   $("hops").addEventListener("input", refresh);
   // Contrôles « Corrections » : recherche de station + suppression / reset (délégué).
   // Ne re-rend QUE si la station résolue a CHANGÉ. Le sélecteur, lui, rend immédiatement au choix :
