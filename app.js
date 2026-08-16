@@ -5,7 +5,7 @@ import {
   tripMinutes, ageDays, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   AUTOLOAD, autoloadFee, autoloadPoint, lineHaulFee, lineNet, kFromReading, kPlausible,
-  ovKey, effFromStore, setInStore, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
+  ovKey, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
@@ -29,6 +29,8 @@ import {
 import { peindre } from "./pont.js";
 import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
+import { readFilters } from "./filtres.ts";
+import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -114,48 +116,7 @@ const SELL_STATUS = { 1: ["Forte demande", "green"], 2: ["Bonne demande", "green
 // L'utilisateur peut corriger un prix ou un volume (stock à l'achat / demande à la vente)
 // quand le relevé UEX est faux. Stocké UNIQUEMENT en local (localStorage), jamais partagé
 // ni dans l'URL. Clé : « commodité|terminal|side » (side = "buy" | "vol"… non : "buy"/"sell").
-const OV_KEY = "best-hauling-overrides";
-// { "Commodité|Terminal|buy": { price?, vol?, base }, ... }
-// base = date UEX (updated) du point AU MOMENT de la correction : la correction vaut
-// « contre cet export ». Elle n'est périmée que si UEX republie ce point plus récemment.
-let supersededKeys = new Set(); // corrections périmées par UEX pendant le rendu courant (pour le flash)
-let expiredVolKeys = new Set(); // volumes périmés par l'ÂGE pendant le rendu courant (autre cause, autre message)
-
 const nowSec = () => Math.floor(Date.now() / 1000);
-
-function loadOverrides() {
-  try { etat.OVERRIDES = JSON.parse(localStorage.getItem(OV_KEY)) || {}; } catch { etat.OVERRIDES = {}; }
-  // Mise à niveau des corrections déjà posées (logic.mjs) : `ts` devient `base`, et AUCUNE date de
-  // saisie n'est inventée pour les prix d'avant `saisiPrix` — ils s'exportent « date inconnue ».
-  // On n'écrit que s'il y avait vraiment quelque chose à normaliser.
-  if (migrerCorrections(etat.OVERRIDES).migres) saveOverrides();
-}
-function saveOverrides() {
-  try { localStorage.setItem(OV_KEY, JSON.stringify(etat.OVERRIDES)); } catch {}
-}
-const ovCount = () => Object.keys(etat.OVERRIDES).length; // ovKey vient de logic.mjs
-
-// Renvoie prix/volume effectifs (corrigés si une correction locale existe) + drapeaux.
-// « Intelligent » : si le relevé UEX du point (dataUpdated) est PLUS RÉCENT que celui
-// contre lequel la correction a été faite (base), la correction est périmée -> on la
-// supprime et on revient à la valeur UEX (comptée pour le flash de notification).
-function effVals(commodity, terminal, side, price, vol, dataUpdated) {
-  const k = ovKey(commodity, terminal, side);
-  const r = effFromStore(etat.OVERRIDES, k, price, vol, dataUpdated); // décision + suppression périmée (logic.mjs)
-  // effets de bord app : persistance + flash. `staleVol` est l'autre cause — le volume a dépassé sa
-  // durée de vie (DUREE_VOL) et le prix, s'il y en avait un, est resté.
-  if (r.stale) { saveOverrides(); supersededKeys.add(k); }
-  else if (r.staleVol) { saveOverrides(); expiredVolKeys.add(k); }
-  return r;
-}
-
-// Enregistre (ou efface) une correction. field = "price"|"vol". value null/"" = efface ce champ.
-// baseUpdated = date UEX du point corrigé (l'état de l'export au moment de la correction).
-function setOverride(commodity, terminal, side, field, value, baseUpdated) {
-  setInStore(etat.OVERRIDES, ovKey(commodity, terminal, side), field, value, baseUpdated); // logic.mjs
-  saveOverrides();
-}
-function resetOverrides() { etat.OVERRIDES = {}; saveOverrides(); }
 
 // ---------- Frais d'autoload : tarif par station + contexte de calcul ----------
 // Le calcul est PUR et vit dans logic.mjs (autoloadFee / autoloadPoint / haulFee). app.js n'y
@@ -300,10 +261,11 @@ function showToast(msg) {
 // Si les deux tombent dans le même rendu, la mise à jour UEX passe en premier — c'est un fait
 // extérieur, l'autre est une simple horloge.
 function notifySuperseded() {
-  const nUex = supersededKeys.size, nAge = expiredVolKeys.size;
+  // Le RELEVÉ vide les compteurs : appeler deux fois de suite ne redit rien. La donnée vit dans
+  // `corrections.ts`, le message reste ici — c'est ce qui permet à `effVals` d'être appelée trente
+  // fois au fond du rendu sans traîner `showToast` derrière elle.
+  const { uex: nUex, age: nAge } = relevePerimees();
   if (!nUex && !nAge) return;
-  supersededKeys = new Set();
-  expiredVolKeys = new Set();
   updateOvBadge();
   const s = (n) => (n > 1 ? "s" : "");
   if (nUex) showToast(`✎ ${nUex} correction${s(nUex)} périmée${s(nUex)} par une mise à jour UEX`);
@@ -367,26 +329,6 @@ function fiabiliteCell(f, age, part) {
 // l'application n'échappe à React, ce qui est la condition de cette suppression.
 
 // Lit l'état de tous les contrôles de filtre (partagé par les deux vues).
-function readFilters() {
-  return {
-    cargo: Math.max(0, Number($("cargo").value) || 0),
-    budget: Math.max(0, Number($("budget").value) || 0),
-    capStock: $("capStock").checked,
-    useCargo: $("useCargo").checked,
-    useBudget: $("useBudget").checked,
-    sameOnly: $("sameSystem").checked,
-    noOutpost: $("noOutpost").checked,
-    legalOnly: $("legalOnly").checked,
-    sysFilter: $("system").value,
-    maxAge: Number($("freshness").value) || 0,
-    q: $("search").value.trim().toLowerCase(),
-    multi: $("multiCommodity").checked,
-    // « avec les simples » : les chargements à UNE commodité rentrent dans le même classement que
-    // les combinés. Par défaut ils en sont exclus — ils sont déjà dans la vue « Trajets » normale.
-    multiAll: $("multiMode").value === "all",
-    autoload: $("autoload").checked,
-  };
-}
 
 
 // Message de #empty tel qu'il est écrit dans index.html. Le <p> est PARTAGÉ par les vues Trajets /
