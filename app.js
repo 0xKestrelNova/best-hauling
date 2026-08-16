@@ -33,6 +33,7 @@ import { readFilters } from "./filtres.ts";
 import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { construireIndex, libellesOrigines, libellesStations, originMap, resolveStationLabel, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
+import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -79,7 +80,6 @@ let commCarried = new Set(); // commodités transportées au moins 1 fois dans l
 // Affiche la carte du vaisseau correspondant au champ (défini par loadShips ; utilisé à la restauration).
 let showShipCard = () => {};
 
-const STATE_KEY = "best-hauling-state";
 
 const $ = (id) => document.getElementById(id);
 // Volume dont le null veut dire « capacité non communiquée par UEX » et non « zéro » :
@@ -2270,75 +2270,6 @@ async function loadShips() {
 // hash de l'URL, pour reprendre là où on s'est arrêté et partager une vue précise.
 // `alk` = coefficient d'autoload global : partageable, comme tous les réglages. Les relevés PAR
 // STATION, eux, restent locaux — c'est la même frontière que pour les corrections de prix.
-const STATE_FIELDS = ["cargo", "budget", "search", "system", "freshness", "ship", "origin", "destSystem", "destTerminal", "chainOrigin", "hops", "station", "alk", "multiMode", "tourFrom", "tourScope"];
-const STATE_CHECKS = ["useCargo", "useBudget", "sameSystem", "noOutpost", "legalOnly", "capStock", "multiCommodity", "autoload"];
-// Champs qui gardent leur défaut HTML quand la clé est absente de l'état. #system, #freshness et
-// #destSystem ont chacun une option VIDE (« Tous », « Toutes », « N'importe où ») : leur poser ""
-// resélectionne bien ce défaut. #hops, lui, n'en a pas (2 / 3 / 4) — lui poser "" laisserait le menu
-// visuellement VIDE alors que le calcul retomberait silencieusement sur 3 sauts.
-const STATE_FIELDS_KEEP_DEFAULT = ["hops"];
-// safeKey / encodeState / decodeState viennent de logic.mjs.
-
-let restoring = false; // évite de resauver pendant qu'on applique un état
-
-function collectState() {
-  // `cb` : board des commodités. Vide en mode Marché (défaut) -> encodeState l'omet, l'URL reste courte.
-  const s = { v: etat.view, sk: etat.sortKey, sd: etat.sortDir, lk: etat.loopSortKey, ld: etat.loopSortDir, cb: etat.commBoard === "loot" ? "loot" : "" };
-  STATE_FIELDS.forEach((id) => (s[id] = $(id).value));
-  STATE_CHECKS.forEach((id) => (s[id] = $(id).checked ? 1 : 0));
-  if (etat.JOURNEY) s.j = encodeJourney(etat.JOURNEY); // compagnon de voyage (partageable)
-  return s;
-}
-
-// Écrit l'état dans localStorage et renvoie sa forme encodée (null pendant une restauration : rien
-// à resauver). TOUJOURS synchrone, y compris depuis la variante différée ci-dessous : une session ne
-// doit pas se perdre parce que l'onglet a été rechargé ou fermé dans la demi-seconde qui suit.
-function persistState() {
-  if (restoring) return null;
-  const str = encodeState(collectState());
-  try { localStorage.setItem(STATE_KEY, str); } catch {}
-  return str;
-}
-
-// Recopie l'état dans le hash de l'URL. WebKit plafonne replaceState à 100 appels / 10 s et lève
-// SecurityError au-delà. L'URL n'est pas critique (localStorage porte déjà l'état, et l'écriture
-// suivante réécrit TOUT, elle n'est pas incrémentale) — mais l'exception remontait jusqu'à
-// copyShareLink, qui appelle saveState en PREMIÈRE instruction : le bouton « Partager » ne copiait
-// alors plus rien, sans le moindre retour visuel.
-function writeHash(str) {
-  try {
-    history.replaceState(null, "", str ? "#" + str : location.pathname + location.search);
-  } catch {}
-}
-
-// URL à partager, reconstruite depuis l'état ENCODÉ — jamais relue dans `location.href`. Une
-// écriture de hash plafonnée est perdue pour de bon : la barre d'adresse reste alors figée au
-// milieu de la rafale, et copier `location.href` partagerait des filtres périmés tout en
-// annonçant « ✓ Lien copié », donc sans que rien ne le signale.
-function shareURL(str) {
-  const rel = str ? location.pathname + location.search + "#" + str : location.pathname + location.search;
-  return new URL(rel, location.href).href;
-}
-
-// Sauvegarde complète ; renvoie l'état encodé (null pendant une restauration). Le hash est écrit
-// IMMÉDIATEMENT, jamais différé : `loadState()` le fait PRIMER sur localStorage, donc un hash en
-// retard — fût-ce de quelques centaines de ms — ressusciterait au rechargement l'état d'AVANT la
-// dernière action (vue, filtres, station…). Le plafond WebKit se traite EN AMONT, à la source :
-// tous les champs à saisie libre sont débouncés (cf. init), une rafale de frappe ne vaut donc plus
-// qu'un seul appel. Le `try/catch` de writeHash n'est que le filet de sécurité.
-function saveState() {
-  const str = persistState();
-  if (str == null) return null;
-  writeHash(str);
-  return str;
-}
-
-function loadState() {
-  let str = location.hash.replace(/^#/, "");
-  if (!str) { try { str = localStorage.getItem(STATE_KEY) || ""; } catch {} }
-  return decodeState(str);
-}
-
 // Positionne l'indicateur ▾/▴ sur la bonne colonne des deux tables.
 // La flèche est un `::after` CSS accroché aux classes : elle n'existe pas pour un lecteur d'écran.
 // `aria-sort` DOUBLE donc les classes (il ne les remplace pas, le CSS s'en sert) sur les seules
@@ -2362,36 +2293,6 @@ function applySortIndicators() {
       th.setAttribute("aria-sort", etat.loopSortDir === -1 ? "descending" : "ascending");
     }
   }
-}
-
-function applyState(s) {
-  if (!s) return;
-  restoring = true;
-  // Lecture SYMÉTRIQUE de l'écriture : encodeState omet les valeurs vides (URL courte), donc dans un
-  // état venant de l'app une clé absente veut dire « champ vidé », pas « champ jamais renseigné ».
-  // Sans ça, un budget effacé à la main revenait à 1 000 000 au rechargement — et le destinataire du
-  // lien voyait un autre classement que son émetteur.
-  // Encore faut-il que l'état VIENNE de l'app : n'importe quelle ancre (#top) se décode elle aussi en
-  // objet, et vider tous les champs sur cette foi accueillerait l'arrivant sans soute ni budget.
-  // `v` (la vue) est écrite à chaque sauvegarde par collectState et n'est jamais vide : elle signe l'état.
-  const mine = s.v != null;
-  STATE_FIELDS.forEach((id) => {
-    if (s[id] != null) $(id).value = s[id];
-    else if (mine && !STATE_FIELDS_KEEP_DEFAULT.includes(id)) $(id).value = "";
-  });
-  STATE_CHECKS.forEach((id) => { if (s[id] != null) $(id).checked = s[id] === "1"; });
-  if (safeKey(s.sk)) { etat.sortKey = s.sk; etat.sortDir = Number(s.sd) === 1 ? 1 : -1; }
-  if (safeKey(s.lk)) { etat.loopSortKey = s.lk; etat.loopSortDir = Number(s.ld) === 1 ? 1 : -1; }
-  // Liste blanche des vues restaurables. Y OUBLIER une vue neuve est le piège documenté par
-  // l'ADR-004 : elle s'ouvre au clic, mais ne revient ni d'un permalien ni du localStorage — et
-  // l'oubli ne se voit qu'au rechargement suivant.
-  if (["routes", "loops", "enroute", "chain", "corrections", "commodities", "plan", "tour"].includes(s.v)) etat.view = s.v;
-  if (s.cb === "loot") etat.commBoard = "loot";
-  if (s.j) etat.JOURNEY = decodeJourney(s.j); // compagnon de voyage restauré (les champs sont déjà repris ci-dessus)
-  applySortIndicators();
-  syncToggles();
-  syncCommBoardUI(); // bouton actif + libellé « Revente » restaurés avant le premier rendu
-  restoring = false;
 }
 
 async function copyShareLink() {
@@ -3189,7 +3090,9 @@ async function init() {
       }
     }
     // Applique l'état restauré une fois le menu système peuplé, puis affiche la bonne vue.
-    applyState(saved);
+    // Les trois synchros d'interface restent ici ; le module les appelle DANS le verrou de
+    // restauration, pour qu'aucune ne puisse resauver au milieu.
+    applyState(saved, () => { applySortIndicators(); syncToggles(); syncCommBoardUI(); });
     showShipCard(); // ré-affiche la carte du vaisseau restauré (image comprise)
     // Le compagnon de voyage vient d'un permalien, donc de données non fiables. S'il échoue, il ne
     // doit pas emporter TOUTE l'app dans le catch ci-dessous, qui accuserait alors data/routes.json
