@@ -25,7 +25,7 @@ Posée à chaque fichier du dépôt, elle donne une réponse que « migrer vue p
 | `logic.ts` | 2 609 | **Oui.** Calcul pur, 483 tests en 415 ms. C'est le cœur, et il est déjà à sa place. |
 | `types.ts` | 1 011 | **Oui.** |
 | `vues/*.tsx` | 3 033 | **Oui, mais pas ainsi** — voir plus bas : ce sont des gabarits, pas des composants. |
-| `app.js` | 3 454 | **Non.** La coquille impérative : 63 globales, `refresh()`, 41 `peindre()`, 56 écouteurs, 180 accès `$("id")`. |
+| `app.js` | 3 454 | **Non.** La coquille impérative : 53 globales, `refresh()`, 41 `peindre()`, 56 écouteurs, 180 accès `$("id")`. |
 | `index.html` | 441 | **Non, pas sous cette forme.** 114 balises de structure qui seraient des composants ; il resterait un `<head>` et un `<div id="root">`. |
 | `style.css` | 1 529 | **Non à cette taille** — mais **pas pour la raison qu'on croit** (voir « la tentation Tailwind »). |
 | `pont.js` | 25 | **Non.** Un pont entre deux mondes. De zéro : un `createRoot`, une fois. |
@@ -89,7 +89,7 @@ L'objection qui avait fait refuser un magasin (ADR-008, `pont.js:7`) était just
 le point de propagation **unique et prouvé complet** — 17 écritures de `SOUTE`, 8 de `JOURNEY`, 5
 d'`OVERRIDES`. Lui donner un rival créerait deux vérités.
 
-**On ne lui donne pas de rival : on le renomme.** Les 63 globales deviennent un module d'état
+**On ne lui donne pas de rival : on le renomme.** Les 53 globales deviennent un module d'état
 mutable qui reste la seule source de vérité ; `refresh()` devient sa notification ; React s'y abonne
 par **`useSyncExternalStore`** (React 19, déjà présent). Aucun état dupliqué, aucun cadre externe.
 Le point de propagation change de nom, pas de nature — ce qui rend l'opération mécanique.
@@ -159,7 +159,7 @@ n'est pas une réécriture : ce qui est déjà idiomatique se garde.
 - `data-i`, `data-row`, `data-leg` cessent d'être un **canal de données** : une fermeture remplace
   un aller-retour par le DOM. #125 et #128 sont deux instances de ce défaut ; il n'y en aura plus.
 - Les 17 `esc()` disparaissent : React échappe.
-- Tout passe sous `tsc`, y compris les 63 globales que rien ne vérifie aujourd'hui.
+- Tout passe sous `tsc`, y compris les 53 globales que rien ne vérifie aujourd'hui.
 
 **Ce qui devient plus difficile**
 - **La branche sera rouge**, et un rouge qui dure cesse d'informer — d'où le garde-fou ci-dessous.
@@ -170,7 +170,7 @@ n'est pas une réécriture : ce qui est déjà idiomatique se garde.
 ## Points d'action
 
 1. [ ] **#131, le déploiement** — avant tout : c'est lui qui sépare la v2 de la production.
-2. [ ] **`etat.ts`** — les 63 globales en module d'état, `refresh()` en notification, abonnement
+2. [ ] **`etat.ts`** — les globales en module d'état, `refresh()` en notification, abonnement
        `useSyncExternalStore`. `app.js` importe et continue de tourner : **la branche reste verte**,
        et c'est là qu'on mesure les re-rendus contre `smoke.pw.mjs:2182` (≤ 2 lots de rendu de
        `#rows` pour 8 frappes). Si ce compteur explose, on s'arrête et on rouvre cet ADR.
@@ -186,6 +186,23 @@ n'est pas une réécriture : ce qui est déjà idiomatique se garde.
 7. [ ] `strictNullChecks`, puis `noImplicitAny`, chacun dans sa PR.
 8. [ ] shadcn/ui : **seulement si** un composant à venir le justifie. Ne pas l'introduire pour
        tenir un titre.
+
+### Amendement du 2026-08-16 (PR `etat.ts`) — deux chiffres et une affirmation corrigés
+
+Trois corrections, toutes **mesurées** au moment d'écrire `etat.ts` :
+
+- **53 globales mutables, et non 63.** Le premier décompte découpait les déclarations sur les
+  virgules, y compris à l'intérieur des littéraux et des commentaires. Le compte exact :
+  47 lignes `^let `, dont trois en déclarent plusieurs → 53.
+- **`refresh()` N'EST PAS le point de propagation unique**, contrairement à ce que dit `pont.js:6-7`
+  et à ce que cet ADR répétait. Mesuré sur six gestes, avec un compteur dans `notifier()` : **trier
+  une colonne et basculer le board Commodités ne propageaient RIEN** — ils appellent leur rendu
+  ciblé puis `saveState()`, sans passer par `refresh()`. Cinq sites sont dans ce cas. Ils propagent
+  désormais, et chaque geste mesuré propage exactement une fois.
+- **Le garde-fou annoncé au point d'action 2 donnait un FAUX VERT.** `e2e/smoke.pw.mjs:2182` compte
+  des mutations DOM sur `#rows` pour 8 frappes ; `#search` est un champ du DOM, pas une globale
+  déménagée, et une mutation DOM n'est pas une propagation. La mesure qui tranche est le compteur
+  de `notifier()`, geste par geste, avant et après.
 
 ### Le garde-fou du rouge
 
