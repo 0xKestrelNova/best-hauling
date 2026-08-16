@@ -3,10 +3,9 @@
 // Plus exigeante que la Tournée malgré ses 73 lignes, et c'est pour ça qu'elle vient en second :
 // elle exerce trois choses que la Tournée n'avait pas.
 //
-//   1. Elle rend des LIGNES INTERACTIVES. Chaque `<tr>` porte `data-row`, et une délégation posée
-//      sur `document` (app.js) lit `shownLoops[btn.dataset.row]` au clic sur `.journey-pick`.
-//      L'index doit donc correspondre EXACTEMENT au rang dans le tableau que app.js a rangé dans
-//      la globale. React ne change rien à ce contrat : il le reproduit.
+//   1. Elle rend des LIGNES INTERACTIVES. Le ▶ recevait son rang par `data-row`, qu'une délégation
+//      posée sur `document` relisait dans `shownLoops` — un tableau rempli au RENDU et relu au
+//      CLIC. Il reçoit désormais un rappel fermé sur SA boucle : plus de rang, plus de globale.
 //   2. Elle vit dans un `<tbody>` dont le `<thead>` reste VANILLA (index.html), avec ses
 //      `th[data-sort-loop]` câblés par `setupLoopSort`. React ne possède que le corps du tableau.
 //   3. Ses cellules passent par des aides PARTAGÉES avec d'autres vues — d'où `communs.tsx`.
@@ -43,13 +42,16 @@ export type ProprietesBoucles = {
   celluleFrais: (l: BoucleEvaluee) => CelluleFrais;
   fmtFee: (n: number, fees: number) => string;
   avecTexteFrais: (base: string, cell: CelluleFrais) => string;
+  /** ▶ : ajouter cette boucle au voyage. Reçoit LA boucle, jamais son rang. */
+  choisirBoucle: (l: BoucleEvaluee) => void;
 };
 
-function LigneBoucle({ l, i, fmt, celluleFrais, fmtFee, avecTexteFrais }: {
-  l: BoucleEvaluee; i: number; fmt: Fmt;
+function LigneBoucle({ l, fmt, celluleFrais, fmtFee, avecTexteFrais, choisirBoucle }: {
+  l: BoucleEvaluee; fmt: Fmt;
   celluleFrais: ProprietesBoucles["celluleFrais"];
   fmtFee: ProprietesBoucles["fmtFee"];
   avecTexteFrais: ProprietesBoucles["avecTexteFrais"];
+  choisirBoucle: ProprietesBoucles["choisirBoucle"];
 }) {
   const fc = celluleFrais(l);
   // Le title des frais arrive déjà échappé depuis app.js (` title="…"`). React échappe de son côté,
@@ -63,9 +65,9 @@ function LigneBoucle({ l, i, fmt, celluleFrais, fmtFee, avecTexteFrais }: {
     : l.out.updated || l.back.updated || 0;
 
   return (
-    <tr data-row={i} className={l._fromHere ? "from-here" : undefined}>
+    <tr className={l._fromHere ? "from-here" : undefined}>
       <td className="loc loop-cell">
-        <button className="journey-pick" data-row={i} title="Ajouter cette boucle au voyage" aria-label="Ajouter au voyage">▶</button>
+        <button className="journey-pick" onClick={() => choisirBoucle(l)} title="Ajouter cette boucle au voyage" aria-label="Ajouter au voyage">▶</button>
         <div className="loop-ends">
           <div className="loop-end">
             <span className="term-name">{l.a.terminal}</span>
@@ -112,11 +114,12 @@ function LigneBoucle({ l, i, fmt, celluleFrais, fmtFee, avecTexteFrais }: {
   );
 }
 
-export function VueBoucles({ lignes, fmt, celluleFrais, fmtFee, avecTexteFrais }: ProprietesBoucles) {
+export function VueBoucles({ lignes, fmt, celluleFrais, fmtFee, avecTexteFrais, choisirBoucle }: ProprietesBoucles) {
   return (
     <>
       {lignes.map((l, i) => (
-        <LigneBoucle key={i} l={l} i={i} fmt={fmt} celluleFrais={celluleFrais} fmtFee={fmtFee} avecTexteFrais={avecTexteFrais} />
+        <LigneBoucle key={i} l={l} fmt={fmt} celluleFrais={celluleFrais} fmtFee={fmtFee}
+                     avecTexteFrais={avecTexteFrais} choisirBoucle={choisirBoucle} />
       ))}
     </>
   );

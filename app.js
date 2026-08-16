@@ -66,8 +66,6 @@ let sortKey = "profit";
 let sortDir = -1; // -1 = décroissant, 1 = croissant
 let loopSortKey = "profit";
 let loopSortDir = -1;
-// Lignes actuellement affichées (dans l'ordre du DOM) pour déplier le schéma de trajet.
-let shownRoutes = [], shownEnroute = [], shownLoops = [], shownMulti = [];
 // Vue « Commodités » : mode de tri (margin|code|kind|custom), clé/sens custom, sélection.
 let commMode = "margin", commSortKey = "margin", commSortDir = -1, commSelected = null, shownCommodities = [];
 // Board « Commodités » : "market" = marge achat→vente ; "loot" = prix de revente d'une ressource
@@ -441,8 +439,6 @@ function readFilters() {
   };
 }
 
-// Mode « Multi commodité » actif (uniquement pertinent dans la vue Trajets).
-const isMultiRoutes = () => view === "routes" && $("multiCommodity").checked;
 
 // Message de #empty tel qu'il est écrit dans index.html. Le <p> est PARTAGÉ par les vues Trajets /
 // Boucles / En route, et « En route » comme le mode multi-commodité réécrivent son texte : sans
@@ -486,6 +482,10 @@ function propsLignesSimples() {
     // de la station. Le prendre dans `feeInfo` le faisait disparaître dès l'interrupteur relâché, et
     // la ligne annonçait « 3×32 » à côté d'un manifeste qui affichait « 6×16 » pour la même cargaison.
     libelleCaisses: (r) => (r.units ? scuBoxesLabel(r.units, (termByName.get(r.buy.terminal) || {}).maxBox) : null),
+    // ▶ : le rappel est ÉTALÉ avec le reste, donc il sert les DEUX tables à lignes simples d'un
+    // coup. Le poser au seul site d'appel de `#rows` ferait taire le ▶ d'« En route » — la
+    // sur-suppression de #116 en négatif. C'est désormais gardé (e2e/choix-trajet.pw.mjs).
+    choisirTrajet: (r) => pickJourney([legFromRoute(r)]),
   };
 }
 
@@ -499,7 +499,6 @@ function render() {
 
   rows.sort(bySort(sortKey, sortDir));
 
-  shownRoutes = rows;
   peindre($("rows"), vueTrajets({
     ...propsTrajetsCommunes(),
     ...propsLignesSimples(),
@@ -516,18 +515,18 @@ function renderMulti(f) {
   const empty = $("empty");
   // Sans soute bornée, « remplir la soute » n'a pas de sens (cf. manifeste d'« En route »).
   if (!f.useCargo || !(f.cargo > 0)) {
-    shownMulti = [];
     peindre($("rows"), null);
     empty.hidden = false;
     empty.textContent = "Active la soute (SCU) pour calculer des trajets multi-commodité.";
     return;
   }
-  // Graphe requis. On vide comme le fait la branche « soute inactive » juste au-dessus : laisser les
-  // trajets à UNE commodité sous un mode qui promet des chargements combinés, c'est un tableau qui
-  // ne correspond plus à `shownMulti` — ▶ et 📦 y lisaient un index vide et ne faisaient RIEN.
+  // Graphe requis. On vide comme le fait la branche « soute inactive » juste au-dessus : laisser
+  // les trajets à UNE commodité sous un mode qui promet des chargements combinés, c'est afficher
+  // autre chose que ce qu'on annonce. (Historiquement le motif était plus dur : le tableau ne
+  // correspondait plus à `shownMulti`, et ▶ comme 📦 y lisaient un index vide — clic mort, #25.
+  // Les deux boutons portent maintenant leur ligne, mais vider reste la bonne réponse.)
   // #empty reste masqué : le tableau n'est pas vide à cause des filtres, le marché n'est pas là.
   if (!MARKET) {
-    shownMulti = [];
     peindre($("rows"), null);
     empty.hidden = true;
     withMarket(refresh);
@@ -538,7 +537,6 @@ function renderMulti(f) {
   const trips = multiTrips(MARKET, f, effVals, 300, f.multiAll ? 1 : 2, feeResolver(f))
     .map((t) => ({ ...t, feeInfo: feeCtx(f, t.origin.name, t.dest.name, t.origin, t.dest), ...tripMetrics(t) }));
   trips.sort(bySort(sortKey, sortDir));
-  shownMulti = trips;
   peindre($("rows"), vueTrajetsMulti({
     ...propsTrajetsCommunes(),
     lignes: trips,
@@ -551,6 +549,9 @@ function renderMulti(f) {
     // de l'îlot.
     texteProfitLigne: lineProfitText,
     libelleCaissesScu: scuBoxesLabel,
+    // EXPLICITE, et pas par `propsLignesSimples()` : cette vue-ci ne l'étale pas, et un chargement
+    // multi ne devient pas une jambe par le même chemin qu'une ligne simple.
+    choisirTrajet: (t) => pickJourney([legFromTrip(t)]),
   }));
   empty.hidden = trips.length > 0;
   // Rappel : seuls les chargements COMBINÉS (≥ 2 commodités) sont listés ici — un trajet dont le
@@ -601,17 +602,19 @@ function renderLoops() {
     rows.forEach((l) => { l._fromHere = l.a.terminal === hereArrival || l.b.terminal === hereArrival; });
     rows.sort((a, b) => (b._fromHere ? 1 : 0) - (a._fromHere ? 1 : 0)); // tri stable : pertinentes d'abord
   }
-  shownLoops = rows;
-
   // Le <tbody> passe à React ; le <thead> et ses `th[data-sort-loop]` restent dans index.html,
-  // câblés par setupLoopSort. `data-row` reproduit le rang dans `shownLoops`, que la délégation
-  // posée sur document lit au clic sur `.journey-pick` — c'est un contrat, pas un détail.
+  // câblés par setupLoopSort. React ne possède que le corps du tableau.
   peindre($("loopRows"), vueBoucles({
     lignes: rows,
     fmt,
     celluleFrais: (l) => feeCell(l.feeInfo, l.fees, () => `${fmt(l.unitsOut)} + ${fmt(l.unitsBack)} SCU, 4 opérations (charge et décharge à chaque bout)`, l.units > 0),
     fmtFee,
     avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
+    // On entre dans le cycle par la FIN du parcours : la boucle l'étend au lieu de le remplacer.
+    // `journeyEnd(JOURNEY)` est relu DANS le corps de la flèche, donc au clic — et surtout PAS
+    // remplacé par `hereArrival` (calculé plus haut, au rendu) : le parcours a pu bouger entre les
+    // deux, et c'est la seule régression que ce lot pourrait introduire.
+    choisirBoucle: (l) => pickJourney(legsFromLoop(l, JOURNEY ? journeyEnd(JOURNEY)?.name : null)),
   }));
 
   $("empty").hidden = rows.length > 0;
@@ -1162,7 +1165,6 @@ function renderEnRoute() {
     .map((r) => evaluate(r, f));
 
   deals.sort(bySort(sortKey, sortDir));
-  shownEnroute = deals;
   peindre($("enrouteRows"), vueTrajets({ ...propsTrajetsCommunes(), ...propsLignesSimples(), lignes: deals }));
   emptyMsg.hidden = deals.length > 0;
   if (!deals.length) emptyMsg.textContent = "Aucun fret rentable depuis ce terminal avec ces filtres.";
@@ -3295,8 +3297,10 @@ async function init() {
     if (e.target.classList.contains("mqty-input")) updateManifestTotals();
   });
   $("manifest").addEventListener("click", (e) => {
-    // Ici et pas dans le délégué global du compagnon : celui-ci lit `pick.closest("table").id`,
-    // qui lèverait un TypeError depuis une carte. La carte n'est pas un tableau.
+    // Ici et pas dans le délégué global du compagnon. La raison d'origine a disparu avec la
+    // délégation `.journey-pick` (elle lisait `pick.closest("table").id`, qui levait depuis une
+    // carte) ; ce qui reste vaut toujours : cet écouteur est posé sur `#manifest`, donc il ne voit
+    // que sa carte, là où le délégué global voit toute la page.
     if (e.target.closest("#manifestToJourney")) { manifestToJourney(); return; }
     if (e.target.closest("#copyManifest")) { copyManifest(); return; }
     if (e.target.closest("#manifestAddBtn")) { addManifestCommodity($("manifestAddInput").value); return; }
@@ -3318,7 +3322,8 @@ async function init() {
   // La garde `isMultiRoutes()` que cette délégation portait disparaît avec elle — elle existait
   // parce qu'un bouton cliqué après un retour en lignes simples indexait `shownMulti` avec le rang
   // d'un autre tableau (#25). Un rappel fermé sur SON trajet ne peut pas se tromper de tableau.
-  // (`isMultiRoutes` reste : `.journey-pick` s'en sert encore, elle indexe toujours par rang.)
+  // `isMultiRoutes` a suivi le même chemin avec le ▶ : plus personne ne demande « quel mode ? »
+  // au moment du clic, puisqu'aucun bouton de CES TABLES n'a plus de rang à interpréter.
   // Carte du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.
   $("holdCard").addEventListener("click", (e) => {
     if (e.target.closest("#holdClear")) { viderSoute(); return; }
@@ -3378,19 +3383,23 @@ async function init() {
     const a = e.target.closest(".jm-arret");
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setJourneyStop(Number(a.dataset.i)); }
   });
-  // Compagnon de voyage : ▶ sélectionne un trajet (Trajets / En route) ; ✕ efface le parcours.
+  // Compagnon de voyage : ✕ efface le parcours, ▶ n'est plus ici.
+  //
+  // Le ▶ était la dernière lecture par rang DES TABLES DE TRAJETS : la délégation lisait
+  // `pick.dataset.row` puis indexait l'un des quatre tableaux `shown*` selon
+  // `pick.closest("table").id`. Un tableau rempli au RENDU et relu au CLIC, avec ce que ça suppose :
+  // que les deux soient d'accord. Chaque îlot ferme désormais son bouton sur SA ligne.
+  //
+  // Le motif SURVIT ailleurs, et il faut le dire pour ne pas croire le dossier clos : la soute
+  // (`retirerLot`), le fil d'étapes, la carte du parcours et surtout l'autocomplétion
+  // (`matches[Number(li.dataset.i)]`) lisent tous un rang posé au rendu. Ce lot ne traite que les
+  // tables de trajets.
+  //
+  // Trois choses partent avec la délégation : le `closest("table").id` (et son TypeError si un ▶
+  // naissait hors table), le `else` fourre-tout qui faisait retomber toute table inconnue sur
+  // `shownRoutes`, et la garde `isMultiRoutes()` qui rattrapait le mode déjà changé au moment du
+  // clic (#25) — un rappel fermé sur SON trajet ne peut pas se tromper de tableau.
   document.addEventListener("click", (e) => {
-    const pick = e.target.closest(".journey-pick");
-    if (pick) {
-      const tableId = pick.closest("table").id;
-      const i = Number(pick.dataset.row);
-      // Boucle : on entre dans le cycle par la fin du parcours (elle est marquée « from-here » si
-      // l'un OU l'autre de ses bouts y touche) -> elle étend le voyage au lieu de le remplacer.
-      if (tableId === "loops") { const l = shownLoops[i]; if (l) pickJourney(legsFromLoop(l, JOURNEY ? journeyEnd(JOURNEY)?.name : null)); }
-      else if (tableId === "routes" && isMultiRoutes()) { const t = shownMulti[i]; if (t) pickJourney([legFromTrip(t)]); }
-      else { const r = (tableId === "enroute" ? shownEnroute : shownRoutes)[i]; if (r) pickJourney([legFromRoute(r)]); }
-      return;
-    }
     if (e.target.closest("#chainToJourney") && shownChain) { pickJourney(legsFromChain(shownChain, MARKET.terminals)); return; }
     if (e.target.closest("#journeyClear")) { clearJourney(); return; }
     // Démarrer un voyage « de zéro » : bouton « Commencer » depuis l'invite.
