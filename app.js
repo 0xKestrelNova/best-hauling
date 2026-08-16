@@ -34,7 +34,7 @@ import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
-import { carteManifeste, indiceManifeste, suggestions as vueSuggestions } from "./vues/manifeste.tsx";
+import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement, suggestions as vueSuggestions } from "./vues/manifeste.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -1086,10 +1086,14 @@ let manifestGen = 0; // cf. l'affectation de `currentManifest`, plus bas
 function renderManifest(origin, destSystem, f, destTerminal) {
   const card = $("manifest");
   currentManifest = null;
-  if (enrouteOrigin == null) { card.hidden = true; return; }
+  // Les trois messages ci-dessous passent par React, comme la carte. `#manifest` lui appartient
+  // depuis #96 : un `innerHTML` y détacherait les nœuds qu'il a créés sans qu'il le sache, et la
+  // racine mémorisée dans pont.js appliquerait ensuite ses différences hors du document — le
+  // message resterait à l'écran pour de bon, sans lever (#120).
+  if (enrouteOrigin == null) { card.hidden = true; peindre(card, null); return; }
   if (!f.useCargo || !(f.cargo > 0)) {
     card.hidden = false;
-    card.innerHTML = `<div class="manifest-hint">Active la <b>soute (SCU)</b> pour calculer un manifeste de remplissage.</div>`;
+    peindre(card, indiceSouteInactive());
     return;
   }
   // La soute n'est pas vide : on ne peut charger QUE la place qui reste. C'est la question du
@@ -1100,7 +1104,7 @@ function renderManifest(origin, destSystem, f, destTerminal) {
   const libre = freeCargo(SOUTE, f.cargo);
   if (aBord > 0 && libre <= 0) {
     card.hidden = false;
-    card.innerHTML = `<div class="manifest-hint">Soute pleine : <b>${fmt(aBord)} SCU</b> déjà à bord. Vends ou dépose du fret pour charger autre chose.</div>`;
+    peindre(card, indiceSoutePleine(fmt(aBord)));
     return;
   }
   const fLibre = aBord > 0 ? { ...f, cargo: libre } : f;
@@ -1113,7 +1117,7 @@ function renderManifest(origin, destSystem, f, destTerminal) {
     || (compo ? manifesteSansOptimal(origin, cible, fLibre) : null);
   if (!man) {
     card.hidden = false;
-    card.innerHTML = `<div class="manifest-hint">Aucun chargement rentable depuis ce terminal vers cette destination${aBord > 0 ? ` dans les <b>${fmt(libre)} SCU</b> qui restent libres` : ""}.</div>`;
+    peindre(card, indiceAucunChargement(aBord > 0 ? fmt(libre) : null));
     return;
   }
   if (compo) man.lines = lignesComposees(compo.edit, origin, cible);
