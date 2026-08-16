@@ -31,11 +31,12 @@ import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
-import { construireIndex, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { monterRacine } from "./main.tsx";
+import { legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -638,7 +639,6 @@ function addSuggestion(name) {
 
 // Trouve une commodité par nom OU code (insensible à la casse/espaces). Partagé par les ajouts
 // libres. La résolution vit dans logic.mjs : un code UEX peut désigner deux commodités.
-const findCommodity = (name) => resolveCommodity(etat.MARKET.commodities, name);
 
 // Ajout LIBRE : n'importe quelle commodité (par nom ou code), même si elle n'est pas vendable à
 // destination — on la charge pour l'écouler ailleurs (ligne « carry-only », marge nulle ici).
@@ -1358,90 +1358,6 @@ function journeyCarriedCommodities() {
 }
 
 // Manifeste optimal d'une jambe (from -> to) : remplissage multi-commodité, terminal d'arrivée forcé.
-function legManifest(leg, f) {
-  if (!etat.MARKET || !stationMap.size) return null;
-  const fromIdx = stationMap.get(stationLabel(leg.from, leg.fromSystem));
-  const toIdx = stationMap.get(stationLabel(leg.to, leg.toSystem));
-  if (fromIdx == null || toIdx == null) return null;
-  return bestManifest(etat.MARKET, fromIdx, "", f, effVals, toIdx, feeResolver(f)); // { lines, profit, … } ou null
-}
-
-// Contexte de frais d'une jambe. Le récap du voyage est affiché à CÔTÉ des tableaux : le laisser en
-// brut pendant que les six vues passent en net mettrait deux chiffres contradictoires côte à côte.
-const legFeeCtx = (leg, f) => feeCtx(f, leg.from, leg.to);
-
-// ---------- Édition inline des manifestes de jambe (persistée en localStorage, HORS lien) ----------
-// Le PARCOURS (arrêts) va dans l'URL ; les manifestes édités restent locaux.
-// On ne persiste que l'INTENTION de l'utilisateur — [{ name, units }] par jambe — jamais un
-// instantané de marché : figé, il continuerait d'afficher le prix du jour de l'édition longtemps
-// après qu'UEX l'ait republié, et la pastille de fraîcheur vieillirait sans refléter le vrai relevé.
-// Prix, stock, demande et dates sont donc RELUS à chaque rendu (cf. hydrateManifestLine).
-// Clé versionnée : l'ancien format stockait des lignes complètes sous une clé « from|to » qui
-// confondait deux jambes identiques d'un même parcours. Les anciennes éditions sont abandonnées.
-const JOURNEY_EDITS_KEY = "best-hauling-journey-edits-v2";
-// Jambes dont les quantités ont été FIGÉES par une correction de volume, et non ajustées à la main.
-// Store séparé plutôt qu'un champ dans JOURNEY_EDITS : le format persisté de l'intention reste
-// intact (aucune migration), et les deux notions se lisent indépendamment. La valeur n'existe que
-// si une entrée d'intention existe au même rang — le gel EST une intention, avec un autre motif.
-const JOURNEY_PINS_KEY = "best-hauling-journey-pins";
-function loadJourneyPins() {
-  try { etat.JOURNEY_PINS = JSON.parse(localStorage.getItem(JOURNEY_PINS_KEY)) || {}; } catch { etat.JOURNEY_PINS = {}; }
-}
-function saveJourneyPins() { try { localStorage.setItem(JOURNEY_PINS_KEY, JSON.stringify(etat.JOURNEY_PINS)); } catch {} }
-function loadJourneyEdits() {
-  try { etat.JOURNEY_EDITS = JSON.parse(localStorage.getItem(JOURNEY_EDITS_KEY)) || {}; } catch { etat.JOURNEY_EDITS = {}; }
-  try { localStorage.removeItem("best-hauling-journey-edits"); } catch {} // format v1 abandonné
-}
-function saveJourneyEdits() { try { localStorage.setItem(JOURNEY_EDITS_KEY, JSON.stringify(etat.JOURNEY_EDITS)); } catch {} }
-// Le RANG de la jambe fait partie de la clé : sans lui, un parcours A→B→A→B partageait un seul
-// manifeste entre ses jambes 1 et 3 (éditer l'une réécrivait l'autre, la supprimer supprimait l'autre).
-const legKey = (leg, i) => `${i}|${leg.from}|${leg.to}`;
-
-// Indices des terminaux d'une jambe, ou null si le marché ne les connaît pas (encore).
-function legTerminals(leg) {
-  const fromIdx = stationMap.get(stationLabel(leg.from, leg.fromSystem));
-  const toIdx = stationMap.get(stationLabel(leg.to, leg.toSystem));
-  return fromIdx == null || toIdx == null ? null : { fromIdx, toIdx };
-}
-
-// Manifeste EFFECTIF d'une jambe : intention éditée ré-hydratée si elle existe, sinon l'optimal.
-function legEffectiveLines(leg, i, f) {
-  const k = legKey(leg, i);
-  const intent = etat.JOURNEY_EDITS[k];
-  if (!intent) { const man = legManifest(leg, f); return man ? man.lines : []; }
-  const t = legTerminals(leg);
-  if (!etat.MARKET || !t) return [];
-  const lines = [], gardees = [];
-  for (const e of intent) {
-    const c = findCommodity(e.name);
-    if (!c) continue; // commodité disparue d'UEX : on l'oublie plutôt que d'afficher un fantôme
-    gardees.push(e);
-    lines.push(hydrateManifestLine(etat.MARKET, t.fromIdx, t.toIdx, c, e.units, effVals));
-  }
-  // Purge sur place : sans ça l'index des lignes affichées et celui du store divergeraient, et
-  // éditer une quantité écrirait dans la mauvaise entrée.
-  if (gardees.length !== intent.length) { etat.JOURNEY_EDITS[k] = gardees; saveJourneyEdits(); }
-  return lines;
-}
-
-// Bascule la jambe en mode « édité » la 1re fois : on y copie l'intention issue de l'optimal.
-// Toucher au chargement fait de la jambe une édition PERSONNELLE : si elle n'était que figée par
-// une correction de volume, elle cesse de l'être (🔒 -> ✎). Le geste de l'utilisateur prime sur
-// la raison technique qui avait gelé les quantités.
-function legIntent(leg, i, f) {
-  const k = legKey(leg, i);
-  if (!etat.JOURNEY_EDITS[k]) etat.JOURNEY_EDITS[k] = manifestIntent(legManifest(leg, f)?.lines || []);
-  if (etat.JOURNEY_PINS[k]) { delete etat.JOURNEY_PINS[k]; saveJourneyPins(); }
-  return etat.JOURNEY_EDITS[k];
-}
-
-// Fige les jambes qu'une correction de volume rebattrait, AVANT qu'elle soit appliquée : on capture
-// donc les quantités telles qu'elles sont encore. La sélection est pure (legsToPin) ; ici on ne
-// fournit que ce que logic.mjs ne peut pas connaître — les chargements effectifs du moment.
-// Fige les SCU d'une jambe : son chargement devient une INTENTION persistée, et le 🔒 dit que ce
-// n'est pas la main de l'utilisateur qui l'a voulu. Rend `true` si quelque chose a bougé.
-// Une jambe déjà ajustée (✎) ou déjà figée n'est pas retouchée : ses quantités ne bougeaient plus,
-// et l'écraser effacerait un ajustement fait à la main.
 function figerJambe(i, lignes) {
   const k = legKey(etat.JOURNEY.legs[i], i);
   if (etat.JOURNEY_EDITS[k]) return false;
