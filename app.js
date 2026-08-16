@@ -103,34 +103,12 @@ function sysBadge(system) {
   return `<span class="sys ${cls}">${esc(system)}</span>`;
 }
 
-// Marqueur pour les avant-postes (élévateur de fret peu fiable).
-function outpostTag(isOutpost) {
-  return isOutpost ? ' <span class="outpost" title="Avant-poste : élévateur de fret parfois en panne">⚠ avant-poste</span>' : "";
-}
-
 // L'icône de commodité et le marqueur « illégal » sont rendus par `IconeCommodite` et `TagIllegal`
 // (vues/communs.tsx). Leurs versions en chaîne ont disparu avec `multiCargoHTML`, leur dernier
 // appelant. `KIND_ICON` reste importé : la table d'emoji n'a qu'une source.
 
 // ---------- Fiabilité : fraîcheur, statut de stock, aberrations ----------
 // (ageDays/pairAge et les calculs de temps/score viennent de logic.mjs)
-// Petite pastille colorée « il y a Xj/Xh » selon l'âge.
-function freshChip(updated) {
-  const d = ageDays(updated);
-  if (d == null) return '<span class="fresh f-old" title="Date de relevé inconnue">?</span>';
-  let cls = "f-good", label;
-  if (d < 1) { cls = "f-good"; label = d < 1 / 24 ? "<1 h" : Math.round(d * 24) + " h"; }
-  else { label = Math.round(d) + " j"; cls = d < 3 ? "f-good" : d < 7 ? "f-ok" : "f-old"; }
-  return `<span class="fresh ${cls}" title="Relevé UEX il y a ${label}">${label}</span>`;
-}
-// Version compacte (pastille seule) : indicateur de fraîcheur par matériau dans le compagnon.
-function freshDot(updated) {
-  const d = ageDays(updated);
-  if (d == null) return '<span class="fresh-dot f-old" title="Fraîcheur des données inconnue"></span>';
-  const label = d < 1 ? (d < 1 / 24 ? "moins d'1 h" : Math.round(d * 24) + " h") : Math.round(d) + " j";
-  const cls = d < 3 ? "f-good" : d < 7 ? "f-ok" : "f-old";
-  return `<span class="fresh-dot ${cls}" title="Relevé UEX il y a ${label}"></span>`;
-}
 // Fraîcheur d'une ligne de manifeste = le plus ancien des relevés achat/vente (ou l'un des deux).
 function lineFreshUpdated(l) {
   const b = l.buyUpdated || 0, s = l.sellUpdated || 0;
@@ -140,23 +118,6 @@ function lineFreshUpdated(l) {
 // Légendes de statut d'inventaire UEX (couleurs officielles).
 const BUY_STATUS = { 1: ["Vide", "red"], 2: ["Très bas", "red"], 3: ["Bas", "orange"], 4: ["Moyen", "blue"], 5: ["Élevé", "blue"], 6: ["Très élevé", "green"], 7: ["Plein", "green"] };
 const SELL_STATUS = { 1: ["Forte demande", "green"], 2: ["Bonne demande", "green"], 3: ["Demande correcte", "blue"], 4: ["Demande moyenne", "blue"], 5: ["Demande faible", "orange"], 6: ["Demande très faible", "red"], 7: ["Saturé (aucune demande)", "red"] };
-function statusDot(code, side) {
-  const legend = side === "buy" ? BUY_STATUS : SELL_STATUS;
-  const s = legend[code];
-  if (!s) return "";
-  return `<span class="sdot s-${s[1]}" title="${side === "buy" ? "Stock à l'achat" : "Demande à la vente"} : ${s[0]}"></span>`;
-}
-
-// Flag « à vérifier » : donnée trop vieille (>10 j) ou prix qui s'écarte fortement
-// de la moyenne UEX (souvent un relevé erroné ou périmé).
-function suspectTag(r) {
-  const d = pairAge(r.buy.updated, r.sell.updated);
-  const stale = d != null && d > 10;
-  const deviant = r.refSell > 0 && r.refBuy > 0 && (r.sell.price > r.refSell * 1.5 || r.buy.price < r.refBuy * 0.67);
-  if (!stale && !deviant) return "";
-  const why = stale ? "relevé de plus de 10 jours" : "prix très éloigné de la moyenne UEX";
-  return ` <span class="suspect" title="À vérifier en jeu : ${why}">⚠ à vérifier</span>`;
-}
 
 // ---------- Corrections locales (prix & stock) ----------
 // L'utilisateur peut corriger un prix ou un volume (stock à l'achat / demande à la vente)
@@ -315,9 +276,6 @@ function feeCell(ctx, fees, what, bounded) {
     : `Aucun frais d'autoload sur ce trajet — ${feeEndText(ctx.a)} · ${feeEndText(ctx.b)}`;
   return { attr: ` title="${esc(text)}"`, mark: fees > 0 ? "" : ' <span class="nofee">⊘</span>', text };
 }
-// Compose une infobulle existante avec le détail des frais (cellule profit/heure).
-const withFeeText = (base, cell) => esc(cell.text ? `${base} · ${cell.text}` : base);
-
 // Frais et profit NET d'une ligne de manifeste. Hypothèse 2 de la spec : une transaction PAR
 // COMMODITÉ, donc chaque ligne paie sa propre base — sans quoi la somme des lignes affichées ne
 // ferait pas le total affiché, l'incohérence la plus visible qui soit. Le décompte des opérations
@@ -329,8 +287,6 @@ const withFeeText = (base, cell) => esc(cell.text ? `${base} · ${cell.text}` : 
 // Préfixe un montant de son signe RÉEL. Un « + » posé d'office écrivait « +-1 234 » dès que les
 // frais mangeaient la marge, en vert, sur le seul chiffre qui disait de ne pas charger la ligne.
 const signe = (n, texte) => (n < 0 ? texte : "+" + texte);
-// Classe de couleur assortie : le vert de `.profit` ne doit pas habiller une perte.
-const classeProfit = (n) => (n < 0 ? "perte" : "profit");
 // Texte de la cellule « profit » d'une ligne de manifeste. Partagé par le premier rendu et par la
 // mise à jour en direct : deux conventions différentes et éditer une quantité changerait le sens
 // de la cellule. Une ligne « vend ailleurs » n'a pas de profit sur ce trajet — elle a quand même
@@ -405,6 +361,12 @@ function evaluate(r, f) {
 // mais ce qu'on sait de la donnée — fraîcheur du relevé × part de volume publiée. Elle ne trie plus
 // par défaut : c'est le profit net qui le fait. `scoreBarWidth` borne le dessin par ceinture (#39),
 // même si la fiabilité ne peut plus sortir de [0, 100] par construction.
+//
+// NE PAS SUPPRIMER, malgré l'absence d'appelant : le rendu vit dans `CelluleFiabilite`
+// (vues/communs.tsx), mais `logic.test.mjs:117` lit CE fichier comme du TEXTE et cherche
+// `function fiabiliteCell(` pour vérifier que la largeur passe bien par `scoreBarWidth`. La retirer
+// fait tomber un test unitaire, et l'ancre est délibérée — c'est le seul moyen qu'a un test de
+// `node --test` de garder une règle qui vit dans app.js.
 function fiabiliteCell(f, age, part) {
   const tier = f >= 70 ? "s-good" : f >= 40 ? "s-ok" : "s-low";
   const quoi = age == null ? "date du relevé inconnue" : `relevé vieux de ${Math.round(age)} j`;
@@ -2132,73 +2094,6 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
 // incompatibles, et l'écran doit le dire : sans ça l'app se contredit sous les yeux de
 // l'utilisateur, qui lit deux ordres opposés du même fret.
 
-// Un arrêt de la tournée. Les lignes sont plafonnées à 12 : le calcul est linéaire, c'est la
-// lisibilité qui souffre — et ce qui est écarté se dit, plutôt que de disparaître.
-function tourArretHTML(a, rang) {
-  const MAX = 12;
-  const visibles = a.lignes.slice(0, MAX);
-  const reste = a.lignes.length - visibles.length;
-  const detail = visibles
-    .map((l) => `<span class="tour-ligne${l.sousLePrixPaye ? " perte" : ""}">${esc(l.name)} <b>${fmt(l.absorbe)}</b>${l.reste > 0 ? `/${fmt(l.absorbe + l.reste)}` : ""} SCU</span>`)
-    .join("");
-  const cert = a.certitude === "connue"
-    ? `<span class="ec-sur" title="Capacité publiée par UEX">${fmt(a.garanti)} SCU garantis</span>`
-    : a.certitude === "inconnue"
-      ? '<span class="ec-flou" title="UEX ne publie pas la capacité de ce point : ni zéro, ni illimitée">capacité inconnue</span>'
-      : `<span class="ec-flou" title="Capacité publiée pour une partie seulement">${fmt(a.garanti)} SCU garantis, reste inconnu</span>`;
-  return `<div class="tour-arret">
-      <div class="tour-arret-head">
-        <span class="tour-n">${rang}</span>
-        <span class="tour-nom">${esc(a.terminal)}${sysBadge(a.system)}${a.cross ? ' <span class="cross" title="Changement de système">⚡</span>' : ""}${outpostTag(a.outpost)}</span>
-        <span class="tour-lignes-n">${a.lignes.length} ligne${a.lignes.length > 1 ? "s" : ""} · <b>${fmt(a.scu)}</b> SCU</span>
-        <span class="tour-encaisse" title="Encaissement brut. Profit, prix d'achat déduit : ${a.profit >= 0 ? "+" : ""}${fmt(Math.round(a.profit))} aUEC.">${fmt(Math.round(a.encaisse))}</span>
-      </div>
-      <div class="tour-arret-lignes">${detail}${reste > 0 ? `<span class="tour-ligne muted">+ ${reste} autre${reste > 1 ? "s" : ""}</span>` : ""}</div>
-      <div class="tour-arret-meta">${cert}${a.aPerte ? ' · <span class="ec-perte" title="Le prix ici est inférieur à ce que tu as payé">sous le prix payé</span>' : ""}</div>
-    </div>`;
-}
-
-function tourHTML(t, alt, systeme, toutSysteme) {
-  if (!t.arrets.length && !t.sansDebouche.length) {
-    return `<div class="tour-vide"><p class="muted">Aucun comptoir ne reprend ce fret ${toutSysteme ? "où que ce soit" : `dans ${esc(systeme)}`} avec ces filtres.
-      Ouvre la portée aux autres systèmes, ou <b>dépose</b> le fret à une station : il n'est alors ni vendu ni perdu.</p></div>`;
-  }
-  // Le plancher, dit AVANT les chiffres. 307 des 1 879 points de vente publient leur capacité :
-  // le nombre d'arrêts est presque toujours faux vers le bas, et un total ne s'affiche jamais sans
-  // dire s'il est garanti ou parié.
-  const parie = t.certitude !== "connue";
-  const bandeau = `<div class="tour-plancher ${parie ? "parie" : "sur"}">${parie
-    ? "Plancher : UEX ne publie la capacité que d'un point de vente sur six. Il faudra sans doute <b>plus d'arrêts</b> que ce qui est annoncé — la tournée se recalcule après chaque arrêt réel."
-    : "Toutes les capacités de cette tournée sont publiées par UEX : le nombre d'arrêts est <b>garanti</b>."}</div>`;
-
-  const orphelines = t.sansDebouche.length
-    ? `<div class="tour-orphelines"><b>${t.sansDebouche.length} ligne${t.sansDebouche.length > 1 ? "s ne s'écoulent" : " ne s'écoule"} nulle part ${toutSysteme ? "dans la portée" : `dans ${esc(systeme)}`}</b> :
-        ${t.sansDebouche.map((g) => `<span class="tour-orph">${esc(g.name)} ${fmt(g.units)} SCU</span>`).join("")}
-        <span class="muted">— ouvre la portée, dépose-les à une station, ou garde-les à bord.</span></div>`
-    : "";
-
-  const entete = `<div class="tour-head">
-      <span class="tour-titre">◈ Tournée d'écoulement</span>
-      <span class="tour-bilan"><b>${t.arrets.length}</b> arrêt${t.arrets.length > 1 ? "s" : ""}${t.sauts > 0 ? ` · <b>${t.sauts}</b> saut${t.sauts > 1 ? "s" : ""} de système` : ""} · <b>${fmt(t.scu)}</b> SCU écoulés${t.resteScu > 0 ? ` · <b class="tour-reste">${fmt(t.resteScu)}</b> SCU resteraient à bord` : " · <b>soute vidée</b>"}</span>
-      <span class="tour-total" title="Encaissement brut de la tournée. Profit, prix d'achat déduit : ${t.profit >= 0 ? "+" : ""}${fmt(Math.round(t.profit))} aUEC.">${fmt(Math.round(t.encaisse))} <span>aUEC</span></span>
-    </div>`;
-
-  // L'alternative « un arrêt de plus », chiffrée. L'ordre reste lexicographique STRICT : la plus
-  // courte est retenue. Un seuil serait un paramètre invérifiable — l'app ne sait pas si tu as le
-  // temps, si c'est sur ton chemin, ou si tu veux juste te coucher. On montre les deux.
-  const alternative = alt
-    ? `<div class="tour-alt">
-        <div class="tour-alt-head">Un arrêt de plus : <b class="profit">+${fmt(Math.round(alt.ecart))}</b> aUEC${alt.ecartPct != null ? ` <span class="muted">(+${alt.ecartPct.toFixed(1)} %)</span>` : ""}</div>
-        <div class="tour-alt-chemin">${alt.arrets.map((a) => `${esc(a.terminal)} <span class="muted">(${a.lignes.length})</span>`).join(" <span class=\"tour-fleche\">→</span> ")}</div>
-        <div class="tour-alt-note muted">À toi de trancher : l'app ne sait pas si tu as le temps, ni si c'est sur ton chemin.</div>
-      </div>`
-    : "";
-
-  return entete + bandeau + orphelines +
-    `<div class="tour-arrets">${t.arrets.map((a, i) => tourArretHTML(a, i + 1)).join("")}</div>` +
-    alternative;
-}
-
 function renderTour() {
   const box = $("tour");
   if (!box) return;
@@ -3022,15 +2917,6 @@ function marginTier(m) {
 // En Marché la valeur est la marge (heatmap linéaire) ; en Butin le prix de revente
 // (heatmap par rang, cf. valueTiers — les prix s'étalent sur cinq ordres de grandeur).
 // `commodityTileHTML` a été remplacé par vues/commodites.tsx.
-// Mode Butin : la réponse directe à « ça vaut combien ». `p.sells` est déjà trié par prix
-// décroissant, le meilleur point est donc en tête. Prix au SCU seulement — le joueur multiplie
-// par ce qu'il a trouvé, on ne suppose pas une soute pleine.
-function lootValueHTML(p) {
-  const best = p.sells[0];
-  if (!best) return '<span class="loot-value muted">aucun point de vente</span>';
-  return `<span class="loot-value"><b>${fmt(best.price)}</b> aUEC/SCU<span class="loot-where">au mieux — ${esc(best.terminal)} (${esc(best.system)})</span></span>`;
-}
-
 // Détail d'une commodité : tous ses points d'achat (moins cher d'abord) et de vente (mieux payé
 // d'abord). En mode Butin, l'achat n'a pas de sens : on ne garde que « où l'écouler ».
 function paintCommodityDetail() {
@@ -3063,10 +2949,6 @@ function paintCommodityDetail() {
     texteCapaciteInconnue: VOL_UNKNOWN_HINT,
   }));
 }
-// Textes d'aide : le board ne répond pas à la même question selon le mode.
-const COMM_HINT_MARKET = 'Le <b>board de marché</b> : chaque tuile = une commodité (code UEX) et sa <b>marge max</b>, colorée selon son intérêt. Clique une tuile — ou cherche via le champ <b>Commodité</b> — pour voir <b>tous ses points d\'achat / vente</b> (stock, demande, prix) et surtout <b>où l\'écouler</b> quand une station est saturée.';
-const COMM_HINT_LOOT = 'Tu as <b>trouvé</b> une ressource (minage, salvage, caisse abandonnée) ? Ce board liste <b>tout ce qui se vend</b>, y compris ce qui ne s\'achète nulle part, avec son <b>prix de revente max</b> au SCU. Clique une tuile pour voir <b>où l\'écouler</b>. Les tuiles en <b>pointillés</b> sont introuvables à l\'achat.';
-
 // Reflète le board courant dans les contrôles. « Marge » n'a aucun sens quand l'acquisition est
 // gratuite : le premier bouton de tri devient « Revente ».
 function syncCommBoardUI() {
