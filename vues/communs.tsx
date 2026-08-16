@@ -55,6 +55,18 @@ export function PastilleFraicheur({ updated }: { updated: number }) {
   return <span className={"fresh " + cls} title={"Relevé UEX il y a " + label}>{label}</span>;
 }
 
+// Le POINT de fraîcheur — à ne pas confondre avec la pastille ci-dessus. Celle-ci porte son
+// libellé et sert les tableaux ; celui-là est un simple rond coloré, sans texte, posé devant un nom
+// de commodité dans le compagnon de voyage, où la place manque. Deux classes, deux rendus, et les
+// seuils diffèrent aussi : le point n'a pas de cas « moins d'un jour » séparé.
+export function PointFraicheur({ updated }: { updated: number }) {
+  const d = ageDays(updated);
+  if (d == null) return <span className="fresh-dot f-old" title="Fraîcheur des données inconnue" />;
+  const label = d < 1 ? (d < 1 / 24 ? "moins d'1 h" : Math.round(d * 24) + " h") : Math.round(d) + " j";
+  const cls = d < 3 ? "f-good" : d < 7 ? "f-ok" : "f-old";
+  return <span className={"fresh-dot " + cls} title={"Relevé UEX il y a " + label} />;
+}
+
 // La cellule de fiabilité. Elle N'ENTRE PAS DANS LE TRI, et son title le dit — c'est une décision
 // de l'ADR-005 : la fiabilité informe, elle ne classe pas.
 export function CelluleFiabilite({ f, age, part }: { f: number; age: number | null; part: number }) {

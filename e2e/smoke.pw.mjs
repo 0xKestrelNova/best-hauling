@@ -1740,6 +1740,25 @@ async function ouvrirUneJambeEditable(page, essais = 10, convient = null) {
   throw new Error("aucune des premières lignes ne mène à une jambe qui convienne");
 }
 
+test("Dépassement du stock : le marqueur SURVIT à un rafraîchissement (#122)", async ({ page }) => {
+  // `over-stock` n'était posée que par le gestionnaire de saisie, jamais au rendu : la première
+  // réécriture de la carte — un filtre changé, l'arrivée du marché, un prix corrigé ailleurs —
+  // l'effaçait en laissant la quantité. Le dépassement cessait d'être signalé, ce qui est
+  // exactement ce que le marqueur existe pour éviter.
+  await ouvrirUneJambeEditable(page);
+  const champ = page.locator("#journeyCard .jman-qty").first();
+  await champ.fill("99999");
+  await expect(champ, "le marqueur n'apparaît même pas à la frappe").toHaveClass(/over-stock/);
+
+  // Un rendu venu d'AILLEURS : on ne touche pas au champ, on change un filtre.
+  await page.fill("#cargo", "95");
+  await expect(champ).toHaveValue("99999");
+  await expect(
+    champ,
+    "le marqueur a disparu au rafraîchissement — la quantité absurde n'est plus signalée",
+  ).toHaveClass(/over-stock/);
+});
+
 test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors lien", async ({ page }) => {
   await ouvrirUneJambeEditable(page);
   await page.locator("#journeyCard .jman-qty").first().fill("7");

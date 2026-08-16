@@ -34,8 +34,9 @@ import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
-import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement, suggestions as vueSuggestions } from "./vues/manifeste.tsx";
+import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
+import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
 import { KIND_ICON } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -1441,7 +1442,7 @@ function reprendreIci(station, nom, units) {
 // l'app ne rappelait — c'était tout le sujet.
 // Les clés de DEPOTS viennent du localStorage : elles sont échappées comme n'importe quelle donnée
 // tierce (cf. e2e/injection.pw.mjs).
-function renderEntrepots() {
+function renderEntrepots(synchrone = false) {
   const box = $("depotsCard");
   if (!box) return;
   const stations = Object.entries(DEPOTS).filter(([, lots]) => Array.isArray(lots) && lots.length);
@@ -1455,7 +1456,7 @@ function renderEntrepots() {
     scuTotal: holdScu(tous),
     invest: holdByCommodity(tous).reduce((s, g) => s + g.invest, 0),
     fmt,
-  }));
+  }), { synchrone });
 }
 
 // La liste de ce qui dort en entrepôt, en texte, dans le presse-papiers : elle ne quittait jamais
@@ -1948,41 +1949,23 @@ function editLegQty(i, li, val) {
   // voyage ou de replier une jambe du premier coup). On laisse le tour d'événement se terminer.
   setTimeout(renderJourney, 0);
 }
-// Saisie en direct : met à jour l'intention + repeint profit/caisses/suggestions SANS re-render
-// global (un renderJourney() à chaque frappe ferait perdre le focus de l'input).
+// Saisie en direct : met à jour l'intention, puis repeint la carte AVEC LA GÉNÉRATION FIGÉE.
+//
+// L'ancienne version s'interdisait tout re-rendu — « un renderJourney() à chaque frappe ferait
+// perdre le focus de l'input » — et mettait donc à jour `.jman-profit`, `over-stock` et la boîte de
+// suggestions à la main. C'était vrai d'un `innerHTML`, qui détruit le champ ; ça ne l'est plus
+// d'un rendu React, qui garde le nœud et n'écrit pas dans un champ non contrôlé. Le seul risque
+// serait que la valeur CALCULÉE reprenne la main sous les doigts : `frappe: true` l'empêche en ne
+// bougeant pas la génération (cf. `renderJourney`).
 function liveLegQty(i, li, inp) {
-  if (!JOURNEY || !JOURNEY.legs[i]) return; // idem : le parcours a pu disparaître sous la saisie
-  const leg = JOURNEY.legs[i];
-  const f = readFilters();
-  const intent = legIntent(leg, i, f);
+  if (!JOURNEY || !JOURNEY.legs[i]) return; // le parcours a pu disparaître sous la saisie
+  const intent = legIntent(JOURNEY.legs[i], i, readFilters());
   if (!intent[li]) return;
-  let u = Math.floor(Number(inp.value));
-  if (!Number.isFinite(u) || u < 0) u = 0;
-  intent[li].units = u;
-  const lines = legEffectiveLines(leg, i, f); // relues au marché COURANT, jamais figées
-  const l = lines[li];
-  if (!l) return;
-  inp.classList.toggle("over-stock", isFinite(l.cap) && u > l.cap);
-  const ctx = legFeeCtx(leg, f);
-  const pair = ctx && ctx.pair;
-  const row = inp.closest(".jman-line");
-  const prof = row && row.querySelector(".jman-profit");
-  if (prof) prof.textContent = lineProfitText(u, l, pair);
-  renderLegSuggestions(i, lines);
+  const u = Math.floor(Number(inp.value));
+  intent[li].units = Number.isFinite(u) && u > 0 ? u : 0;
+  renderJourney({ frappe: true });
 }
-// Repeint la boîte de suggestions d'une jambe dépliée.
-function renderLegSuggestions(i, lines) {
-  const box = document.querySelector(`.jman-suggest[data-leg="${i}"]`);
-  if (!box) return;
-  const ctx = legSuggestCtx(JOURNEY.legs[i], lines, readFilters());
-  // Même composant que la carte : `data-leg` part sur le bouton d'ajout, la délégation qui le lit
-  // ne bouge pas. La carte du compagnon est encore écrite en innerHTML, donc ce conteneur est
-  // recréé à chaque rendu — la WeakMap de pont.js lui redonne simplement une racine neuve.
-  peindre(box, ctx ? vueSuggestions({
-    suggestions: suggestionsFor(ctx), restant: manifestRemaining(ctx), frais: ctx.fee,
-    fmt, fmtVol, attributsAjout: { "data-leg": i },
-  }) : null);
-}
+
 // Ajoute une commodité suggérée à une jambe, remplie au max possible.
 function addLegSuggestion(i, name) {
   const leg = JOURNEY.legs[i];
@@ -2118,24 +2101,24 @@ function removeJourneyStop(stopIndex) {
   refresh();
 }
 
-function renderJourney() {
+// `frappe` : on est EN TRAIN de taper dans un champ SCU de jambe. La génération ne bouge alors pas,
+// donc les champs non contrôlés gardent leur valeur et leur curseur pendant que profits, totaux et
+// suggestions se recalculent — même mécanique que le manifeste (#117). Tout autre appel la bouge,
+// ce qui remonte les champs : c'est ce que faisait l'ancien `card.innerHTML`.
+let journeyGen = 0;
+function renderJourney({ frappe = false } = {}) {
   const card = $("journeyCard");
   if (!card) return;
+  if (!frappe) journeyGen++;
   // Aucun voyage -> invite à en démarrer un : depuis un trajet (▶) OU « de zéro » (point de départ).
   if (!JOURNEY) {
     card.hidden = false;
-    const recap0 = $("journeyRecap"); if (recap0) recap0.hidden = true; // pas de récap sans voyage
+    const recap0 = $("journeyRecap"); if (recap0) { recap0.hidden = true; peindre(recap0, null); } // pas de récap sans voyage
     const row0 = $("shipJourneyRow"); if (row0) row0.classList.remove("stacked");
     renderJourneyMap();
     renderSoute();
     renderEntrepots();
-    card.innerHTML =
-      `<div class="journey-head"><span class="journey-title">◈ Nouveau voyage</span></div>
-       <p class="journey-hint">Choisis un trajet (▶) dans une vue, ou démarre de zéro :</p>
-       <div class="journey-add">
-         <input id="journeyStart" list="stationList" placeholder="Point de départ (terminal)…" autocomplete="off" aria-label="Point de départ du voyage" />
-         <button id="journeyStartBtn" type="button" class="chain-pick">Commencer</button>
-       </div>`;
+    peindre(card, inviteVoyage(), { synchrone: true });
     return;
   }
   card.hidden = false;
@@ -2144,89 +2127,71 @@ function renderJourney() {
   else if (!enrouteReady) setupEnRoute();
 
   const stations = journeyStations(JOURNEY);
-  const path = stations
-    .map((s, i) => `<span class="jstep-wrap"><button class="jstep${i === JOURNEY.current ? " here" : ""}" data-i="${i}" title="Je suis ici"><span class="sys ${esc(s.system.toLowerCase())}">${esc(s.name)}</span></button><button class="jstep-del" data-i="${i}" title="Retirer cet arrêt" aria-label="Retirer">✕</button></span>`)
-    .join('<span class="jsep">→</span>');
   const n = JOURNEY.legs.length;
   const f = readFilters();
   let totalProfit = 0, totalScu = 0, totalFees = 0; // récap : profit réel, SCU et frais du voyage
   // Manifeste (cargaison) de chaque jambe — optimal ou édité ; jambe dépliable pour l'éditer.
-  const legsHtml = JOURNEY.legs.map((leg, i) => {
+  const jambes = JOURNEY.legs.map((leg, i) => {
     const lines = MARKET ? legEffectiveLines(leg, i, f) : null;
     const pair = MARKET ? (legFeeCtx(leg, f) || {}).pair : null;
     const edited = MARKET && !!JOURNEY_EDITS[legKey(leg, i)];
-    const pinned = edited && !!JOURNEY_PINS[legKey(leg, i)]; // figée par une correction, pas par toi
-    const charge = MARKET && jambeChargee(leg, i); // ce manifeste est-il déjà en soute ?
     const expanded = i === journeyExpandedLeg;
-    let cargo, total;
-    // `totalJambe` porte le NOMBRE quand `total` n'en est que le rendu : c'est lui qui décide du
-    // signe et de la couleur. Une jambe dont les frais dépassent la marge est une vraie réponse,
+    // `nombreTotal` porte le NOMBRE quand `texteTotal` n'en est que le rendu : c'est lui qui décide
+    // du signe et de la couleur. Une jambe dont les frais dépassent la marge est une vraie réponse,
     // pas un cas limite — elle s'affichait « +-1 234 », en vert.
-    let totalJambe = 0;
-    if (!MARKET) { cargo = '<span class="muted">calcul…</span>'; total = "—"; }
-    else if (!lines.length) { cargo = '<span class="muted">aucun fret rentable</span>'; total = "0"; }
-    else {
-      cargo = lines.map((l) => `<span class="jcargo-item">${freshDot(lineFreshUpdated(l))}${commodityIcon(l.kind)}<span>${esc(l.name)}${illegalTag(l.illegal)}</span> <b>${fmt(l.units)} SCU</b></span>`).join("");
+    let texteTotal = "—", nombreTotal = 0;
+    if (MARKET && lines.length) {
       const t = manifestTotals(lines, pair);
-      total = fmtFee(t.profit, t.fees);
-      totalJambe = t.profit;
+      texteTotal = fmtFee(t.profit, t.fees);
+      nombreTotal = t.profit;
       totalProfit += t.profit;
       totalFees += t.fees;
       totalScu += lines.reduce((s, l) => s + l.units, 0);
-    }
-    let editor = "";
-    if (expanded && MARKET) {
-      const rows = lines.map((l, li) =>
-        `<div class="jman-line">${commodityIcon(l.kind)}` +
-        `<span class="mqtywrap"><input type="number" class="jman-qty" min="0" value="${l.units}" data-leg="${i}" data-i="${li}" aria-label="SCU ${esc(l.name)}"><span class="munit">SCU</span></span>` +
-        `<span class="jman-name">${freshDot(lineFreshUpdated(l))}${esc(l.name)}${illegalTag(l.illegal)}${l.acquired ? ' <span class="carry-tag" title="Introuvable à l\'achat ici — fret déjà en soute">acquis ailleurs</span>' : ""}${l.sellPrice == null ? ' <span class="carry-tag">vend ailleurs</span>' : ""}</span>` +
-        `<span class="jman-profit profit">${lineProfitText(l.units, l, pair)}</span>` +
-        `<button class="jman-del" data-leg="${i}" data-name="${esc(l.name)}" title="Retirer">✕</button></div>`
-      ).join("") || '<div class="muted jman-empty">Aucune commodité.</div>';
-      // Le conteneur part VIDE : `renderLegSuggestions` le peint juste après l'écriture de la
-      // carte, avec le même composant React que le manifeste d'« En route ». L'incruster ici
-      // demanderait une seconde fabrique du même bloc, en chaîne — c'est ce qu'on vient de retirer.
-      editor = `<div class="jman">${rows}
-        <div class="jman-add"><input class="jman-add-input" list="commodityList" data-leg="${i}" placeholder="+ commodité (même non vendable)…" autocomplete="off"><button class="jman-add-btn" data-leg="${i}">+</button>${edited ? `<button class="jman-reset" data-leg="${i}" title="Revenir au manifeste optimal">↺ optimal</button>` : ""}</div>
-        <div class="jman-suggest manifest-suggest" data-leg="${i}"></div>
-      </div>`;
-    }
-    return `<div class="jleg${i === JOURNEY.current ? " current" : ""}${expanded ? " expanded" : ""}">
-        <div class="jleg-head" data-leg="${i}" role="button" tabindex="0" aria-expanded="${expanded}" title="Éditer le manifeste de cette jambe"><span class="jleg-n">${i + 1}</span><span class="jleg-route">${esc(leg.from)} → ${esc(leg.to)}</span>${edited ? (pinned
-          ? '<span class="jleg-pinned" title="Quantités figées : le stock ou la demande de ce chargement a été corrigé depuis. Le trajet reste tel que tu l\'as décidé — les prix, eux, continuent de suivre le marché. « ↺ optimal » recalcule tout.">🔒</span>'
-          : '<span class="jleg-edited" title="Manifeste personnalisé">✎</span>') : ""}${MARKET && lines && lines.length ? `<button class="jleg-load${charge ? " charge" : ""}" data-leg="${i}" title="${charge ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}">${charge ? "⬢ à bord" : "✓ chargé"}</button>` : ""}<span class="jleg-profit ${classeProfit(totalJambe)}">${signe(totalJambe, total)}</span><span class="jleg-caret">${expanded ? "▾" : "▸"}</span></div>
-        <div class="jleg-cargo">${cargo}</div>
-        ${editor}
-      </div>`;
-  }).join("");
+    } else if (MARKET) texteTotal = "0";
+    // Les suggestions de la jambe DÉPLIÉE sont calculées ici et rendues dans l'arbre : elles
+    // vivaient dans un conteneur peint à part, détour qui n'existait que parce que la carte était
+    // réécrite en innerHTML à chaque rendu.
+    const sctx = expanded && MARKET ? legSuggestCtx(leg, lines, f) : null;
+    return {
+      i, from: leg.from, to: leg.to,
+      courante: i === JOURNEY.current,
+      depliee: expanded,
+      editee: !!edited,
+      figee: !!(edited && JOURNEY_PINS[legKey(leg, i)]), // figée par une correction, pas par toi
+      chargee: !!(MARKET && jambeChargee(leg, i)),       // ce manifeste est-il déjà en soute ?
+      lignes: lines && lines.map((l) => ({
+        name: l.name, kind: l.kind, illegal: !!l.illegal, units: l.units,
+        acquired: !!l.acquired, vendable: l.sellPrice != null,
+        releve: lineFreshUpdated(l),
+        texteProfit: lineProfitText(l.units, l, pair),
+        auDela: Number.isFinite(l.cap) && l.units > l.cap,
+      })),
+      texteTotal, nombreTotal,
+      suggestions: sctx ? {
+        suggestions: suggestionsFor(sctx), restant: manifestRemaining(sctx), frais: sctx.fee,
+        fmt, fmtVol, attributsAjout: { "data-leg": i },
+      } : null,
+    };
+  });
 
-  // Ajout d'arrêt : champ libre (tous terminaux) + suggestions rentables depuis la fin.
-  const sugList = MARKET ? journeyStopSuggestions() : [];
-  const suggestBlock = !MARKET ? ""
-    : sugList.length
-      ? `<div class="journey-suggest"><span class="suggest-lbl">Suggestions :</span>${sugList.map((s) => `<button class="jstop-suggest" data-label="${esc(s.label)}" title="Ajouter ${esc(s.terminal)} — via ${esc(s.commodity)}, +${fmt(s.margin)} marge/SCU">+ ${esc(s.terminal)} <span class="muted">+${fmt(s.margin)}</span></button>`).join("")}</div>`
-      : '<div class="journey-suggest-empty muted">Aucune destination rentable depuis ici — ajoute quand même un arrêt au champ ci-dessus (il aura un manifeste vide, à remplir à la main).</div>';
-  const startHint = n === 0 ? '<p class="journey-hint">Départ posé — ajoute un arrêt pour construire ton parcours.</p>' : "";
-  card.innerHTML =
-    `<div class="journey-head"><span class="journey-title">◈ ${n === 0 ? "Voyage" : "Voyage en cours"}</span><button id="journeyClear" class="journey-clear" title="Effacer le parcours" aria-label="Effacer">✕</button></div>
-     <div class="journey-path">${path}</div>
-     ${startHint}
-     <div class="journey-legs">${legsHtml}</div>
-     <div class="journey-add">
-       <input id="journeyAddStop" list="stationList" placeholder="+ Ajouter un arrêt (terminal)…" autocomplete="off" aria-label="Ajouter un arrêt" />
-       <button id="journeyAddBtn" type="button" class="chain-pick">+ Arrêt</button>
-     </div>
-     ${suggestBlock}
-     <div class="journey-meta">${n} saut${n > 1 ? "s" : ""} · marge cumulée <b class="profit">${fmt(journeyMargin(JOURNEY))}</b> aUEC/SCU</div>`;
+  peindre(card, carteVoyage({
+    stations, courante: JOURNEY.current, nbSauts: n,
+    margeCumulee: journeyMargin(JOURNEY),
+    marchePret: !!MARKET,
+    jambes,
+    suggestionsArret: MARKET ? journeyStopSuggestions() : null,
+    generation: journeyGen,
+    fmt, signe,
+  }), { synchrone: true });
 
-  // Après `card.innerHTML` : le conteneur des suggestions vient d'être (re)créé, il faut le peindre.
-  // Une seule jambe est dépliée à la fois, donc une seule en porte un.
-  if (MARKET && journeyExpandedLeg != null && JOURNEY.legs[journeyExpandedLeg])
-    renderLegSuggestions(journeyExpandedLeg, legEffectiveLines(JOURNEY.legs[journeyExpandedLeg], journeyExpandedLeg, f));
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
   renderJourneyMap();
-  renderSoute();
-  renderEntrepots();
+  // SYNCHRONES, les quatre : `ajusterRangeeVoyage` MESURE les hauteurs juste en dessous
+  // (`getBoundingClientRect`) pour décider d'empiler les colonnes. Un rendu React groupé les lui
+  // ferait lire AVANT peinture — la carte basculait de 1172 px à 640 px de large selon l'état,
+  // et la bascule s'inversait à l'état suivant. L'ancien `innerHTML` était synchrone ; on le reste.
+  renderSoute(true);
+  renderEntrepots(true);
   ajusterRangeeVoyage(); // après la carte ET la soute : les deux pèsent sur l'équilibre des colonnes
 }
 
@@ -2235,17 +2200,12 @@ function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
   const recap = $("journeyRecap");
   if (!recap) return;
   recap.hidden = false;
-  const materials = MARKET ? journeyCarriedCommodities().size : 0;
-  const kpi = (v, lbl) => `<div class="recap-kpi"><b>${v}</b><span>${lbl}</span></div>`;
-  recap.innerHTML =
-    `<div class="recap-head">◈ Résumé du voyage</div>
-     <div class="recap-profit ${classeProfit(totalProfit)}"${totalFees > 0 ? ` title="Frais d'autoload ≈ ${fmt(totalFees)} aUEC déjà déduits — estimation (±3 %)"` : ""}>${MARKET ? signe(totalProfit, (totalFees > 0 ? "≈ " : "") + fmt(totalProfit)) : "…"} <span>aUEC</span></div>
-     <div class="recap-kpis">
-       ${kpi(n, "saut" + (n > 1 ? "s" : ""))}
-       ${kpi(MARKET ? fmt(totalScu) : "…", "SCU")}
-       ${kpi(systems, "système" + (systems > 1 ? "s" : ""))}
-       ${kpi(MARKET ? materials : "…", "matériau" + (materials > 1 ? "x" : ""))}
-     </div>`;
+  peindre(recap, recapVoyage({
+    n, totalProfit, totalScu, totalFees, systems,
+    materials: MARKET ? journeyCarriedCommodities().size : 0,
+    marchePret: !!MARKET,
+    fmt, signe,
+  }), { synchrone: true });
 }
 
 // ---------- La tournée d'écoulement : la huitième vue (ADR-007, #57) ----------
