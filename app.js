@@ -27,6 +27,7 @@ import {
 // Tournée, et RIEN d'autre ne change : app.js reste le seul écrivain de l'état, refresh() reste
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { peindre } from "./pont.js";
+import { notifier } from "./etat.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -2277,6 +2278,10 @@ function refresh() {
   // quand il n'y a rien : les deux sortent tout de suite en masquant leur carte.
   else { renderSoute(); renderEntrepots(); }
   saveState();
+  // La propagation vers `etat.ts` (ADR-011). Elle est APPELÉE, jamais déclenchée par une écriture :
+  // des références vives sortent de l'état et sont mutées dehors (`legIntent`), et `logic.ts` mute
+  // `OVERRIDES` en place pendant le rendu — aucun accesseur ne les verrait. Voir l'en-tête d'etat.ts.
+  notifier();
 }
 const refreshDebounced = debounce(refresh);
 
@@ -2340,6 +2345,7 @@ function setupSort() {
       applySortIndicators(); // classes ET aria-sort, pour les deux tables
       render();
       saveState();
+      notifier(); // rendu CIBLÉ : il ne passe pas par `refresh()`, il propage lui-même
     });
   });
 }
@@ -2353,6 +2359,7 @@ function setupLoopSort() {
       applySortIndicators();
       renderLoops();
       saveState();
+      notifier(); // idem : hors `refresh()`
     });
   });
 }
@@ -2900,6 +2907,7 @@ function setCommSort(key) {
   }
   renderCommodities();
   saveState();
+  notifier(); // idem : hors `refresh()`
 }
 
 // Palier de couleur d'une tuile, RELATIF à la meilleure marge de la liste (heatmap :
@@ -2965,6 +2973,7 @@ function setCommBoard(board) {
   commBoard = board;
   renderCommodities(); // la sélection courante est revalidée par le rendu (elle peut disparaître)
   saveState();
+  notifier(); // idem : hors `refresh()`
 }
 
 // La grille, peinte à part : la sélection d'une tuile la repeint SANS tout recalculer. Avant React,
@@ -3090,6 +3099,7 @@ async function init() {
     peindreGrilleCommodites();
     paintCommodityDetail();
     saveState();
+    notifier(); // idem : hors `refresh()`
   });
   // Contrôles « En route ». Ces champs de terminal sont eux aussi à SAISIE LIBRE (datalist, mais
   // rien n'oblige à choisir dans la liste) : même debounce que ci-dessus. Sans lui, chaque frappe

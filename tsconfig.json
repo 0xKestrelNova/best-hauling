@@ -36,5 +36,5 @@
     "verbatimModuleSyntax": true,
     "jsx": "react-jsx"
   },
-  "include": ["logic.ts", "types.ts", "vues/**/*.tsx"]
+  "include": ["logic.ts", "types.ts", "etat.ts", "vues/**/*.tsx"]
 }
