@@ -194,3 +194,38 @@ test("Arbre : la carte du parcours ne se redessine pas hors du Plan de vol", asy
 
   expect(await lots(), "la carte du parcours a été redessinée hors du Plan de vol").toBe(0);
 });
+
+// La composition manuelle d'un chargement s'écrivait — et se PERSISTAIT — en pleine phase de rendu :
+// `compositionEnCours` décidait de l'abandonner, effaçait `localStorage`, tout ça pendant qu'on
+// dessinait. C'est l'un des trois chemins qu'`etat.ts` cite pour refuser un magasin qui notifierait
+// à l'écriture, et sous React une écriture pendant le rendu qui déclenche un rendu est une boucle.
+//
+// La décision est la MÊME (`compositionValide`, restée pure), mais c'est le GESTE qui l'applique.
+// Ce test tient les deux bouts : la composition survit à un rendu qui n'a rien à voir avec elle,
+// et elle est bel et bien abandonnée quand on change de route.
+test("Manifeste : la composition survit à un rendu, et s'abandonne au changement de route", async ({ page }) => {
+  const compo = () => page.evaluate(() => localStorage.getItem("best-hauling-manifest-edit"));
+
+  await page.click("#viewEnroute");
+  await expect(page.locator("#originList option").first()).toBeAttached({ timeout: 20000 });
+  const origine = await page.locator("#originList option").first().getAttribute("value");
+  await page.fill("#origin", origine);
+  await expect(page.locator("#manifest")).toBeVisible();
+  test.skip(!(await page.locator("#manifest .mline-del").count()), "aucun chargement rentable depuis ce terminal");
+
+  // Un geste de composition : on retire une ligne. La carte devient « à soi ».
+  await page.locator("#manifest .mline-del").first().click();
+  await expect.poll(compo, { timeout: 5000 }).not.toBeNull();
+
+  // Un rendu qui n'a RIEN à voir : une frappe dans la recherche. La composition doit survivre —
+  // avant, le rendu pouvait décider de l'abandonner au passage.
+  const avant = await compo();
+  await page.fill("#search", "a");
+  await expect(page).toHaveURL(/search=a/, { timeout: 10000 });
+  await expect.poll(compo, { timeout: 5000 }).toBe(avant);
+
+  // Changer de route, en revanche, l'abandonne — et c'est bien le GESTE qui le fait.
+  const autre = await page.locator("#originList option").nth(3).getAttribute("value");
+  await page.fill("#origin", autre);
+  await expect.poll(compo, { timeout: 8000 }).toBeNull();
+});

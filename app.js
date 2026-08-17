@@ -39,6 +39,7 @@ import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
 import { manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
+import { compositionValide, loadManifestEdit, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
 import { evaluate } from "./vues/trajets-vue.tsx";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
@@ -321,33 +322,38 @@ let currentManifest = null; // manifeste courant, mutable (édition SCU + sugges
 // une composition rangée sous un couple qu'on ne regarde plus ressortirait des jours plus tard sans
 // qu'on l'ait demandée. Le système est stocké avec le nom — deux terminaux peuvent porter le même
 // nom dans deux systèmes, et les lignes se relisent par INDEX de terminal.
-const MANIFEST_EDIT_KEY = "best-hauling-manifest-edit";
-function loadManifestEdit() {
-  try { etat.MANIFEST_EDIT = JSON.parse(localStorage.getItem(MANIFEST_EDIT_KEY)) || null; } catch { etat.MANIFEST_EDIT = null; }
-  if (!etat.MANIFEST_EDIT || !Array.isArray(etat.MANIFEST_EDIT.lines)) etat.MANIFEST_EDIT = null;
-}
-function saveManifestEdit() {
-  try {
-    if (etat.MANIFEST_EDIT) localStorage.setItem(MANIFEST_EDIT_KEY, JSON.stringify(etat.MANIFEST_EDIT));
-    else localStorage.removeItem(MANIFEST_EDIT_KEY);
-  } catch {}
-}
+
+
 // Retient ce qui est à l'écran comme intention. Appelée par CHAQUE geste de composition — ajout
 // suggéré, ajout libre, retrait, SCU ajustés — parce que c'est le geste qui fait la composition,
 // pas son résultat : deux gestes qui se compensent laissent quand même une carte à soi.
-function retenirManifeste() {
-  const m = currentManifest;
-  if (!m) return;
-  etat.MANIFEST_EDIT = {
-    from: m.origin.name, fromSystem: m.origin.system,
-    to: m.dest.name, toSystem: m.dest.system,
-    lines: manifestIntent(m.lines),
-  };
-  saveManifestEdit();
-}
-function oublierManifeste() { etat.MANIFEST_EDIT = null; saveManifestEdit(); }
+
 // « ↺ optimal » : la carte redevient un calcul, et se remet à suivre le marché et les filtres.
-function resetManifeste() { oublierManifeste(); refresh(); }
+function resetManifeste() { oublierComposition(); refresh(); }
+
+/**
+ * Efface la composition si la route affichée n'est plus la sienne.
+ *
+ * C'est l'ancienne décision de `compositionEnCours`, sortie du rendu. On la rejoue au GESTE, avec
+ * la même règle et le même juge (`compositionValide`) : ce qui change, c'est QUI décide — un clic
+ * de l'utilisateur, et non un repaint provoqué par une correction de prix ailleurs.
+ */
+function oublierCompositionSiRouteChangee() {
+  if (!etat.MANIFEST_EDIT || !etat.MARKET) return;
+  const origin = indexOrigine();
+  if (origin == null) return;
+  resolveDest();
+  const ot = etat.MARKET.terminals[origin];
+  const dt = enrouteDest == null ? null : etat.MARKET.terminals[enrouteDest];
+  const valide = compositionValide(
+    { name: ot.name, system: ot.system },
+    dt && { name: dt.name, system: dt.system },
+    $("destSystem").value,
+    (nom, systeme) => stationMap.get(stationLabel(nom, systeme)),
+    findCommodity,
+  );
+  if (!valide) oublierComposition();
+}
 
 // La marque et le contrôle du chargement composé à la main. Les deux mêmes chaînes servent au rendu
 // de la carte ET à leur pose en direct à la première frappe dans un champ SCU : celle-là ne repeint
@@ -360,33 +366,12 @@ function resetManifeste() { oublierManifeste(); refresh(); }
 // La composition vaut-elle pour la carte demandée ? Sinon elle est abandonnée SUR PLACE : la garder
 // en réserve la ferait ressurgir au retour sur cette route, longtemps après le geste qui l'a écrite.
 // Rend { edit, destIdx } ou null ; `destIdx` est l'arrivée que la carte doit alors afficher.
-function compositionEnCours(originIdx, destTerminal, destSystem) {
-  if (!etat.MANIFEST_EDIT) return null;
-  const ot = etat.MARKET.terminals[originIdx];
-  const dt = destTerminal == null ? null : etat.MARKET.terminals[destTerminal];
-  const destIdx = stationMap.get(stationLabel(etat.MANIFEST_EDIT.to, etat.MANIFEST_EDIT.toSystem));
-  const vivante = destIdx != null && manifestIntentSurvives(etat.MANIFEST_EDIT, {
-    from: { name: ot.name, system: ot.system },
-    dest: dt && { name: dt.name, system: dt.system },
-    destSystem,
-  });
-  if (!vivante) { oublierManifeste(); return null; }
-  // Commodité disparue d'UEX : oubliée plutôt qu'affichée en fantôme, comme sur une jambe de voyage.
-  // Purge SUR PLACE — les SCU sont adressés par index de ligne (`data-i`), l'intention et l'écran ne
-  // peuvent pas diverger d'un cran.
-  const gardees = etat.MANIFEST_EDIT.lines.filter((e) => findCommodity(e.name));
-  const perdues = gardees.length !== etat.MANIFEST_EDIT.lines.length;
-  if (perdues) { etat.MANIFEST_EDIT.lines = gardees; saveManifestEdit(); }
-  // Vidée par cette purge, et non par un geste : la composition ne parlait plus que de commodités
-  // qui n'existent plus, la carte reprend son calcul. Vidée à la main, elle reste (cf. logic.mjs).
-  if (perdues && !gardees.length) { oublierManifeste(); return null; }
-  return { edit: etat.MANIFEST_EDIT, destIdx };
-}
+
 
 // Lignes d'une composition, RELUES au marché courant : c'est ce qui fait qu'un prix corrigé
 // s'affiche alors que les SCU, eux, ne bougent pas.
-const lignesComposees = (edit, fromIdx, toIdx) =>
-  edit.lines.map((e) => hydrateManifestLine(etat.MARKET, fromIdx, toIdx, findCommodity(e.name), e.units, effVals));
+const lignesComposees = (lignes, fromIdx, toIdx) =>
+  lignes.map((e) => hydrateManifestLine(etat.MARKET, fromIdx, toIdx, findCommodity(e.name), e.units, effVals));
 
 // Carte d'un couple de terminaux dont plus AUCUN chargement n'est rentable : bestManifest ne rend
 // alors rien, et la composition faite à la main disparaîtrait avec lui — alors que le geste qui
@@ -432,7 +417,7 @@ function addSuggestion(name) {
   const u = addableUnits(it, manifestRemaining(currentManifest));
   if (u <= 0) return;
   currentManifest.lines.push({ ...it, units: u, cap: u });
-  retenirManifeste();
+  retenirComposition(currentManifest);
   paintManifest();
 }
 
@@ -447,7 +432,7 @@ function addManifestCommodity(name) {
   const c = findCommodity(name);
   if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
   m.lines.push(freeManifestLine(etat.MARKET, m.originIdx, m.destIdx, c, manifestRemaining(m).cargoLeft, effVals));
-  retenirManifeste();
+  retenirComposition(currentManifest);
   paintManifest();
 }
 
@@ -456,7 +441,7 @@ function removeManifestLine(name) {
   const m = currentManifest;
   if (!m) return;
   m.lines = m.lines.filter((l) => l.name !== name);
-  retenirManifeste();
+  retenirComposition(currentManifest);
   paintManifest();
 }
 
@@ -508,7 +493,7 @@ function updateManifestTotals() {
   // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
   // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
   // champ. Ce que ça écrit tient en deux nombres par ligne.
-  retenirManifeste();
+  retenirComposition(currentManifest);
   paintManifest();
 }
 
@@ -584,7 +569,18 @@ function renderManifest(origin, destSystem, f, destTerminal) {
   // Une composition en cours IMPOSE sa destination : laisser la carte se re-router toute seule sous
   // une correction de prix ferait disparaître de l'écran le chargement qu'on est en train de
   // composer — le symptôme même qu'on corrige. Forcer l'arrivée au champ, elle, l'abandonne.
-  const compo = compositionEnCours(origin, destTerminal, destSystem);
+  const ot = etat.MARKET.terminals[origin];
+  const dt = destTerminal == null ? null : etat.MARKET.terminals[destTerminal];
+  // PURE : elle ne décide plus d'abandonner, elle dit seulement si la composition vaut encore pour
+  // cette route. L'abandon est descendu dans les gestes qui CHANGENT de route — le rendu n'écrit
+  // plus rien (ADR-012 §4, et le point 3 de l'en-tête d'`etat.ts`).
+  const compo = compositionValide(
+    { name: ot.name, system: ot.system },
+    dt && { name: dt.name, system: dt.system },
+    destSystem,
+    (nom, systeme) => stationMap.get(stationLabel(nom, systeme)),
+    findCommodity,
+  );
   const cible = compo ? compo.destIdx : destTerminal;
   const man = bestManifest(etat.MARKET, origin, destSystem, fLibre, effVals, cible, feeResolver(f))
     || (compo ? manifesteSansOptimal(origin, cible, fLibre) : null);
@@ -593,7 +589,9 @@ function renderManifest(origin, destSystem, f, destTerminal) {
     peindre(card, indiceAucunChargement(aBord > 0 ? fmt(libre) : null));
     return;
   }
-  if (compo) man.lines = lignesComposees(compo.edit, origin, cible);
+  // Les lignes EFFECTIVES : celles de l'utilisateur, moins ce qu'UEX ne publie plus. Le filtre est
+  // fait par `compositionValide`, qui ne persiste rien — le prochain geste réécrit l'objet entier.
+  if (compo) man.lines = lignesComposees(compo.lignes, origin, cible);
   man.originIdx = origin;
   man.f = fLibre;
   man.aBord = aBord; // pour que la carte dise pourquoi elle ne remplit que ça
@@ -1927,9 +1925,14 @@ async function init() {
   // par 10 s : taper deux noms de terminal suffisait à le franchir. Les résolveurs restent DANS le
   // rappel, donc dans le même ordre qu'avant ; renderEnRoute / renderChain / renderCorrections les
   // rejouent de toute façon avant de peindre.
-  $("origin").addEventListener("input", debounce(refresh));
-  $("destSystem").addEventListener("input", refresh); // <select> : un seul événement, immédiat
-  $("destTerminal").addEventListener("input", refreshDebounced); // terminal d'arrivée forcé
+  // CHANGER DE ROUTE ABANDONNE LA COMPOSITION, et c'est un GESTE — plus une décision du rendu.
+  // `compositionValide` se contente désormais de dire qu'elle ne vaut plus ; c'est ici qu'on
+  // l'efface, parce que c'est ici que l'utilisateur a changé d'avis. La laisser en réserve la
+  // ferait ressurgir au retour sur cette route, longtemps après le geste qui l'avait écrite.
+  const changerDeRoute = () => { oublierCompositionSiRouteChangee(); refresh(); };
+  $("origin").addEventListener("input", debounce(changerDeRoute));
+  $("destSystem").addEventListener("input", changerDeRoute); // <select> : un seul événement, immédiat
+  $("destTerminal").addEventListener("input", debounce(changerDeRoute)); // terminal d'arrivée forcé
   // Contrôles « Chaîne ».
   $("chainOrigin").addEventListener("input", debounce(refresh));
   $("hops").addEventListener("input", refresh);
