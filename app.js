@@ -8,7 +8,7 @@ import {
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
-  commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
+  commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
@@ -53,7 +53,7 @@ import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
 import { carteParcours } from "./vues/carte.tsx";
 import { carteDeclaration } from "./vues/declaration.tsx";
-import { KIND_ICON } from "./vues/communs.tsx";
+import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
 // `maxBox` = plafond de caisse du terminal de CHARGEMENT, quand on le connaît : c'est une propriété
@@ -117,9 +117,8 @@ function lineFreshUpdated(l) {
   return b && s ? Math.min(b, s) : b || s || 0;
 }
 
-// Légendes de statut d'inventaire UEX (couleurs officielles).
-const BUY_STATUS = { 1: ["Vide", "red"], 2: ["Très bas", "red"], 3: ["Bas", "orange"], 4: ["Moyen", "blue"], 5: ["Élevé", "blue"], 6: ["Très élevé", "green"], 7: ["Plein", "green"] };
-const SELL_STATUS = { 1: ["Forte demande", "green"], 2: ["Bonne demande", "green"], 3: ["Demande correcte", "blue"], 4: ["Demande moyenne", "blue"], 5: ["Demande faible", "orange"], 6: ["Demande très faible", "red"], 7: ["Saturé (aucune demande)", "red"] };
+// `BUY_STATUS` et `SELL_STATUS` sont passées dans `vues/communs.tsx`, à côté de la pastille qui les
+// lit : app.js ne faisait que les repasser en props à deux vues.
 
 // ---------- Corrections locales (prix & stock) ----------
 // L'utilisateur peut corriger un prix ou un volume (stock à l'achat / demande à la vente)
@@ -2241,16 +2240,8 @@ function setCommSort(key) {
   notifier(); // idem : hors `refresh()`
 }
 
-// Palier de couleur d'une tuile, RELATIF à la meilleure marge de la liste (heatmap :
-// rouge = tête de peloton → bleu correct → gris atone → sans marge). S'adapte aux données.
-function marginTier(m) {
-  if (m == null || m <= 0) return "t-none";
-  const r = commMaxMargin > 0 ? m / commMaxMargin : 0;
-  if (r >= 0.66) return "t-hot";
-  if (r >= 0.40) return "t-warm";
-  if (r >= 0.18) return "t-mid";
-  return "t-low";
-}
+// `marginTier` est passée dans `logic.ts` sous le nom `palierMarge`, avec le maximum en PARAMÈTRE
+// au lieu de la globale `commMaxMargin` — et donc testable unitairement, ce qu'elle n'était pas.
 
 // Une tuile du board : code UEX + valeur compacte (K/M), colorée par palier.
 // En Marché la valeur est la marge (heatmap linéaire) ; en Butin le prix de revente
@@ -2310,7 +2301,7 @@ function peindreGrilleCommodites() {
     codesAmbigus: commDupCodes,
     // La heatmap est calculée par app.js : celle du Marché lit une globale (commMaxMargin), celle
     // du Butin vient de logic.ts (valeurTiers, par rang). L'îlot ne connaît ni l'une ni l'autre.
-    palier: (c) => (etat.commBoard === "loot" ? commTiers.get(c.name) || "t-none" : marginTier(c.margin)),
+    palier: (c) => (etat.commBoard === "loot" ? commTiers.get(c.name) || "t-none" : palierMarge(c.margin, commMaxMargin)),
     valeurCompacte: compactValue,
   }));
 }

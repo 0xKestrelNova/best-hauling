@@ -199,6 +199,19 @@ export function ValeurEditable({ valeur, commodite, terminal, cote, champ, relev
   );
 }
 
+// Les deux LÉGENDES d'inventaire UEX, avec leurs couleurs officielles. Elles vivent ici, à côté de
+// la pastille qui les lit : c'était la dernière donnée de présentation restée dans `app.js`, qui ne
+// faisait que les repasser en props à deux vues. Une seule source, comme `KIND_ICON`.
+export const BUY_STATUS: Record<number, [string, string]> = {
+  1: ["Vide", "red"], 2: ["Très bas", "red"], 3: ["Bas", "orange"], 4: ["Moyen", "blue"],
+  5: ["Élevé", "blue"], 6: ["Très élevé", "green"], 7: ["Plein", "green"],
+};
+export const SELL_STATUS: Record<number, [string, string]> = {
+  1: ["Forte demande", "green"], 2: ["Bonne demande", "green"], 3: ["Demande correcte", "blue"],
+  4: ["Demande moyenne", "blue"], 5: ["Demande faible", "orange"],
+  6: ["Demande très faible", "red"], 7: ["Saturé (aucune demande)", "red"],
+};
+
 // La pastille de statut d'inventaire UEX. Elle rend RIEN quand le code est absent — et l'espace qui
 // la sépare de la valeur reste alors seul en tête de cellule, comme dans la version d'origine.
 export function PastilleStatut({ code, cote, legende }: {

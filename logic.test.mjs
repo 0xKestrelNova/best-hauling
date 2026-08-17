@@ -13,7 +13,7 @@ import {
   routeMetrics, loopMetrics, netMarginRoi, dealFrom, enRouteDeals, bestManifest, buildChainAdjacency,
   pairEligible, suggestionsFrom,
   manifestsFrom, multiTrips, tripMetrics, legFromTrip,
-  commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
+  commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
@@ -1266,6 +1266,32 @@ test("compactValue : notation compacte K/M", () => {
   assert.equal(compactValue(540), "540");
   assert.equal(compactValue(0), "0");
   assert.equal(compactValue(null), "—");
+});
+
+// ---------- Heatmap relative (mode Marché) ----------
+test("palierMarge colore RELATIVEMENT au maximum de la liste, pas en aUEC absolus", () => {
+  // Les quatre frontières de la spec : 0,66 / 0,40 / 0,18, et le reste.
+  assert.equal(palierMarge(1000, 1000), "t-hot");   // r = 1
+  assert.equal(palierMarge(660, 1000), "t-hot");    // r = 0,66 pile
+  assert.equal(palierMarge(659, 1000), "t-warm");
+  assert.equal(palierMarge(400, 1000), "t-warm");   // r = 0,40 pile
+  assert.equal(palierMarge(399, 1000), "t-mid");
+  assert.equal(palierMarge(180, 1000), "t-mid");    // r = 0,18 pile
+  assert.equal(palierMarge(179, 1000), "t-low");
+  assert.equal(palierMarge(1, 1000), "t-low");
+
+  // La MÊME marge change de couleur si le board change : c'est le point.
+  assert.equal(palierMarge(500, 1000), "t-warm");
+  assert.equal(palierMarge(500, 500), "t-hot");
+});
+
+test("palierMarge : sans marge, hors barème — et jamais une division par zéro", () => {
+  assert.equal(palierMarge(null, 1000), "t-none");
+  assert.equal(palierMarge(undefined, 1000), "t-none");
+  assert.equal(palierMarge(0, 1000), "t-none");
+  assert.equal(palierMarge(-50, 1000), "t-none");   // une marge négative n'est pas « la plus basse »
+  // Un board dont RIEN n'a de marge : le rapport vaut 0, donc le palier le plus bas — pas NaN.
+  assert.equal(palierMarge(100, 0), "t-low");
 });
 
 // ---------- Heatmap par rang (mode Butin) ----------

@@ -1272,6 +1272,23 @@ export function commodityPoints(market: Marche, name: string, f: Filtres = {}, r
   return { name: c.name, code: c.code || "", kind: c.kind, illegal: c.illegal, buys, sells };
 }
 
+// Palier de heatmap d'une tuile en mode « Marché », RELATIF à la meilleure marge de la liste :
+// rouge = tête de peloton → bleu correct → gris atone → sans marge. L'échelle s'adapte donc aux
+// données, ce qu'un barème en aUEC absolus ne ferait pas.
+//
+// Le maximum est un PARAMÈTRE, et c'était une globale d'`app.js` (`commMaxMargin`). Il doit être
+// calculé sur TOUT le board et jamais sur le sous-ensemble visible : la couleur prétend situer la
+// commodité dans l'ensemble du marché, et taper « iron » suffisait à repeindre Iron — le bas du
+// classement — en `t-hot`, rang 0 sur 1 ligne restante (#56).
+export function palierMarge(m: number | null | undefined, max: number): PalierValeur {
+  if (m == null || m <= 0) return "t-none";
+  const r = max > 0 ? m / max : 0;
+  if (r >= 0.66) return "t-hot";
+  if (r >= 0.40) return "t-warm";
+  if (r >= 0.18) return "t-mid";
+  return "t-low";
+}
+
 // Paliers de heatmap par RANG, pour le mode « Butin ».
 // Les prix de revente s'étalent sur cinq ordres de grandeur (Saldynium à 34 M aUEC/SCU contre
 // Iron Ore à 1 000) : une échelle relative au maximum, comme `marginTier`, tasserait tout le
