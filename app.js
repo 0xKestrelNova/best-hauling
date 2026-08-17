@@ -1761,7 +1761,13 @@ function refresh() {
   else if (etat.view === "chain") renderChain();
   else if (etat.view === "corrections") renderCorrections();
   else if (etat.view === "commodities") renderCommodities();
-  else render();
+  // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
+  // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
+  // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
+  // que rien ne masque, donc « Aucune route ne correspond aux filtres. » revenait sous une vue qui
+  // n'a pas de tableau (#147). Chaque vue qui emménagera dans l'arbre passera par ce même repli :
+  // le nommer une fois vaut mieux que d'y penser à chaque migration.
+  else if (etat.view === "routes") render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
   // bénéfices du voyage — alors qu'une jambe non ajustée est justement, par contrat, branchée sur

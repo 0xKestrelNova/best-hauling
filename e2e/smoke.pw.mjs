@@ -2111,6 +2111,41 @@ test.describe("chargement du marché", () => {
   });
 });
 
+// ---------- Le message du tableau des trajets n'appartient qu'aux Trajets (#147) ----------
+
+test("une vue sans tableau des trajets ne dit pas « Aucune route ne correspond aux filtres » (#147)", async ({ page }) => {
+  // `switchView` masque bien #empty en entrant dans la Tournée (app.js:1818) — puis appelle
+  // refresh(), qui n'a pas de branche pour `tour` et tombe donc dans `else render()`. Ce dernier
+  // repose `$("empty").hidden = rows.length > 0` : le message revient, et il parle d'un tableau que
+  // la Tournée n'affiche pas. #empty est un <p> FRÈRE de #routes (index.html:420) : masquer la
+  // table ne le masque pas.
+  //
+  // On vérifie d'abord que le message existe VRAIMENT dans les Trajets, sinon le test passerait
+  // sans rien prouver — c'est le piège de #26, laissé écrit à côté.
+  await page.fill("#search", "zzzz");
+  await expect(page.locator("#rows tr")).toHaveCount(0);
+  await expect(page.locator("#empty")).toBeVisible();
+
+  await page.click("#viewTour");
+  await expect(page.locator("#tour")).toBeVisible();
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Et il ne revient pas non plus à la frappe suivante : c'est `refresh()` qui le repose, donc
+  // n'importe quel geste depuis la Tournée le ferait réapparaître.
+  await page.fill("#search", "zzzzz");
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Le Plan de vol masque #controls, on y arrive donc avec le filtre déjà posé.
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Retour aux Trajets : le message est toujours celui du tableau, il n'a pas été perdu.
+  await page.click("#viewRoutes");
+  await expect(page.locator("#empty")).toBeVisible();
+  await expect(page.locator("#empty")).toHaveText("Aucune route ne correspond aux filtres.");
+});
+
 // ---------- Service worker : le cache doit réellement se remplir (#66) ----------
 
 test("service worker : les données atterrissent vraiment dans le cache", async ({ page }) => {
