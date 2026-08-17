@@ -3,15 +3,15 @@
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
   tripMinutes, ageDays, pairAge,
-  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes,
   kFromReading, kPlausible,
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses,
-  routeMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
+  routeMetrics, enRouteDeals, bestManifest, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
-  legFromRoute, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
+  legFromRoute, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, journeyMap,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
@@ -33,7 +33,7 @@ import { readFilters } from "./filtres.ts";
 import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { construireIndex, findCommodity, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
@@ -44,7 +44,6 @@ import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 // (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
 // depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
-import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
@@ -782,39 +781,11 @@ function renderEnRoute() {
 }
 
 // ---------- Vue « Chaîne » (multi-sauts A -> B -> C ...) ----------
-let shownChain = null;  // chaîne actuellement affichée (pour l'ajout au voyage)
 
 // buildChainAdjacency vit dans logic.mjs (fonction pure) ; appelée avec MARKET + effVals.
 
 // `chainCardHTML` a été remplacé par vues/chaine.tsx.
-function renderChain() {
-  if (!etat.MARKET) { withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  const box = $("chainOut");
-  const f = readFilters();
-  shownChain = null;
-  const hint = (noeud) => { peindre(box, noeud); notifySuperseded(); };
-  if (indexDepartChaine() == null) return hint(indiceDepart());
-  if (!f.useCargo || !(f.cargo > 0)) return hint(indiceSoute());
-  const hops = Number($("hops").value) || 3;
-  // Les frais sont estampillés sur chaque leg par buildChainAdjacency — seul endroit de la chaîne
-  // où les deux terminaux d'un saut coexistent — puis consommés par bestChain, dont l'élagage et la
-  // sélection portent alors sur le profit NET.
-  const chain = bestChain(buildChainAdjacency(etat.MARKET, f, effVals, feeResolver(f)), indexDepartChaine(), hops, { cargo: f.cargo });
-  if (!chain || !chain.legs.length) return hint(indiceAucune());
-  shownChain = chain;
-  // Le calcul de présentation vit dans l'îlot (il n'appelle que logic.ts) ; app.js ne lui passe que
-  // ce qui dépend de l'ÉTAT : le résolveur de terminaux, et les deux fonctions de frais.
-  peindre(box, vueChaine({
-    chaine: chain,
-    cargo: f.cargo,
-    terminal: (idx) => etat.MARKET.terminals[idx],
-    celluleFrais: (lignes, fee, a, b, scu, fees) =>
-      feeCell(feeCtx(f, a.name, b.name, a, b), fees, () => feeCargoText(lignes, a.maxBox), scu > 0),
-    texteProfitLigne: lineProfitText,
-  }));
-  notifySuperseded();
-}
+
 
 // ---------- La soute : ce qui est à bord, et ce qu'on l'a payé (ADR-002) ----------
 // Un lot par chargement — la même commodité peut y figurer deux fois à des prix différents.
@@ -1628,7 +1599,6 @@ const debounce = (fn, ms = 150) => {
 
 function refresh() {
   if (etat.view === "enroute") renderEnRoute();
-  else if (etat.view === "chain") renderChain();
   // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
   // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
   // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
@@ -2302,7 +2272,6 @@ async function init() {
   // `shownRoutes`, et la garde `isMultiRoutes()` qui rattrapait le mode déjà changé au moment du
   // clic (#25) — un rappel fermé sur SON trajet ne peut pas se tromper de tableau.
   document.addEventListener("click", (e) => {
-    if (e.target.closest("#chainToJourney") && shownChain) { pickJourney(legsFromChain(shownChain, etat.MARKET.terminals)); return; }
     if (e.target.closest("#journeyClear")) { clearJourney(); return; }
     // Démarrer un voyage « de zéro » : bouton « Commencer » depuis l'invite.
     if (e.target.closest("#journeyStartBtn")) { beginJourney($("journeyStart").value); return; }
