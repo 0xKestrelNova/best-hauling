@@ -83,3 +83,16 @@ test("Arbre : taper depuis les Trajets ne repeint pas la vue Corrections", async
 
   expect(await lots(), "la vue Corrections a été repeinte depuis les Trajets").toBe(0);
 });
+
+test("Arbre : taper depuis les Trajets ne repeint pas le tableau des Boucles", async ({ page }) => {
+  await page.click("#viewLoops");
+  await expect(page.locator("#loopRows tr").first()).toBeVisible({ timeout: 20000 });
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "loopRows");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "le tableau des Boucles a été repeint depuis les Trajets").toBe(0);
+});

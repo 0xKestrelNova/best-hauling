@@ -15,6 +15,7 @@
 // le ferait disparaître des deux autres vues.
 import { fmt, fmtFee } from "../format.ts";
 import type { Boucle } from "../types.ts";
+import type { ContexteFrais } from "../frais.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
@@ -32,7 +33,7 @@ export type BoucleEvaluee = Boucle & {
   fiabilite: number; age: number | null; partVolume: number;
   units: number | null; unitsOut: number; unitsBack: number;
   profit: number; profitHour: number; minutes: number; fees: number;
-  feeInfo: unknown;
+  feeInfo: ContexteFrais;
   _fromHere?: boolean;
 };
 
