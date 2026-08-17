@@ -2,14 +2,14 @@
 
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
-  ageDays, pairAge, scoreBarWidth, addableUnits, scuBoxes, cargoBoxes, kFromReading, kPlausible, ovKey, safeKey, routeMetrics, enRouteDeals, bestManifest, palierMarge, manifestTotals, freeManifestLine, hydrateManifestLine, stationLabel, stationTree, manifestJourneyState, offloadPlan, exporterCorrections, exporterEntrepots,
+  ageDays, pairAge, scoreBarWidth, addableUnits, cargoBoxes, kFromReading, kPlausible, ovKey, safeKey, routeMetrics, enRouteDeals, bestManifest, palierMarge, freeManifestLine, hydrateManifestLine, stationLabel, stationTree, manifestJourneyState, offloadPlan,
 } from "./logic.ts";
 // Le premier îlot React (ADR-008, #96). `peindre` remplace `innerHTML` sur le conteneur de la
 // Tournée, et RIEN d'autre ne change : app.js reste le seul écrivain de l'état, refresh() reste
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
-import { fmt, fmtFee, scuBoxesLabel, signe } from "./format.ts";
+import { fmt, signe } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import {
   effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride,
@@ -17,27 +17,33 @@ import {
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
 import {
-  construireIndex, findCommodity, indexArriveeForcee, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName,
+  construireIndex, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName,
 } from "./marche.ts";
-import { alKey, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
-import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
+import { alKey, kFmt, loadAutoloadK, saveAutoloadK } from "./frais.ts";
+import { applyState, loadState, saveState } from "./persistance.ts";
 import { brancher, withMarket } from "./donnees.ts";
 import { brancherRendu, rafraichir } from "./rendu.ts";
+import {
+  addManifestCommodity, addSuggestion, oublierCompositionSiRouteChangee, removeManifestLine, resetManifeste, updateManifestTotals,
+} from "./manifeste-gestes.js";
+import {
+  copierCorrections, copierEntrepots, copierPlan, copyManifest, copyShareLink,
+} from "./presse-papiers.js";
 import {
   addLegLine, addLegSuggestion, addStopByTerminal, beginJourney, clearJourney, delLegLine, editLegQty, liveLegQty, manifestToJourney, removeJourneyStop, resetLeg, setJourneyStop, toggleLegEditor,
 } from "./voyage-gestes.js";
 import {
   chargerJambe, declarerABord, deposerIci, loadChargements, loadDepots, loadSoute, poserPosition, reprendreIci, retirerLot, vendreIci, venteImplicite, viderSoute,
 } from "./soute-actions.js";
-import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
+import { manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import {
-  compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition,
+  compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition,
 } from "./manifeste-etat.ts";
 
 
 import { nouvelleGenerationVoyage, pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
-import { planData, planHypotheses } from "./vues/plan-vue.tsx";
+import { planData } from "./vues/plan-vue.tsx";
 import {
   figerJambe, legSuggestCtx, journeyCarriedCommodities, legIntent, loadJourneyEdits, loadJourneyPins, pinLegsForVolume,
 } from "./voyage-donnees.ts";
@@ -303,7 +309,6 @@ function vignetteStation(s) {
 // C'est la même leçon qu'`indexOrigine` : une valeur dérivée qu'il faut penser à recalculer est une
 // valeur qui sera un jour lue périmée. Le coût est un `bestManifest` par geste — celui-là même que
 // le rendu que le geste déclenche referait de toute façon.
-const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
 
 // ---------- Le chargement qu'on COMPOSE à la main (#19) ----------
 // Lignes ajoutées, SCU ramenés à ce qu'on veut vraiment acheter : cette intention n'existait que
@@ -324,7 +329,6 @@ const chargementCourant = () => { const r = manifesteCourant(readFilters()); ret
 // pas son résultat : deux gestes qui se compensent laissent quand même une carte à soi.
 
 // « ↺ optimal » : la carte redevient un calcul, et se remet à suivre le marché et les filtres.
-function resetManifeste() { oublierComposition(); refresh(); }
 
 /**
  * Efface la composition si la route affichée n'est plus la sienne.
@@ -333,22 +337,7 @@ function resetManifeste() { oublierComposition(); refresh(); }
  * la même règle et le même juge (`compositionValide`) : ce qui change, c'est QUI décide — un clic
  * de l'utilisateur, et non un repaint provoqué par une correction de prix ailleurs.
  */
-function oublierCompositionSiRouteChangee() {
-  if (!etat.MANIFEST_EDIT || !etat.MARKET) return;
-  const origin = indexOrigine();
-  if (origin == null) return;
-  const arrivee = indexArriveeForcee();
-  const ot = etat.MARKET.terminals[origin];
-  const dt = arrivee == null ? null : etat.MARKET.terminals[arrivee];
-  const valide = compositionValide(
-    { name: ot.name, system: ot.system },
-    dt && { name: dt.name, system: dt.system },
-    $("destSystem").value,
-    (nom, systeme) => stationMap.get(stationLabel(nom, systeme)),
-    findCommodity,
-  );
-  if (!valide) oublierComposition();
-}
+
 
 // La marque et le contrôle du chargement composé à la main. Les deux mêmes chaînes servent au rendu
 // de la carte ET à leur pose en direct à la première frappe dans un champ SCU : celle-là ne repeint
@@ -395,41 +384,17 @@ function oublierCompositionSiRouteChangee() {
 // carte comme pour une jambe du compagnon. `suggestionsHTML` produisait le MÊME balisage en chaîne
 // et n'a plus lieu d'être : deux fabriques du même bloc auraient fini par diverger.
 
-function addSuggestion(name) {
-  const m = chargementCourant();
-  if (!m) return;
-  const it = suggestionsFor(m).find((x) => x.name === name);
-  if (!it) return;
-  const u = addableUnits(it, manifestRemaining(m));
-  if (u <= 0) return;
-  m.lines.push({ ...it, units: u, cap: u });
-  retenirComposition(m);
-  notifier();
-}
+
 
 // Trouve une commodité par nom OU code (insensible à la casse/espaces). Partagé par les ajouts
 // libres. La résolution vit dans logic.mjs : un code UEX peut désigner deux commodités.
 
 // Ajout LIBRE : n'importe quelle commodité (par nom ou code), même si elle n'est pas vendable à
 // destination — on la charge pour l'écouler ailleurs (ligne « carry-only », marge nulle ici).
-function addManifestCommodity(name) {
-  const m = chargementCourant();
-  if (!m || !etat.MARKET) return;
-  const c = findCommodity(name);
-  if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
-  m.lines.push(freeManifestLine(etat.MARKET, m.originIdx, m.destIdx, c, manifestRemaining(m).cargoLeft, effVals));
-  retenirComposition(m);
-  notifier();
-}
+
 
 // Retire une ligne du manifeste (par nom de commodité).
-function removeManifestLine(name) {
-  const m = chargementCourant();
-  if (!m) return;
-  m.lines = m.lines.filter((l) => l.name !== name);
-  retenirComposition(m);
-  notifier();
-}
+
 
 // Engager le chargement dans le voyage : le bouton, ou la phrase qui dit pourquoi il n'y est pas.
 // L'état vient de manifestJourneyState (pur, testé) — le rendu ne décide de rien.
@@ -449,43 +414,10 @@ function removeManifestLine(name) {
 // garde le même nœud DOM au re-rendu et ne touche ni à sa valeur ni à son curseur. C'est ce qui
 // permet de supprimer les trois écritures en place (`.mprofit`, `.mboxes`, `#manifestTot`) — un
 // nœud possédé par React et muté hors de React, c'est précisément ce que le garde de #113 interdit.
-function updateManifestTotals() {
-  const m = chargementCourant();
-  if (!m) return;
-  document.querySelectorAll("#manifest .mqty-input").forEach((inp) => {
-    const i = Number(inp.dataset.i);
-    let u = Math.floor(Number(inp.value));
-    if (!Number.isFinite(u) || u < 0) u = 0;
-    // Le dépassement du stock UEX est autorisé (vol de fret, relevé périmé…) : on ne plafonne
-    // plus à `cap`, on le signale visuellement — la classe `over-stock` est posée au rendu.
-    const l = m.lines[i];
-    if (l) l.units = u;
-  });
-  // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
-  // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
-  // champ. Ce que ça écrit tient en deux nombres par ligne.
-  retenirComposition(m);
-  // `notifier()` et non `rafraichir()` : la frappe ne doit PAS bouger la génération de la carte,
-  // sans quoi les champs SCU se remonteraient sous les doigts (cf. manifeste-etat.ts).
-  notifier();
-}
+
 
 // Copie le plan de chargement en texte (pour un 2e écran / des notes).
-function copyManifest() {
-  const m = chargementCourant();
-  if (!m) return;
-  const { profit, invest, scu, fees } = manifestTotals(m.lines, m.fee);
-  const rows = m.lines.map(
-    (l) => `${fmt(l.units)} SCU  ${l.name}  @ ${fmt(l.buyPrice)} -> ${fmt(l.sellPrice)}  (${lineProfitText(l.units, l, m.fee)} aUEC)  [${scuBoxesLabel(l.units, m.origin.maxBox)}]`
-  );
-  const text = [
-    `Manifeste — ${m.origin.name} (${m.origin.system}) -> ${m.dest.name} (${m.dest.system})`,
-    ...rows,
-    `Total : ${fmt(scu)}/${fmt(m.cargo)} SCU · profit ${fmtFee(profit, fees)} aUEC · investissement ${fmt(invest)} aUEC` +
-      (fees > 0 ? ` · frais d'autoload ≈ ${fmt(fees)} aUEC (estimation)` : ""),
-  ].join("\n");
-  copierTexte(text, $("copyManifest"), "⧉ Copier");
-}
+
 
 // Le SEUL chemin de sortie de l'app, pour les trois boutons de copie (manifeste, entrepôts,
 // corrections). Un fichier téléchargé était l'autre candidat, écarté parce que les deux issues
@@ -502,16 +434,7 @@ function copyManifest() {
 // Dans les deux cas l'utilisateur repartait en croyant avoir son texte dans le presse-papiers, et
 // collait le contenu précédent. Deux causes, deux messages : « indisponible » et « refusé » ne
 // demandent pas la même chose à qui les lit.
-function copierTexte(texte, btn, libelle) {
-  const copie = navigator.clipboard?.writeText(texte);
-  if (!copie) { showToast("⚠ Presse-papiers indisponible — copie impossible depuis cette page"); return; }
-  copie.then(() => {
-    if (!btn) return;
-    btn.textContent = "✓ Copié";
-    btn.classList.add("copied");
-    setTimeout(() => { btn.textContent = libelle; btn.classList.remove("copied"); }, 1500);
-  }).catch(() => showToast("⚠ Presse-papiers refusé — la copie n'a pas eu lieu"));
-}
+
 
 
 
@@ -597,9 +520,7 @@ function copierTexte(texte, btn, libelle) {
 
 // La liste de ce qui dort en entrepôt, en texte, dans le presse-papiers : elle ne quittait jamais
 // l'app, et il fallait rouvrir le navigateur qui porte le localStorage pour la relire.
-function copierEntrepots() {
-  copierTexte(exporterEntrepots(etat.DEPOTS, nowSec()), $("copyDepots"), "⧉ Copier");
-}
+
 
 // « Où écouler ce qui reste ? » — le détour manuel par la vue Commodités, en un panneau.
 // Le panneau « où écouler » est rendu par vues/soute.tsx (`<OuEcouler>`). Le CALCUL, lui, reste
@@ -776,26 +697,7 @@ function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
 // Le récapitulatif EN TEXTE (ADR-004 §8). Pas une image : la CSP pose `img-src 'self' https:` sans
 // `data:`, ce qui bloque le procédé habituel (<foreignObject> sérialisé en data: URI). Et le texte
 // se colle partout, se cite ligne par ligne dans un salon, et survit aux thèmes.
-function copierPlan() {
-  const d = planData();
-  const lignes = [`Plan de vol — ${planHypotheses(d.f).join(" · ")}`];
-  if (d.stations.length) {
-    lignes.push(`Parcours : ${d.stations.map((s) => `${s.name} (${s.system})`).join(" → ")}`);
-    d.jambes.forEach((j) => {
-      lignes.push(`${j.i + 1}. ${j.from} → ${j.to}  ${fmt(j.scu)} SCU  ${signe(j.profit, fmtFee(j.profit, j.fees))} aUEC${j.courante ? "  <- ici" : ""}`);
-      j.lines.forEach((l) => lignes.push(`     ${fmt(l.units)} SCU  ${l.name}`));
-    });
-  } else {
-    lignes.push("Parcours : aucun voyage engagé.");
-  }
-  if (d.groupes.length) {
-    lignes.push(`Soute : ${d.groupes.map((g) => `${fmt(g.units)} SCU ${g.name}`).join(" · ")}`);
-    lignes.push(`        ${fmt(d.scu)} SCU à bord${d.libre != null ? ` · ${fmt(d.libre)} libres` : ""} · capital engagé ${fmt(d.invest)} aUEC`);
-  }
-  const n = etat.JOURNEY ? etat.JOURNEY.legs.length : 0;
-  lignes.push(`Total : ${n} saut${n > 1 ? "s" : ""} · ${fmt(d.totalScu)} SCU · ${signe(d.totalProfit, fmtFee(d.totalProfit, d.totalFees))} aUEC`);
-  copierTexte(lignes.join("\n"), $("planCopy"), "⧉ Copier le récapitulatif");
-}
+
 
 // Bascule intelligente : si la carte Voyage est bien plus haute que ce qui l'accompagne
 // (voyage long / jambe dépliée), on empile en pleine largeur pour supprimer le grand vide.
@@ -1094,27 +996,7 @@ function applySortIndicators() {
   }
 }
 
-async function copyShareLink() {
-  const str = saveState();
-  const btn = $("share");
-  try {
-    await navigator.clipboard.writeText(shareURL(str));
-    const prev = btn.textContent;
-    const prevLabel = btn.getAttribute("aria-label");
-    btn.textContent = "✓ Lien copié";
-    // L'aria-label PRIME sur le contenu : sans ce miroir, le retour de copie n'existerait que pour
-    // les voyants, le nom accessible restant figé sur « Partager — … ».
-    btn.setAttribute("aria-label", "✓ Lien copié");
-    btn.classList.add("copied");
-    setTimeout(() => {
-      btn.textContent = prev;
-      btn.setAttribute("aria-label", prevLabel);
-      btn.classList.remove("copied");
-    }, 1500);
-  } catch {
-    // Presse-papiers indisponible (contexte non sécurisé) : on laisse l'URL dans la barre.
-  }
-}
+
 
 // L'édition en place vit désormais dans `ValeurEditable` (vues/communs.tsx), qui la gère PAR SON
 // ÉTAT. `startEdit` la faisait en mutant le span (`replaceChildren`) depuis une délégation posée
@@ -1197,9 +1079,7 @@ function resetAllReadings() {
 // Les corrections, en JSON daté, dans le presse-papiers. Du JSON et non du texte libre — celui-ci
 // est fait pour être RELU (cf. relireCorrections), et une correction qu'on ne peut pas dater est
 // une correction qu'on réappliquerait aveuglément des semaines plus tard.
-function copierCorrections() {
-  copierTexte(JSON.stringify(exporterCorrections(etat.OVERRIDES, nowSec()), null, 2), $("exportCorrections"), "⧉ Exporter");
-}
+
 
 
 
