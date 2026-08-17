@@ -21,6 +21,7 @@ import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
 import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 import { VueCommodites } from "./vues/commodites-vue.tsx";
 import { PanneauFrais } from "./vues/frais-station.tsx";
+import { VueCorrections } from "./vues/corrections-vue.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -67,10 +68,11 @@ export function App() {
           vue est faite en tête de `VueCommodites`, AU-DESSUS du calcul. La répéter sur trois
           portails frères ferait recalculer tout le marché trois fois (ADR-012 §3). */}
       <VueCommodites />
-      {/* Le panneau de frais passe en JSX AVANT le reste de la vue Corrections, et dans son propre
-          commit : `corrections.tsx` avertit que changer son garde de re-rendu ET migrer la vue dans
-          la même PR rendrait un échec inexploitable. Conteneur distinct, aucun conflit de racines
-          avec les `peindre()` qu'app.js applique encore aux deux autres. */}
+      {/* La vue Corrections occupe TROIS conteneurs. Les deux premiers vivent dans un seul
+          composant, parce que l'ordre dans lequel ils sont calculés est un contrat : les tuiles
+          purgent les corrections périmées en chemin, la bande doit compter APRÈS (ADR-012 §4).
+          Le panneau de frais, lui, est indépendant — il ne lit ni les corrections ni la purge. */}
+      <VueCorrections />
       <Portail id="correctionsFees" si="corrections"><PanneauFraisStation /></Portail>
     </>
   );

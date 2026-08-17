@@ -41,15 +41,14 @@ import { brancherRendu } from "./rendu.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
-import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
+// (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
+// depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
 import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
-import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
-import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
 import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
@@ -1697,7 +1696,6 @@ function refresh() {
   if (etat.view === "loops") renderLoops();
   else if (etat.view === "enroute") renderEnRoute();
   else if (etat.view === "chain") renderChain();
-  else if (etat.view === "corrections") renderCorrections();
   // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
   // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
   // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
@@ -2085,84 +2083,13 @@ function copierCorrections() {
 }
 
 
-// Prépare les tuiles d'une station pour l'îlot : app.js reste le seul à lire MARKET et à appeler
-// `effVals` — dont la purge d'une correction périmée est un effet de bord assumé.
-function tuilesStation(S, q) {
-  const t = etat.MARKET.terminals[S];
-  const tuiles = [];
-  etat.MARKET.commodities.forEach((c) => {
-    if (q && !c.name.toLowerCase().includes(q)) return;
-    const b = c.buys.find((x) => x[0] === S);
-    const s = c.sells.find((x) => x[0] === S);
-    if (!b && !s) return;
-    const cote = (p, side, libelle, unite) => {
-      const e = effVals(c.name, t.name, side, p[1], p[2], p[3]);
-      return {
-        cote: side, libelle, unite,
-        prix: e.price, volume: e.vol,
-        prixCorrige: e.oprice, volumeCorrige: e.ovol,
-        prixBrut: p[1], volumeBrut: p[2],
-        releve: p[3],
-      };
-    };
-    const cotes = [];
-    if (b) cotes.push(cote(b, "buy", "achat", "stock"));
-    if (s) cotes.push(cote(s, "sell", "vente", "dem."));
-    // Une seule ligne par côté RÉEL. La classe de la tuile porte le côté : c'est elle qui donne au
-    // liseré et à l'étiquette leur couleur, nécessaire depuis que l'en-tête de section sort de
-    // l'écran au défilement.
-    tuiles.push({ nom: c.name, kind: c.kind, illegal: c.illegal, achat: !!b, cotes });
-  });
-  return tuiles;
-}
 
-// Les stations corrigées, la station affichée épinglée en tête.
-function groupesCorrections(S) {
-  const actif = S != null ? etat.MARKET.terminals[S].name : null;
-  return groupOverridesByTerminal(etat.OVERRIDES, actif).map((g) => ({
-    terminal: g.terminal,
-    corrections: g.corrections,
-    actif: g.actif,
-    // `null` quand le terminal a disparu de market.json : la vignette s'affiche quand même, sinon
-    // la correction deviendrait invisible ET ineffaçable.
-    info: termByName.get(g.terminal) || null,
-  }));
-}
 
-function renderCorrections() {
-  if (!etat.MARKET) { withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  // UNE dérivation, en tête, et tout le rendu s'y réfère : la station ne peut pas changer entre
-  // deux lectures dans la même passe.
-  const S = indexStationExacte();
-  const q = $("search").value.trim().toLowerCase();
-  // La bande est peinte APRÈS le panneau, bien qu'elle s'affiche au-dessus : la préparation des
-  // tuiles appelle effVals, dont la purge des volumes périmés est un EFFET DE BORD. Compter d'abord
-  // afficherait une correction que le rendu suivant vient d'effacer. L'ordre est donc un contrat.
-  if (S == null) peindre($("correctionsStation"), inviteStation());
-  else {
-    const t = etat.MARKET.terminals[S];
-    // Deux `const`, dans cet ordre, et non deux propriétés d'un littéral : `tuilesStation` PURGE en
-    // chemin (via effVals), donc compter avant elle annoncerait une correction qu'elle vient
-    // d'effacer. L'ordre des propriétés d'un objet le donnerait aussi, mais par accident.
-    const tuiles = tuilesStation(S, q);
-    const nbCorrections = Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length;
-    peindre($("correctionsStation"), vueStation({
-      terminal: t,
-      tuiles,
-      filtre: !!q,
-      nbCorrections,
-      // Cette vue-ci ferme sur SA station : elle passe cinq arguments, pas six. L'enveloppe remet
-      // le terminal à sa place — la substituer nue décalerait tout, en silence.
-      corriger: (commodite, cote, champ, valeur, releve) => corriger(commodite, t.name, cote, champ, valeur, releve),
-    }));
-  }
-  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections(S) }));
-  // Le panneau de frais est rendu par l'arbre (`vues/frais-station.tsx`, portail #correctionsFees).
-  // Son garde de signature est parti avec lui : React ne réécrit pas un champ non contrôlé qu'il
-  // réconcilie, donc la raison d'être du garde — protéger une saisie en cours (#24) — s'évapore.
-  notifySuperseded();
-}
+
+
+// `renderCorrections`, `tuilesStation` et `groupesCorrections` sont passées dans
+// `vues/corrections-vue.tsx` : la vue vit dans l'arbre (ADR-012).
+
 
 // ---------- Vue « Commodités » ----------
 // `marginTier` est passée dans `logic.ts` sous le nom `palierMarge`, avec le maximum en PARAMÈTRE
@@ -2320,17 +2247,11 @@ async function init() {
       }
       return;
     }
-    const del = e.target.closest(".corr-del");
-    if (del) {
-      // Supprimer une correction de volume rend le stock d'UEX : c'est encore un changement de
-      // volume, donc la même règle s'applique — le voyage déjà planifié ne doit pas s'y rebattre.
-      const cle = del.dataset.key;
-      if (etat.OVERRIDES[cle] && etat.OVERRIDES[cle].vol != null) {
-        const [commodity, terminal, side] = cle.split("|");
-        pinLegsForVolume(commodity, terminal, side);
-      }
-      delete etat.OVERRIDES[cle]; saveOverrides(); updateOvBadge(); refresh(); return;
-    }
+    // La branche `.corr-del` générique est partie : elle était MORTE. Les deux seuls producteurs de
+    // cette classe (`vues/frais-station.tsx`) posent aussi `.al-del`, interceptée trois lignes plus
+    // haut avec un `return`. Elle datait de la liste plate de corrections, remplacée par la bande de
+    // vignettes. La garder « par prudence » rouvrirait un chemin d'écriture d'OVERRIDES qui n'existe
+    // plus — et un test asserte au contraire qu'aucun `.corr-item:not(.autoload)` ne subsiste.
     if (e.target.closest("#alSave")) { saveStationReading(); return; }
     if (e.target.closest("#resetAllK")) { resetAllReadings(); return; }
     // Avant « Tout réinitialiser » ici aussi : rien ne doit s'effacer sans qu'on ait pu l'emporter.
