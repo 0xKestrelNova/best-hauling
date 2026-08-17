@@ -38,6 +38,7 @@ import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResol
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
 import { brancherRendu, rafraichir } from "./rendu.ts";
+import { chargerJambe, declarerABord, deposerIci, ecrireStockDuPoint, loadChargements, loadDepots, loadSoute, pointAchat, poserPosition, reprendreIci, retirerLot, saveChargements, saveDepots, saveSoute, vendreIci, venteImplicite, viderSoute } from "./soute-actions.js";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
@@ -534,47 +535,21 @@ function copierTexte(texte, btn, libelle) {
 // PERSISTÉE ET SANS PÉREMPTION : reprendre le jeu une semaine plus tard avec un vaisseau rangé
 // plein, ce n'est pas une soute périmée, c'est une soute exacte. C'est aussi pour ça qu'effacer le
 // voyage NE VIDE PAS la soute : le parcours est un plan, la soute est du fret réel.
-const HOLD_KEY = "best-hauling-hold";
-function loadSoute() {
-  try { etat.SOUTE = JSON.parse(localStorage.getItem(HOLD_KEY)) || []; } catch { etat.SOUTE = []; }
-  if (!Array.isArray(etat.SOUTE)) etat.SOUTE = [];
-  // Marqueurs de refus hérités d'avant #20 : sans date, ils seraient tenus pour périmés d'un coup
-  // et un résidu volontairement gardé pourrait partir à la première étape franchie. On leur donne
-  // une fenêtre pleine à partir de maintenant. N'écrit que s'il y avait vraiment à migrer.
-  const m = migrerRefus(etat.SOUTE);
-  if (m.migres) { etat.SOUTE = m.hold; saveSoute(); }
-}
-function saveSoute() { try { localStorage.setItem(HOLD_KEY, JSON.stringify(etat.SOUTE)); } catch {} }
+
 
 // Le REGISTRE des chargements (logic.mjs) : quelle jambe est engagée, et ce qu'elle a pris à quel
 // rayon. Store à part de la soute, et c'est tout le point : la soute se vide par son ✕, par une
 // vente, par la vente implicite du départ — aucun de ces chemins ne rend rien à la station, donc
 // aucun ne décharge la jambe. Le fret peut partir, ce qu'on doit au rayon reste dû.
-const CHARGES_KEY = "best-hauling-jambes-chargees";
 // À appeler APRÈS loadSoute : la migration lit les lots pour reconstruire le registre d'une soute
 // écrite avant lui (l'état vivait alors dans la présence des lots, et le stock d'avant dans `avant`).
-function loadChargements() {
-  try { etat.CHARGEMENTS = JSON.parse(localStorage.getItem(CHARGES_KEY)) || {}; } catch { etat.CHARGEMENTS = {}; }
-  if (!etat.CHARGEMENTS || typeof etat.CHARGEMENTS !== "object" || Array.isArray(etat.CHARGEMENTS)) etat.CHARGEMENTS = {};
-  const m = migrerChargements(etat.CHARGEMENTS, etat.SOUTE);
-  etat.CHARGEMENTS = m.chargements;
-  if (m.change) { etat.SOUTE = m.lots; saveSoute(); saveChargements(); }
-}
-function saveChargements() { try { localStorage.setItem(CHARGES_KEY, JSON.stringify(etat.CHARGEMENTS)); } catch {} }
+
 
 // Charge le manifeste d'une jambe dans la soute, au prix que l'app venait d'afficher. Les lots
 // portent la clé de la jambe : c'est ce qui permet d'annuler un chargement sans deviner.
 // Le point d'achat d'une commodité à un terminal, avec son stock EFFECTIF (corrections comprises)
 // et la date UEX qui sert d'ancre à toute correction locale.
-function pointAchat(nomCommodite, nomTerminal) {
-  const c = etat.MARKET && findCommodity(nomCommodite);
-  const idx = stationMap.size ? [...stationMap].find(([lab]) => parseStationLabel(lab).name === nomTerminal) : null;
-  if (!c || !idx) return null;
-  const b = c.buys.find((x) => x[0] === idx[1]);
-  if (!b) return null;
-  const e = effVals(c.name, nomTerminal, "buy", b[1], b[2], b[3]);
-  return { commodite: c.name, stock: e.vol, base: b[3] };
-}
+
 
 // Réécrit la correction de stock d'un point d'achat DEPUIS LE REGISTRE : sa référence, moins tout ce
 // que les jambes encore chargées y prennent. Chargement et annulation posent la même question, et
@@ -582,69 +557,9 @@ function pointAchat(nomCommodite, nomTerminal) {
 // même point. `prise.ref` sert de repli quand plus aucune jambe ne tient le rayon : on lui rend
 // alors exactement ce qu'il annonçait avant qu'on y touche.
 // Renvoie le solde appliqué, ou null si le point a disparu d'UEX (rien à corriger).
-function ecrireStockDuPoint(prise) {
-  const p = pointAchat(prise.name, prise.terminal);
-  if (!p) return null;
-  const s = soldeDuPoint(etat.CHARGEMENTS, prise.name, prise.terminal);
-  const ref = s.ref != null ? s.ref : prise.ref;
-  setOverride(prise.name, prise.terminal, "buy", "vol", stockApres(ref, s.pris), p.base);
-  return { ref, pris: s.pris };
-}
 
-function chargerJambe(i) {
-  const leg = etat.JOURNEY && etat.JOURNEY.legs[i];
-  if (!leg || !etat.MARKET) return;
-  const k = legKey(leg, i);
-  if (etat.CHARGEMENTS[k]) {
-    // Annulation : on rend au rayon ce que CETTE jambe y a pris, et rien de plus. Les lots peuvent
-    // avoir quitté la soute entre-temps (vendus, déposés, débarqués) : c'est le registre, pas eux,
-    // qui sait ce qu'on doit.
-    const prises = etat.CHARGEMENTS[k];
-    etat.CHARGEMENTS = retirerChargement(etat.CHARGEMENTS, k);
-    for (const pr of prises) ecrireStockDuPoint(pr);
-    etat.SOUTE = etat.SOUTE.filter((l) => l.leg !== k);
-    updateOvBadge();
-  } else {
-    const lignes = legEffectiveLines(leg, i, readFilters());
-    if (!lignes.length) return;
-    const lots = loadHold([], lignes, leg.from, nowSec()).map((l) => ({ ...l, leg: k }));
-    // Charger, c'est vider le rayon d'autant.
-    const prises = [];
-    for (const l of lots) {
-      const p = pointAchat(l.name, l.from);
-      if (!p || p.stock == null) continue; // stock inconnu : rien à déduire, la jambe reste chargée
-      // La référence est celle qu'une AUTRE jambe a déjà retenue pour ce rayon. Relire le stock
-      // effectif ici, ce serait relire notre propre déduction et la compter une seconde fois.
-      const s = soldeDuPoint(etat.CHARGEMENTS, l.name, l.from);
-      prises.push({ name: l.name, terminal: l.from, ref: s.ref != null ? s.ref : p.stock, units: l.units });
-    }
-    // LE REGISTRE D'ABORD, le gel ensuite (#48). C'est le registre qui porte « chargée », et c'est
-    // lui que consulte désormais pinLegsForVolume : figer avant de l'écrire laissait hors du verrou
-    // la jambe qu'on vient précisément de charger — celle dont les SCU sont pourtant les plus sûrs.
-    etat.CHARGEMENTS = poserChargement(etat.CHARGEMENTS, k, prises);
-    // Cette jambe fige ses SCU : le fret est payé et à bord, c'est un FAIT et plus un plan. On la
-    // fige EXPLICITEMENT, et pas seulement par ricochet d'une déduction : un chargement dont aucune
-    // commodité n'a de stock publié n'entre dans aucune `prise`, et n'était donc jamais figé.
-    if (figerJambe(i, lignes)) { saveJourneyEdits(); saveJourneyPins(); }
-    // Les AUTRES jambes déjà chargées qui achètent le même fret au même rayon : la déduction qu'on
-    // vient d'écrire ne doit pas les rétrécir non plus. Celles qui ne sont PAS chargées, si — c'est
-    // le stock déduit qui est leur bon chiffre.
-    for (const pr of prises) pinLegsForVolume(pr.name, pr.terminal, "buy");
-    const vides = [];
-    for (const pr of prises) {
-      const s = ecrireStockDuPoint(pr);
-      if (s && s.pris > s.ref) vides.push(pr.name); // la station en annonçait moins qu'on n'en a pris
-    }
-    etat.SOUTE = etat.SOUTE.concat(lots);
-    updateOvBadge();
-    if (vides.length) {
-      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : la station en annonçait moins que ce que tu as pris`);
-    }
-  }
-  saveSoute(); saveChargements();
-  rafraichir();
-  refresh();
-}
+
+
 // L'état « chargée » est PORTÉ par le registre, jamais déduit des lots : la soute se vide par
 // d'autres chemins que « annuler », et aucun ne défait le chargement — le fret est parti, il n'est
 // pas revenu au rayon.
@@ -658,73 +573,24 @@ function chargerJambe(i) {
 // a lu le prix, pas là où il se trouve à la milliseconde du clic — sinon l'infobulle annonce une
 // station et la vente en encaisse une autre. Repli sur `stationCourante()` pour tout appel qui n'a
 // pas d'affichage derrière lui (venteImplicite, notamment).
-function vendreIci(nom, units, idxFige) {
-  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
-  if (idx == null || !etat.MARKET) return;
-  const pt = sellableAt(etat.MARKET, idx, nom, effVals);
-  if (!pt) return;
-  const avant = etat.SOUTE.reduce((s, l) => s + (l.name === nom ? l.units || 0 : 0), 0);
-  const r = sellFromHold(etat.SOUTE, nom, units, pt.price);
-  if (!r.vendu) return;
-  etat.SOUTE = r.vendu < avant ? refuseHere(r.hold, nom, pt.terminal) : r.hold;
-  saveSoute();
-  etat.venteEnCours = null;
-  refresh();
-  const reste = avant - r.vendu;
-  showToast(`✓ ${fmt(r.vendu)} SCU de ${nom} vendus — ${fmtSigne(r.profit)} aUEC` +
-    (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord — le comptoir n'en a pas repris plus` : ""));
-}
+
 
 // Quitter une escale sous-entend qu'on y a fait son affaire : ce qu'elle reprend est vendu.
 // Ce qu'une vente partielle y a laissé porte `refuse` et traverse intact.
-function venteImplicite(depuis) {
-  if (!etat.SOUTE.length || !etat.MARKET || depuis == null) return;
-  const r = sellAllAt(etat.SOUTE, etat.MARKET, depuis, effVals);
-  if (!r.ventes.length) return;
-  etat.SOUTE = r.hold;
-  saveSoute();
-  const quoi = r.ventes.map((v) => `${fmt(v.units)} ${v.name}`).join(", ");
-  showToast(`✓ Vendu en quittant ${etat.MARKET.terminals[depuis].name} : ${quoi} — ${fmtSigne(r.profit)} aUEC`);
-}
 
-const fmtSigne = (n) => (n >= 0 ? "+" : "") + fmt(Math.round(n));
+
 
 // Le fret déposé à une station : ni vendu, ni perdu — du capital immobilisé qu'on peut oublier.
-const DEPOTS_KEY = "best-hauling-depots";
-function loadDepots() {
-  try { etat.DEPOTS = JSON.parse(localStorage.getItem(DEPOTS_KEY)) || {}; } catch { etat.DEPOTS = {}; }
-}
-function saveDepots() { try { localStorage.setItem(DEPOTS_KEY, JSON.stringify(etat.DEPOTS)); } catch {} }
+
 
 // Même règle que `vendreIci` : on dépose à la station résolue au rendu, celle que le panneau nomme.
-function deposerIci(nom, units, idxFige) {
-  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
-  if (idx == null || !etat.MARKET) return;
-  const t = etat.MARKET.terminals[idx];
-  // L'heure du dépôt est fournie ICI : `storeFromHold` est pure et ne lit pas d'horloge. Sans elle,
-  // la liste exportée dirait « 170 SCU d'or à Ruin Station » sans dire si c'était hier ou l'an passé.
-  const r = storeFromHold(etat.SOUTE, etat.DEPOTS, nom, units, stationLabel(t.name, t.system), nowSec());
-  if (r.hold === etat.SOUTE) return;
-  etat.SOUTE = r.hold; etat.DEPOTS = r.entrepots;
-  saveSoute(); saveDepots();
-  etat.venteEnCours = null;
-  refresh();
-  showToast(`⬓ ${fmt(units)} SCU de ${nom} déposés à ${t.name} — ni vendus ni perdus`);
-}
+
 
 // Reprendre : le fret déposé remonte à bord avec son prix payé. Aucun contrôle de position — l'app
 // ne sait pas où le vaisseau est RÉELLEMENT, et refuser au motif « tu n'y es pas » bloquerait le
 // geste au moment exact où il est vrai. La station est écrite en toutes lettres sur la ligne :
 // savoir qu'on y est relève de l'utilisateur, pas d'une donnée qu'on n'a pas.
-function reprendreIci(station, nom, units) {
-  const r = takeFromStore(etat.SOUTE, etat.DEPOTS, nom, units, station);
-  if (r.hold === etat.SOUTE) return;
-  const repris = holdScu(r.hold) - holdScu(etat.SOUTE); // ce qui est VRAIMENT revenu, pas ce qu'on demandait
-  etat.SOUTE = r.hold; etat.DEPOTS = r.entrepots;
-  saveSoute(); saveDepots();
-  refresh();
-  showToast(`◈ ${fmt(repris)} SCU de ${nom} repris à ${parseStationLabel(station).name} — de retour en soute`);
-}
+
 
 // Les entrepôts : le fret déposé, station par station. Masquée tant que rien n'y dort, comme la
 // soute. Elle ne peut PAS vivre dans renderSoute : celle-ci sort dès que la soute est vide, ce qui
@@ -787,36 +653,15 @@ function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
 // Le geste : cette commodité, ce nombre de SCU, à ce prix. Le prix est FACULTATIF et vaut 0 — du
 // butin n'a rien coûté (ADR-002). Une commodité que le marché ne connaît pas est refusée : l'app ne
 // saurait ni la classer, ni dire où l'écouler, et une ligne muette en soute ne vaut pas mieux que rien.
-function declarerABord() {
-  const c = etat.MARKET && findCommodity($("holdAddName").value);
-  if (!c) { showToast("⚠ Commodité inconnue — choisis-la dans la liste (nom ou code UEX)"); return; }
-  const units = Math.floor(Number($("holdAddScu").value) || 0);
-  if (units <= 0) { showToast(`⚠ Indique combien de SCU de ${c.name} tu as à bord`); return; }
-  const saisi = $("holdAddPaid").value.trim();
-  const prix = saisi === "" ? 0 : Number(saisi);
-  const avant = etat.SOUTE;
-  etat.SOUTE = declarerLot(etat.SOUTE, { name: c.name, units, paid: prix }, nowSec());
-  if (etat.SOUTE === avant) return; // la fonction pure a refusé : rien à persister
-  saveSoute();
-  etat.declarationOuverte = false;
-  notifier();
-  refresh();
-  showToast(`◈ ${fmt(units)} SCU de ${c.name} déclarés à bord — ` +
-    (prix > 0 ? `${fmt(prix)} aUEC/SCU payés` : "butin, coût nul"));
-}
+
 
 // Poser la position revient à écrire dans le champ de départ d'« En route » : c'est lui que
 // stationCourante() lit sans voyage, et lui que le permalien transporte déjà.
-function poserPosition(v) {
-  $("origin").value = v;
-  refresh();
-}
+
 
 // Débarquer le fret n'est pas le remettre en rayon : le registre des chargements n'est pas touché,
 // donc les jambes restent chargées (🔒 « ⬢ à bord ») et leur déduction reste posée. C'est ce qui
 // garde le chemin « annuler » atteignable — le seul qui rende vraiment son stock à la station.
-function viderSoute() { etat.SOUTE = []; saveSoute(); refresh(); }
-function retirerLot(i) { etat.SOUTE = etat.SOUTE.filter((_, j) => j !== i); saveSoute(); refresh(); }
 
 // `synchrone` : la délégation du bouton « vendu » sélectionne le champ de quantité JUSTE APRÈS ce
 // rendu (`…querySelector(".hold-sell-qty")?.select()`). Un rendu React groupé n'aurait pas encore
