@@ -12,7 +12,7 @@ import {
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, journeyMap,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -38,7 +38,7 @@ import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.
 import { brancherRendu } from "./rendu.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
-import { jambeChargee, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -1349,38 +1349,9 @@ function clearJourney() {
   // l'effacement jusqu'au geste suivant. `refresh` finit par `saveState`, inutile de le doubler.
   refresh();
 }
-// Ensemble des commodités transportées au moins une fois sur le parcours (union des manifestes).
-function journeyCarriedCommodities() {
-  const set = new Set();
-  if (!etat.JOURNEY || !etat.MARKET) return set;
-  const f = readFilters();
-  etat.JOURNEY.legs.forEach((leg, i) => legEffectiveLines(leg, i, f).forEach((l) => set.add(l.name)));
-  return set;
-}
-
-// Manifeste optimal d'une jambe (from -> to) : remplissage multi-commodité, terminal d'arrivée forcé.
-function figerJambe(i, lignes) {
-  const k = legKey(etat.JOURNEY.legs[i], i);
-  if (etat.JOURNEY_EDITS[k]) return false;
-  etat.JOURNEY_EDITS[k] = manifestIntent(lignes || []);
-  etat.JOURNEY_PINS[k] = true;
-  return true;
-}
-
-// Le gel consulte désormais l'état « chargée » de chaque jambe (#48) : une jambe qu'on n'a pas
-// payée n'est plus figée par une correction de volume, elle RECALCULE. Voir legsToPin (logic.mjs)
-// pour le pourquoi du renversement.
-function pinLegsForVolume(commodity, terminal, side) {
-  if (!etat.JOURNEY || !etat.JOURNEY.legs.length || !etat.MARKET) return;
-  const f = readFilters();
-  const lignes = etat.JOURNEY.legs.map((leg, i) => legEffectiveLines(leg, i, f));
-  const chargees = etat.JOURNEY.legs.map((leg, i) => jambeChargee(leg, i));
-  let change = false;
-  for (const i of legsToPin(etat.JOURNEY.legs, lignes, commodity, terminal, side, chargees)) {
-    if (figerJambe(i, lignes[i])) change = true;
-  }
-  if (change) { saveJourneyEdits(); saveJourneyPins(); }
-}
+// `journeyCarriedCommodities`, `figerJambe` et `pinLegsForVolume` sont passées dans
+// `voyage-donnees.ts` : elles ne rendent rien, et le gel doit être appelable depuis une vue de
+// l'arbre (ADR-012). Leurs commentaires les y attendaient déjà, orphelins.
 
 // Engage le manifeste d'« En route » comme nouvelle jambe du voyage (bouton de la carte Manifeste).
 // La garde d'état est REJOUÉE ici : le rendu peut dater d'avant un changement de parcours.
