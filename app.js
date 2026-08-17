@@ -26,7 +26,7 @@ import {
 // Le premier îlot React (ADR-008, #96). `peindre` remplace `innerHTML` sur le conteneur de la
 // Tournée, et RIEN d'autre ne change : app.js reste le seul écrivain de l'état, refresh() reste
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
-import { peindre } from "./pont.js";
+import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, scuBoxesLabel, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
@@ -37,15 +37,15 @@ import { construireIndex, findCommodity, indexArriveeForcee, indexOrigine, index
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
-import { brancherRendu } from "./rendu.ts";
+import { brancherRendu, rafraichir } from "./rendu.ts";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
 import { evaluate } from "./vues/trajets-vue.tsx";
-import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
+import { nouvelleGenerationVoyage, pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
-import { figerJambe, jambeChargee, legSuggestCtx, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import { figerJambe, jambeChargee, journeyEndIndex, legSuggestCtx, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 // (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
 // depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
@@ -642,7 +642,7 @@ function chargerJambe(i) {
     }
   }
   saveSoute(); saveChargements();
-  renderJourney();
+  rafraichir();
   refresh();
 }
 // L'état « chargée » est PORTÉ par le registre, jamais déduit des lots : la soute se vide par
@@ -669,7 +669,7 @@ function vendreIci(nom, units, idxFige) {
   etat.SOUTE = r.vendu < avant ? refuseHere(r.hold, nom, pt.terminal) : r.hold;
   saveSoute();
   etat.venteEnCours = null;
-  renderSoute(); refresh();
+  refresh();
   const reste = avant - r.vendu;
   showToast(`✓ ${fmt(r.vendu)} SCU de ${nom} vendus — ${fmtSigne(r.profit)} aUEC` +
     (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord — le comptoir n'en a pas repris plus` : ""));
@@ -708,7 +708,7 @@ function deposerIci(nom, units, idxFige) {
   etat.SOUTE = r.hold; etat.DEPOTS = r.entrepots;
   saveSoute(); saveDepots();
   etat.venteEnCours = null;
-  renderSoute(); renderEntrepots(); refresh();
+  refresh();
   showToast(`⬓ ${fmt(units)} SCU de ${nom} déposés à ${t.name} — ni vendus ni perdus`);
 }
 
@@ -722,7 +722,7 @@ function reprendreIci(station, nom, units) {
   const repris = holdScu(r.hold) - holdScu(etat.SOUTE); // ce qui est VRAIMENT revenu, pas ce qu'on demandait
   etat.SOUTE = r.hold; etat.DEPOTS = r.entrepots;
   saveSoute(); saveDepots();
-  renderSoute(); renderEntrepots(); refresh();
+  refresh();
   showToast(`◈ ${fmt(repris)} SCU de ${nom} repris à ${parseStationLabel(station).name} — de retour en soute`);
 }
 
@@ -733,21 +733,7 @@ function reprendreIci(station, nom, units) {
 // l'app ne rappelait — c'était tout le sujet.
 // Les clés de DEPOTS viennent du localStorage : elles sont échappées comme n'importe quelle donnée
 // tierce (cf. e2e/injection.pw.mjs).
-function renderEntrepots(synchrone = false) {
-  const box = $("depotsCard");
-  if (!box) return;
-  const stations = Object.entries(etat.DEPOTS).filter(([, lots]) => Array.isArray(lots) && lots.length);
-  if (!stations.length) { box.hidden = true; peindre(box, null); return; }
-  box.hidden = false;
-  const tous = stations.flatMap(([, lots]) => lots);
-  peindre(box, carteEntrepots({
-    stations: stations.map(([label, lots]) => ({
-      label, lieu: parseStationLabel(label), scu: holdScu(lots), groupes: holdByCommodity(lots),
-    })),
-    scuTotal: holdScu(tous),
-    invest: holdByCommodity(tous).reduce((s, g) => s + g.invest, 0),
-  }), { synchrone });
-}
+
 
 // La liste de ce qui dort en entrepôt, en texte, dans le presse-papiers : elle ne quittait jamais
 // l'app, et il fallait rouvrir le navigateur qui porte le localStorage pour la relire.
@@ -781,21 +767,7 @@ function copierEntrepots() {
 // `synchrone` remplace l'ancien `force`, et ne dit plus du tout la même chose : deux appelants
 // MESURENT ou FOCALISENT juste après le rendu et ne peuvent pas attendre le lot de React. Voir
 // `renderSoute` pour le même contrat sur la carte voisine.
-function renderDeclaration(synchrone = false) {
-  const box = $("holdDeclare");
-  if (!box) return;
-  box.hidden = false;
-  peindre(box, carteDeclaration({
-    souteVide: !etat.SOUTE.length,
-    // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà le
-    // repli de stationCourante(). On ne crée pas un second store, on rend le premier atteignable
-    // d'ici : deux positions divergeraient au premier aller-retour entre les deux vues. Avec un
-    // voyage, l'étape courante la dit déjà, et un champ ici mentirait.
-    avecPosition: !etat.JOURNEY && !!(etat.SOUTE.length || etat.declarationOuverte),
-    ouvert: etat.declarationOuverte,
-    origine: $("origin").value,
-  }), { synchrone });
-}
+
 
 function ouvrirDeclaration() {
   // La vue par défaut ne lit que routes.json : sans le graphe, ni autocomplétion ni résolution du
@@ -805,10 +777,12 @@ function ouvrirDeclaration() {
   // SYNCHRONE, et c'est un contrat : le champ naît avec le formulaire, il n'existe donc pas avant
   // le rendu. Différé, le `?.` ci-dessous court-circuiterait et le formulaire s'ouvrirait sans
   // curseur — l'utilisateur taperait dans le vide. Même piège que `.hold-sell-qty` sur la soute.
-  renderDeclaration(true);
+  // `flushSync` remplace ici le `{ synchrone: true }` que `peindre()` offrait : le bandeau vit dans
+  // l'arbre, et React rend en différé sauf demande expresse.
+  flushSync(notifier);
   $("holdAddName")?.focus();
 }
-function fermerDeclaration() { etat.declarationOuverte = false; renderDeclaration(); }
+function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
 
 // Le geste : cette commodité, ce nombre de SCU, à ce prix. Le prix est FACULTATIF et vaut 0 — du
 // butin n'a rien coûté (ADR-002). Une commodité que le marché ne connaît pas est refusée : l'app ne
@@ -825,7 +799,7 @@ function declarerABord() {
   if (etat.SOUTE === avant) return; // la fonction pure a refusé : rien à persister
   saveSoute();
   etat.declarationOuverte = false;
-  renderDeclaration();
+  notifier();
   refresh();
   showToast(`◈ ${fmt(units)} SCU de ${c.name} déclarés à bord — ` +
     (prix > 0 ? `${fmt(prix)} aUEC/SCU payés` : "butin, coût nul"));
@@ -841,54 +815,14 @@ function poserPosition(v) {
 // Débarquer le fret n'est pas le remettre en rayon : le registre des chargements n'est pas touché,
 // donc les jambes restent chargées (🔒 « ⬢ à bord ») et leur déduction reste posée. C'est ce qui
 // garde le chemin « annuler » atteignable — le seul qui rende vraiment son stock à la station.
-function viderSoute() { etat.SOUTE = []; saveSoute(); renderSoute(); refresh(); }
-function retirerLot(i) { etat.SOUTE = etat.SOUTE.filter((_, j) => j !== i); saveSoute(); renderSoute(); refresh(); }
+function viderSoute() { etat.SOUTE = []; saveSoute(); refresh(); }
+function retirerLot(i) { etat.SOUTE = etat.SOUTE.filter((_, j) => j !== i); saveSoute(); refresh(); }
 
 // `synchrone` : la délégation du bouton « vendu » sélectionne le champ de quantité JUSTE APRÈS ce
 // rendu (`…querySelector(".hold-sell-qty")?.select()`). Un rendu React groupé n'aurait pas encore
 // créé le champ, le `?.` court-circuiterait, et le champ s'ouvrirait sans le focus — visible au
 // relevé : sa bordure passait de l'ambre pleine à l'ambre à 30 %.
-function renderSoute(synchrone = false) {
-  const box = $("holdCard");
-  if (!box) return;
-  // AVANT le retour anticipé : le point d'entrée « déclarer », lui, doit exister précisément quand
-  // la carte n'existe pas. C'est le seul rendu appelé depuis tous les chemins qui repeignent la soute.
-  //
-  // Le drapeau se PROPAGE, et ça n'a rien de décoratif : `ajusterRangeeVoyage` mesure la hauteur de
-  // `#voyageLeft` juste après `renderSoute(true)`, et `#holdDeclare` en est un enfant direct. Rendue
-  // en différé, cette carte ferait mesurer la hauteur du rendu PRÉCÉDENT. `innerHTML` étant
-  // synchrone par nature, la question ne se posait pas — le drapeau n'était donc pas transmis.
-  renderDeclaration(synchrone);
-  if (!etat.SOUTE.length) { box.hidden = true; peindre(box, null); return; }
-  box.hidden = false;
-  // Du fret à bord et pas de graphe : la vue par défaut ne lit que routes.json, et sans marché la
-  // carte ne sait ni nommer une icône, ni proposer une vente, ni classer « où écouler ». Ça se
-  // voyait peu tant qu'on ne pouvait charger que depuis « En route » — qui le charge ; une soute
-  // déclarée, elle, peut naître sur Trajets et y rester.
-  if (!etat.MARKET) withMarket(renderSoute);
-  const ici = stationCourante();
-  const f = readFilters();
-  peindre(box, carteSoute({
-    groupes: holdByCommodity(etat.SOUTE),
-    ici,
-    scu: holdScu(etat.SOUTE),
-    libre: f.useCargo && f.cargo > 0 ? freeCargo(etat.SOUTE, f.cargo) : null,
-    invest: holdByCommodity(etat.SOUTE).reduce((s, g) => s + g.invest, 0),
-    venteEnCours: etat.venteEnCours,
-    ecoulerOuvert: etat.ecoulerOuvert,
-    positionConnue: ici != null,
-    marchePret: !!etat.MARKET,
-    // Le classement n'est calculé QUE si le panneau est ouvert : `offloadPlan` parcourt tous les
-    // terminaux, et cette carte se repeint à chaque rafraîchissement de l'application.
-    ecoulement: etat.ecoulerOuvert && etat.MARKET && ici != null
-      ? offloadPlan(etat.MARKET, etat.SOUTE, ici, f, effVals, feeResolver(f), 5)
-      : null,
-    pointVente: (nom) => (ici != null && etat.MARKET ? sellableAt(etat.MARKET, ici, nom, effVals) : null),
-    // Le `kind` n'est pas persisté dans le lot : c'est une propriété de la commodité, pas de la
-    // transaction. On le relit au marché quand il est là, et on s'en passe sinon.
-    kindDe: (nom) => { const c = etat.MARKET && findCommodity(nom); return c ? c.kind : null; },
-  }), { synchrone });
-}
+
 
 // ---------- Carte 2D du parcours (ADR-001) ----------
 // Le calcul est PUR (journeyMap, logic.ts) et le dessin vit dans `vues/carte.tsx` : ici il ne reste
@@ -915,7 +849,6 @@ function setJourneyStop(i) {
   if (i > etat.JOURNEY.current) venteImplicite(stationCourante());
   etat.JOURNEY = setJourneyPosition(etat.JOURNEY, i);
   syncViewsToJourney();
-  renderJourney();
   refresh();
 }
 
@@ -938,7 +871,7 @@ function clearJourney() {
   // parti avec. Comme pour les lots qu'on vient de délier, elles ne sont simplement plus annulables.
   etat.CHARGEMENTS = {}; saveChargements();
   etat.journeyExpandedLeg = -1;
-  renderJourney();
+  rafraichir();
   // Comme tous les autres mutateurs du parcours : la carte Voyage n'est pas la seule à lire JOURNEY.
   // Les Boucles hissent en tête celles qui partent de la fin du parcours (.from-here) et le board
   // Commodités marque d'un ◆ ce qu'on transporte — sans ce rendu, les deux gardaient l'état d'AVANT
@@ -978,7 +911,7 @@ function manifestToJourney() {
 // Actions d'édition d'une jambe (i = index de jambe).
 function toggleLegEditor(i) {
   etat.journeyExpandedLeg = etat.journeyExpandedLeg === i ? -1 : i;
-  renderJourney();
+  rafraichir();
   // renderJourney() réécrit tout le compagnon : l'en-tête qu'on vient d'activer n'existe plus et le
   // focus retombe sur <body>. À la souris ça ne se voit pas ; au clavier on perdait sa place, la
   // deuxième Entrée (replier) ne partait plus de nulle part et Tab reprenait au début du document.
@@ -994,7 +927,7 @@ function editLegQty(i, li, val) {
   // Ce handler part sur `change`, donc au BLUR — or le blur précède le mouseup d'un clic en cours.
   // Re-rendre tout de suite détruirait le nœud visé et avalerait ce clic (impossible d'effacer le
   // voyage ou de replier une jambe du premier coup). On laisse le tour d'événement se terminer.
-  setTimeout(renderJourney, 0);
+  setTimeout(rafraichir, 0);
 }
 // Saisie en direct : met à jour l'intention, puis repeint la carte AVEC LA GÉNÉRATION FIGÉE.
 //
@@ -1010,7 +943,7 @@ function liveLegQty(i, li, inp) {
   if (!intent[li]) return;
   const u = Math.floor(Number(inp.value));
   intent[li].units = Number.isFinite(u) && u > 0 ? u : 0;
-  renderJourney({ frappe: true });
+  notifier(); // la frappe ne bouge PAS la génération : le champ garde son nœud et son curseur
 }
 
 // Ajoute une commodité suggérée à une jambe, remplie au max possible.
@@ -1024,18 +957,18 @@ function addLegSuggestion(i, name) {
   const u = addableUnits(it, manifestRemaining(ctx));
   if (u <= 0) return;
   legIntent(leg, i, f).push({ name: it.name, units: u });
-  saveJourneyEdits(); renderJourney();
+  saveJourneyEdits(); rafraichir();
 }
 function delLegLine(i, name) {
   const leg = etat.JOURNEY.legs[i];
   etat.JOURNEY_EDITS[legKey(leg, i)] = legIntent(leg, i, readFilters()).filter((e) => e.name !== name);
-  saveJourneyEdits(); renderJourney();
+  saveJourneyEdits(); rafraichir();
 }
 // « ↺ optimal » lève les deux formes d'intention, l'ajustement manuel comme le gel.
 function resetLeg(i) {
   const k = legKey(etat.JOURNEY.legs[i], i);
   delete etat.JOURNEY_EDITS[k]; delete etat.JOURNEY_PINS[k];
-  saveJourneyEdits(); saveJourneyPins(); renderJourney();
+  saveJourneyEdits(); saveJourneyPins(); rafraichir();
 }
 // Ajout LIBRE d'une commodité à une jambe (même non vendable à l'arrivée -> ligne « carry-only »).
 // Même règle qu'« En route » : freeManifestLine (logic.mjs) en est la source unique.
@@ -1052,14 +985,11 @@ function addLegLine(i, name) {
   const ctx = legSuggestCtx(leg, legEffectiveLines(leg, i, f), f); // null si soute non bornée -> 1 SCU
   const ligne = freeManifestLine(etat.MARKET, t.fromIdx, t.toIdx, c, ctx ? manifestRemaining(ctx).cargoLeft : NaN, effVals);
   legIntent(leg, i, f).push({ name: c.name, units: ligne.units });
-  saveJourneyEdits(); renderJourney();
+  saveJourneyEdits(); rafraichir();
 }
 
 // Index du terminal de FIN de parcours (point d'extension), ou null.
-function journeyEndIndex() {
-  const end = journeyEnd(etat.JOURNEY);
-  return end && stationMap.size ? stationMap.get(stationLabel(end.name, end.system)) : null;
-}
+
 // Meilleure jambe (commodité de marge max) entre deux terminaux, ou null si aucun fret rentable.
 // `readFilters()` fait choisir la vente au profit RÉALISABLE et non au prix affiché : sans lui,
 // la jambe proposée peut viser un terminal déjà saturé, qui n'écoulera qu'une poignée de SCU.
@@ -1075,10 +1005,7 @@ function emptyLeg(fromIdx, toIdx) {
 }
 // Résout un terminal depuis le texte : libellé exact « Nom — Système », sinon par nom seul.
 // Suggestions d'arrêts : meilleures destinations rentables depuis la fin du parcours (top 4).
-function journeyStopSuggestions() {
-  const fromIdx = journeyEndIndex();
-  return fromIdx == null ? [] : stopSuggestions(etat.MARKET, fromIdx, readFilters());
-}
+
 // Ajoute un arrêt (terminal) : nouvelle jambe optimale depuis la fin du parcours -> étend.
 function addStopByTerminal(label) {
   const fromIdx = journeyEndIndex();
@@ -1099,7 +1026,7 @@ function beginJourney(label) {
   const t = etat.MARKET.terminals[startIdx];
   etat.JOURNEY = startJourneyAt({ name: t.name, system: t.system });
   syncViewsToJourney();
-  renderJourney();
+  rafraichir();
   refresh();
 }
 
@@ -1136,7 +1063,7 @@ function removeJourneyStop(stopIndex) {
   // s'affiche vide alors qu'il reste un point de départ.
   etat.JOURNEY = r.start ? { legs: [], current: 0, start: r.start } : { legs: r.legs, current: r.current };
   syncViewsToJourney();
-  renderJourney();
+  rafraichir();
   refresh();
 }
 
@@ -1144,104 +1071,10 @@ function removeJourneyStop(stopIndex) {
 // donc les champs non contrôlés gardent leur valeur et leur curseur pendant que profits, totaux et
 // suggestions se recalculent — même mécanique que le manifeste (#117). Tout autre appel la bouge,
 // ce qui remonte les champs : c'est ce que faisait l'ancien `card.innerHTML`.
-let journeyGen = 0;
-function renderJourney({ frappe = false } = {}) {
-  const card = $("journeyCard");
-  if (!card) return;
-  if (!frappe) journeyGen++;
-  // Aucun voyage -> invite à en démarrer un : depuis un trajet (▶) OU « de zéro » (point de départ).
-  if (!etat.JOURNEY) {
-    card.hidden = false;
-    const recap0 = $("journeyRecap"); if (recap0) { recap0.hidden = true; peindre(recap0, null); } // pas de récap sans voyage
-    const row0 = $("shipJourneyRow"); if (row0) row0.classList.remove("stacked");
-    renderSoute();
-    renderEntrepots();
-    peindre(card, inviteVoyage(), { synchrone: true });
-    return;
-  }
-  card.hidden = false;
-  // MARKET nécessaire pour les manifestes par jambe -> charge à la demande puis re-render.
-  if (!etat.MARKET) { withMarket(renderJourney); }
-  else if (!enrouteReady) setupEnRoute();
 
-  const stations = journeyStations(etat.JOURNEY);
-  const n = etat.JOURNEY.legs.length;
-  const f = readFilters();
-  let totalProfit = 0, totalScu = 0, totalFees = 0; // récap : profit réel, SCU et frais du voyage
-  // Manifeste (cargaison) de chaque jambe — optimal ou édité ; jambe dépliable pour l'éditer.
-  const jambes = etat.JOURNEY.legs.map((leg, i) => {
-    const lines = etat.MARKET ? legEffectiveLines(leg, i, f) : null;
-    const pair = etat.MARKET ? (legFeeCtx(leg, f) || {}).pair : null;
-    const edited = etat.MARKET && !!etat.JOURNEY_EDITS[legKey(leg, i)];
-    const expanded = i === etat.journeyExpandedLeg;
-    // `nombreTotal` porte le NOMBRE quand `texteTotal` n'en est que le rendu : c'est lui qui décide
-    // du signe et de la couleur. Une jambe dont les frais dépassent la marge est une vraie réponse,
-    // pas un cas limite — elle s'affichait « +-1 234 », en vert.
-    let texteTotal = "—", nombreTotal = 0;
-    if (etat.MARKET && lines.length) {
-      const t = manifestTotals(lines, pair);
-      texteTotal = fmtFee(t.profit, t.fees);
-      nombreTotal = t.profit;
-      totalProfit += t.profit;
-      totalFees += t.fees;
-      totalScu += lines.reduce((s, l) => s + l.units, 0);
-    } else if (etat.MARKET) texteTotal = "0";
-    // Les suggestions de la jambe DÉPLIÉE sont calculées ici et rendues dans l'arbre : elles
-    // vivaient dans un conteneur peint à part, détour qui n'existait que parce que la carte était
-    // réécrite en innerHTML à chaque rendu.
-    const sctx = expanded && etat.MARKET ? legSuggestCtx(leg, lines, f) : null;
-    return {
-      i, from: leg.from, to: leg.to,
-      courante: i === etat.JOURNEY.current,
-      depliee: expanded,
-      editee: !!edited,
-      figee: !!(edited && etat.JOURNEY_PINS[legKey(leg, i)]), // figée par une correction, pas par toi
-      chargee: !!(etat.MARKET && jambeChargee(leg, i)),       // ce manifeste est-il déjà en soute ?
-      lignes: lines && lines.map((l) => ({
-        name: l.name, kind: l.kind, illegal: !!l.illegal, units: l.units,
-        acquired: !!l.acquired, vendable: l.sellPrice != null,
-        releve: lineFreshUpdated(l),
-        texteProfit: lineProfitText(l.units, l, pair),
-        auDela: Number.isFinite(l.cap) && l.units > l.cap,
-      })),
-      texteTotal, nombreTotal,
-      suggestions: sctx ? {
-        suggestions: suggestionsFor(sctx), restant: manifestRemaining(sctx), frais: sctx.fee,
-        attributsAjout: { "data-leg": i },
-      } : null,
-    };
-  });
-
-  peindre(card, carteVoyage({
-    stations, courante: etat.JOURNEY.current, nbSauts: n,
-    margeCumulee: journeyMargin(etat.JOURNEY),
-    marchePret: !!etat.MARKET,
-    jambes,
-    suggestionsArret: etat.MARKET ? journeyStopSuggestions() : null,
-    generation: journeyGen,
-  }), { synchrone: true });
-
-  renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
-  // SYNCHRONES, les quatre : `ajusterRangeeVoyage` MESURE les hauteurs juste en dessous
-  // (`getBoundingClientRect`) pour décider d'empiler les colonnes. Un rendu React groupé les lui
-  // ferait lire AVANT peinture — la carte basculait de 1172 px à 640 px de large selon l'état,
-  // et la bascule s'inversait à l'état suivant. L'ancien `innerHTML` était synchrone ; on le reste.
-  renderSoute(true);
-  renderEntrepots(true);
-  ajusterRangeeVoyage(); // après la carte ET la soute : les deux pèsent sur l'équilibre des colonnes
-}
 
 // Récap du voyage (colonne de gauche, sous le vaisseau) : remplit l'espace avec des KPIs utiles.
-function renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems }) {
-  const recap = $("journeyRecap");
-  if (!recap) return;
-  recap.hidden = false;
-  peindre(recap, recapVoyage({
-    n, totalProfit, totalScu, totalFees, systems,
-    materials: etat.MARKET ? journeyCarriedCommodities().size : 0,
-    marchePret: !!etat.MARKET,
-  }), { synchrone: true });
-}
+
 
 // ---------- La tournée d'écoulement : la huitième vue (ADR-007, #57) ----------
 // « Comment me débarrasser d'une soute que je ne veux plus porter ? » — l'AUTRE question, celle
@@ -1293,13 +1126,7 @@ function copierPlan() {
 // À appeler APRÈS le rendu des cartes : mesurées avant, elles sont encore masquées (ou à leur
 // taille du rendu précédent) et la rangée s'empilait sur une hauteur qui n'existait plus.
 // Mesure synchrone (getBoundingClientRect force le reflow) -> fiable même onglet non peint.
-function ajusterRangeeVoyage() {
-  const row = $("shipJourneyRow"), jc = $("journeyCard"), vl = $("voyageLeft");
-  if (!row || !jc || !vl || jc.hidden) return;
-  row.classList.remove("stacked"); // mesure toujours dans la disposition côte-à-côte de base
-  const h = (el) => (el && !el.hidden ? el.getBoundingClientRect().height : 0);
-  if (h(jc) > h(vl) + 140) row.classList.add("stacked");
-}
+
 
 // Bascule entre les vues et rafraîchit la bonne.
 // Regroupe les appels rapprochés en un seul, à la fin de la salve.
@@ -1317,12 +1144,13 @@ function refresh() {
   // par définition un RECALCUL, donc les champs SCU doivent adopter les nouvelles valeurs. Une
   // frappe, elle, n'appelle que `notifier()` et laisse la génération tranquille (manifeste-etat.ts).
   nouvelleGenerationManifeste();
+  nouvelleGenerationVoyage();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
   // bénéfices du voyage — alors qu'une jambe non ajustée est justement, par contrat, branchée sur
   // le marché et sur les filtres (cf. README). Le coût est celui d'un manifeste par jambe, sur un
   // parcours qui en compte une poignée ; les champs à saisie libre passent déjà par un debounce.
-  if (etat.JOURNEY) renderJourney();
+  // (le bandeau vit dans l'arbre : `notifier()` suffit)
   // Effacer le parcours NE VIDE PAS la soute (c'est le contrat, cf. README), et le fret DÉPOSÉ y
   // survit de même : hors du cycle de rendu, la place libre, « où écouler », le prix du bouton de
   // vente et les entrepôts restaient figés pendant que les tableaux d'à côté suivaient les filtres.
@@ -1330,7 +1158,6 @@ function refresh() {
   // de celui-ci réécrit l'invite « Nouveau voyage », donc détruirait le champ #journeyStart en
   // cours de saisie (texte et focus) à chaque frappe faite ailleurs dans l'app. Le coût est nul
   // quand il n'y a rien : les deux sortent tout de suite en masquant leur carte.
-  else { renderSoute(); renderEntrepots(); }
   saveState();
   // La propagation vers `etat.ts` (ADR-011). Elle est APPELÉE, jamais déclenchée par une écriture :
   // des références vives sortent de l'état et sont mutées dehors (`legIntent`), et `logic.ts` mute
@@ -1914,14 +1741,16 @@ async function init() {
   // Carte du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.
   $("holdCard").addEventListener("click", (e) => {
     if (e.target.closest("#holdClear")) { viderSoute(); return; }
-    if (e.target.closest("#holdOffload")) { etat.ecoulerOuvert = !etat.ecoulerOuvert; renderSoute(); return; }
+    if (e.target.closest("#holdOffload")) { etat.ecoulerOuvert = !etat.ecoulerOuvert; notifier(); return; }
     // La quantité ET la station se lisent sur le MÊME conteneur : celui que le rendu a produit.
     // `dataset.idx` absent -> undefined -> NaN -> repli sur stationCourante() ; jamais 0.
     const deposer = e.target.closest(".hold-store");
     if (deposer) { const b = deposer.closest(".hold-sell"); deposerIci(deposer.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const ouvrir = e.target.closest(".hold-sell-btn");
-    if (ouvrir) { etat.venteEnCours = ouvrir.dataset.name; renderSoute(true); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
-    if (e.target.closest(".hold-sell-no")) { etat.venteEnCours = null; renderSoute(); return; }
+    // `flushSync` : le champ de vente doit exister au RETOUR du gestionnaire pour qu'on le
+    // sélectionne. C'est le même contrat que l'ouverture d'une valeur éditable (communs.tsx).
+    if (ouvrir) { etat.venteEnCours = ouvrir.dataset.name; flushSync(notifier); $("holdCard").querySelector(".hold-sell-qty")?.select(); return; }
+    if (e.target.closest(".hold-sell-no")) { etat.venteEnCours = null; notifier(); return; }
     const ok = e.target.closest(".hold-sell-ok");
     if (ok) { const b = ok.closest(".hold-sell"); vendreIci(ok.dataset.name, Number(b.querySelector(".hold-sell-qty").value), Number(b.dataset.idx)); return; }
     const del = e.target.closest(".hold-del");
@@ -1932,7 +1761,7 @@ async function init() {
     if (!e.target.classList.contains("hold-sell-qty")) return;
     // Entrée doit encaisser à la même station que le bouton ✓ : même index figé, lu sur le conteneur.
     if (e.key === "Enter") { e.preventDefault(); vendreIci(etat.venteEnCours, Number(e.target.value), Number(e.target.closest(".hold-sell")?.dataset.idx)); }
-    else if (e.key === "Escape") { e.preventDefault(); etat.venteEnCours = null; renderSoute(); }
+    else if (e.key === "Escape") { e.preventDefault(); etat.venteEnCours = null; notifier(); }
   });
   // Déclarer « j'ai ça à bord » (#55) : le seul chemin qui fait entrer du fret sans jambe.
   $("holdDeclare").addEventListener("click", (e) => {
@@ -2137,10 +1966,10 @@ async function init() {
     // doit pas emporter TOUTE l'app dans le catch ci-dessous, qui accuserait alors data/routes.json
     // — parfaitement chargé — et laisserait l'utilisateur devant une page vide et un message faux.
     try {
-      renderJourney();
+      rafraichir();
     } catch (err) {
       etat.JOURNEY = null;
-      renderJourney();
+      rafraichir();
       showToast("⚠ Parcours illisible dans le lien — il a été ignoré");
     }
     switchView(etat.view);

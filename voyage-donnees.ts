@@ -18,7 +18,7 @@
 // eux-mêmes.
 
 import {
-  bestManifest, legsToPin, manifestIntent, manifestIntentSurvives, hydrateManifestLine,
+  bestManifest, journeyEnd, legsToPin, manifestIntent, manifestIntentSurvives, hydrateManifestLine, stopSuggestions,
 } from "./logic.ts";
 import type { ContexteManifeste, CoteMarche, Filtres, Jambe, LigneManifeste } from "./types.ts";
 import { etat } from "./etat.ts";
@@ -170,4 +170,16 @@ export function legSuggestCtx(leg: Jambe, lines: LigneManifeste[], f: Filtres & 
     dest: { name: leg.to, system: leg.toSystem },
     cargo: f.cargo, f, fee: ctx && ctx.pair, // même filtrage des suggestions qu'« En route »
   };
+}
+
+/** L'index du terminal où le parcours SE TERMINE — le point d'extension d'un arrêt ou d'une boucle. */
+export function journeyEndIndex(): number | null {
+  const end = journeyEnd(etat.JOURNEY);
+  return end && stationMap.size ? stationMap.get(stationLabel(end.name, end.system)) ?? null : null;
+}
+
+/** Les arrêts qu'on pourrait ajouter depuis la fin du parcours, filtres appliqués. */
+export function journeyStopSuggestions() {
+  const fromIdx = journeyEndIndex();
+  return fromIdx == null ? [] : stopSuggestions(etat.MARKET!, fromIdx, readFilters());
 }

@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// Le pont entre app.js et le premier îlot React (pont.js, ADR-008 #96).
+// L'IDENTITÉ des nœuds à travers un re-rendu (ADR-008 #96, ADR-012).
+//
+// Ce fichier s'appelait `pont.pw.mjs` du temps où `pont.js` montait une racine React par conteneur.
+// Le pont a disparu avec le dernier `peindre()` ; ces quatre tests, eux, ne l'ont jamais visé — ils
+// regardent l'ARBRE, et ils valent exactement autant sous la racine unique.
 //
 // Ces tests ne regardent pas une apparence : ils regardent la PROPRIÉTÉ qui rend la cohabitation
 // tenable. Le dépôt a déjà payé cher la classe de bug visée — #24, #28, #38 et #55 sont tous des
