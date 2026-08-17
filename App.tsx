@@ -26,6 +26,7 @@ import { VueBouclesArbitrage } from "./vues/boucles-vue.tsx";
 import { VueChaineArbitrage } from "./vues/chaine-vue.tsx";
 import { VueTrajetsArbitrage } from "./vues/trajets-vue.tsx";
 import { CarteParcours } from "./vues/carte-vue.tsx";
+import { VueEnRoute } from "./vues/enroute-vue.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -87,6 +88,9 @@ export function App() {
       {/* La carte du parcours vit DANS la section du Plan de vol : garde POSITIVE, l'inverse du
           bandeau. Elle était redessinée à chaque rendu depuis les huit vues. */}
       <Portail id="journeyMap" si="plan"><CarteParcours /></Portail>
+      {/* La HUITIÈME et dernière vue d'onglet. Elle occupe deux conteneurs — la carte de chargement
+          et la table du fret rentable — qui partagent les filtres, le départ et l'arrivée forcée. */}
+      <VueEnRoute />
     </>
   );
 }

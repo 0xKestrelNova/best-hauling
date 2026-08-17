@@ -229,3 +229,23 @@ test("Manifeste : la composition survit à un rendu, et s'abandonne au changemen
   await page.fill("#origin", autre);
   await expect.poll(compo, { timeout: 8000 }).toBeNull();
 });
+
+test("Arbre : taper depuis les Trajets ne recalcule pas la carte de chargement", async ({ page }) => {
+  // La dernière vue à emménager, et la plus chère à recalculer pour rien : `bestManifest` remplit
+  // une soute par marge décroissante sur tout le marché, puis `enRouteDeals` reprend une vente par
+  // commodité.
+  await page.click("#viewEnroute");
+  await expect(page.locator("#originList option").first()).toBeAttached({ timeout: 20000 });
+  const origine = await page.locator("#originList option").first().getAttribute("value");
+  await page.fill("#origin", origine);
+  await expect(page.locator("#manifest")).toBeVisible();
+
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "manifest");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "la carte de chargement a été recalculée depuis les Trajets").toBe(0);
+});

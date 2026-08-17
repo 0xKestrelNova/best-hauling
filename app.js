@@ -33,13 +33,13 @@ import { readFilters } from "./filtres.ts";
 import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { construireIndex, findCommodity, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { construireIndex, findCommodity, indexArriveeForcee, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
-import { manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
-import { compositionValide, loadManifestEdit, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
+import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
+import { compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
 import { evaluate } from "./vues/trajets-vue.tsx";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
@@ -299,20 +299,20 @@ function vignetteStation(s) {
 // Résout le terminal de départ depuis le texte du champ (libellé exact).
 
 // Résout le terminal d'ARRIVÉE forcé (En route) depuis le champ (libellé exact), ou null.
-let enrouteDest = null;
-function resolveDest() {
-  const v = $("destTerminal").value.trim();
-  enrouteDest = stationMap.has(v) ? stationMap.get(v) : null;
-}
+
 
 // dealFrom / enRouteDeals / bestManifest / buildChainAdjacency vivent dans logic.mjs (fonctions
 // pures) ; on leur passe MARKET et le résolveur de corrections effVals depuis les vues.
 
-let currentManifest = null; // manifeste courant, mutable (édition SCU + suggestions ajoutées)
+// Le chargement courant se DÉRIVE à la demande — plus de globale écrite au rendu et relue au clic.
+// C'est la même leçon qu'`indexOrigine` : une valeur dérivée qu'il faut penser à recalculer est une
+// valeur qui sera un jour lue périmée. Le coût est un `bestManifest` par geste — celui-là même que
+// le rendu que le geste déclenche referait de toute façon.
+const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
 
 // ---------- Le chargement qu'on COMPOSE à la main (#19) ----------
 // Lignes ajoutées, SCU ramenés à ce qu'on veut vraiment acheter : cette intention n'existait que
-// dans `currentManifest`, que renderManifest remet à null à chaque rendu. Un prix corrigé, une
+// dans une globale que le rendu remettait à null à chaque passe. Un prix corrigé, une
 // frappe dans la recherche ou un vaisseau changé l'effaçaient sans un mot. Elle se persiste donc
 // comme le manifeste d'une jambe de voyage, et SOUS LA MÊME FORME : l'INTENTION seule —
 // [{ name, units }] — jamais un instantané de marché, dont les prix se figeraient au jour de
@@ -342,9 +342,9 @@ function oublierCompositionSiRouteChangee() {
   if (!etat.MANIFEST_EDIT || !etat.MARKET) return;
   const origin = indexOrigine();
   if (origin == null) return;
-  resolveDest();
+  const arrivee = indexArriveeForcee();
   const ot = etat.MARKET.terminals[origin];
-  const dt = enrouteDest == null ? null : etat.MARKET.terminals[enrouteDest];
+  const dt = arrivee == null ? null : etat.MARKET.terminals[arrivee];
   const valide = compositionValide(
     { name: ot.name, system: ot.system },
     dt && { name: dt.name, system: dt.system },
@@ -370,23 +370,13 @@ function oublierCompositionSiRouteChangee() {
 
 // Lignes d'une composition, RELUES au marché courant : c'est ce qui fait qu'un prix corrigé
 // s'affiche alors que les SCU, eux, ne bougent pas.
-const lignesComposees = (lignes, fromIdx, toIdx) =>
-  lignes.map((e) => hydrateManifestLine(etat.MARKET, fromIdx, toIdx, findCommodity(e.name), e.units, effVals));
 
 // Carte d'un couple de terminaux dont plus AUCUN chargement n'est rentable : bestManifest ne rend
 // alors rien, et la composition faite à la main disparaîtrait avec lui — alors que le geste qui
 // vient de tuer la rentabilité (un prix d'achat corrigé vers le haut) est justement celui qui la
 // rend précieuse. Mêmes champs que ceux que manifestsFrom estampille sur un trajet ; les lignes
 // viennent de l'appelant.
-function manifesteSansOptimal(originIdx, destIdx, f) {
-  const ot = etat.MARKET.terminals[originIdx], dt = etat.MARKET.terminals[destIdx];
-  const point = feeResolver(f);
-  return {
-    origin: ot, originIdx, dest: dt, destIdx, cross: ot.system !== dt.system,
-    lines: [], profit: 0, cargo: f.cargo,
-    fee: point ? { buy: point(ot), sell: point(dt) } : null,
-  };
-}
+
 
 // `isOv` est passée dans `corrections.ts`, à côté d'`effVals` : elle lit le même store.
 
@@ -411,14 +401,15 @@ function manifesteSansOptimal(originIdx, destIdx, f) {
 // et n'a plus lieu d'être : deux fabriques du même bloc auraient fini par diverger.
 
 function addSuggestion(name) {
-  if (!currentManifest) return;
-  const it = suggestionsFor(currentManifest).find((x) => x.name === name);
+  const m = chargementCourant();
+  if (!m) return;
+  const it = suggestionsFor(m).find((x) => x.name === name);
   if (!it) return;
-  const u = addableUnits(it, manifestRemaining(currentManifest));
+  const u = addableUnits(it, manifestRemaining(m));
   if (u <= 0) return;
-  currentManifest.lines.push({ ...it, units: u, cap: u });
-  retenirComposition(currentManifest);
-  paintManifest();
+  m.lines.push({ ...it, units: u, cap: u });
+  retenirComposition(m);
+  notifier();
 }
 
 // Trouve une commodité par nom OU code (insensible à la casse/espaces). Partagé par les ajouts
@@ -427,22 +418,22 @@ function addSuggestion(name) {
 // Ajout LIBRE : n'importe quelle commodité (par nom ou code), même si elle n'est pas vendable à
 // destination — on la charge pour l'écouler ailleurs (ligne « carry-only », marge nulle ici).
 function addManifestCommodity(name) {
-  const m = currentManifest;
+  const m = chargementCourant();
   if (!m || !etat.MARKET) return;
   const c = findCommodity(name);
   if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
   m.lines.push(freeManifestLine(etat.MARKET, m.originIdx, m.destIdx, c, manifestRemaining(m).cargoLeft, effVals));
-  retenirComposition(currentManifest);
-  paintManifest();
+  retenirComposition(m);
+  notifier();
 }
 
 // Retire une ligne du manifeste (par nom de commodité).
 function removeManifestLine(name) {
-  const m = currentManifest;
+  const m = chargementCourant();
   if (!m) return;
   m.lines = m.lines.filter((l) => l.name !== name);
-  retenirComposition(currentManifest);
-  paintManifest();
+  retenirComposition(m);
+  notifier();
 }
 
 // Engager le chargement dans le voyage : le bouton, ou la phrase qui dit pourquoi il n'y est pas.
@@ -454,23 +445,7 @@ function removeManifestLine(name) {
 // Dessine le manifeste courant : totaux + lignes (SCU/prix/stock éditables) + suggestions.
 // Tout ce qui suit dépend de l'ÉTAT GLOBAL (le marché, les corrections, le parcours, la
 // composition à la main) ; la mise en forme, elle, vit dans l'îlot.
-function paintManifest() {
-  const m = currentManifest;
-  $("manifest").hidden = false;
-  peindre($("manifest"), carteManifeste({
-    m,
-    generation: manifestGen,
-    compose: !!etat.MANIFEST_EDIT,
-    parcours: etat.JOURNEY,
-    suggestions: suggestionsFor(m),
-    restant: manifestRemaining(m),
-    libelleCaisses: (units) => scuBoxesLabel(units, m.origin.maxBox),
-    texteBoutFrais: feeEndText,
-    minutesTrajet: tripMinutes(0, m.cross),
-    estCorrige: isOv,
-    corriger, // six arguments dans le même ordre : passé nu, comme pour les Trajets
-  }));
-}
+
 
 // Recalcule totaux + profit par ligne d'après les SCU saisis, et rafraîchit les suggestions.
 //
@@ -480,26 +455,29 @@ function paintManifest() {
 // permet de supprimer les trois écritures en place (`.mprofit`, `.mboxes`, `#manifestTot`) — un
 // nœud possédé par React et muté hors de React, c'est précisément ce que le garde de #113 interdit.
 function updateManifestTotals() {
-  if (!currentManifest) return;
+  const m = chargementCourant();
+  if (!m) return;
   document.querySelectorAll("#manifest .mqty-input").forEach((inp) => {
     const i = Number(inp.dataset.i);
     let u = Math.floor(Number(inp.value));
     if (!Number.isFinite(u) || u < 0) u = 0;
     // Le dépassement du stock UEX est autorisé (vol de fret, relevé périmé…) : on ne plafonne
     // plus à `cap`, on le signale visuellement — la classe `over-stock` est posée au rendu.
-    const l = currentManifest.lines[i];
+    const l = m.lines[i];
     if (l) l.units = u;
   });
   // À la FRAPPE, pas au blur : le champ ne porte aucun `change`, et le premier refresh venu — un
   // prix corrigé ailleurs, une recherche tapée — repeindrait la carte avant qu'on ait quitté le
   // champ. Ce que ça écrit tient en deux nombres par ligne.
-  retenirComposition(currentManifest);
-  paintManifest();
+  retenirComposition(m);
+  // `notifier()` et non `rafraichir()` : la frappe ne doit PAS bouger la génération de la carte,
+  // sans quoi les champs SCU se remonteraient sous les doigts (cf. manifeste-etat.ts).
+  notifier();
 }
 
 // Copie le plan de chargement en texte (pour un 2e écran / des notes).
 function copyManifest() {
-  const m = currentManifest;
+  const m = chargementCourant();
   if (!m) return;
   const { profit, invest, scu, fees } = manifestTotals(m.lines, m.fee);
   const rows = m.lines.map(
@@ -540,114 +518,9 @@ function copierTexte(texte, btn, libelle) {
   }).catch(() => showToast("⚠ Presse-papiers refusé — la copie n'a pas eu lieu"));
 }
 
-let manifestGen = 0; // cf. l'affectation de `currentManifest`, plus bas
-function renderManifest(origin, destSystem, f, destTerminal) {
-  const card = $("manifest");
-  currentManifest = null;
-  // Les trois messages ci-dessous passent par React, comme la carte. `#manifest` lui appartient
-  // depuis #96 : un `innerHTML` y détacherait les nœuds qu'il a créés sans qu'il le sache, et la
-  // racine mémorisée dans pont.js appliquerait ensuite ses différences hors du document — le
-  // message resterait à l'écran pour de bon, sans lever (#120).
-  if (indexOrigine() == null) { card.hidden = true; peindre(card, null); return; }
-  if (!f.useCargo || !(f.cargo > 0)) {
-    card.hidden = false;
-    peindre(card, indiceSouteInactive());
-    return;
-  }
-  // La soute n'est pas vide : on ne peut charger QUE la place qui reste. C'est la question du
-  // scénario d'ADR-002 — « j'ai 30 SCU de libre, qu'est-ce que j'y mets maintenant ? ». Les autres
-  // vues gardent la soute nominale : elles répondent à « quelle est la meilleure route », pas à
-  // « que puis-je embarquer là, tout de suite ».
-  const aBord = holdScu(etat.SOUTE);
-  const libre = freeCargo(etat.SOUTE, f.cargo);
-  if (aBord > 0 && libre <= 0) {
-    card.hidden = false;
-    peindre(card, indiceSoutePleine(fmt(aBord)));
-    return;
-  }
-  const fLibre = aBord > 0 ? { ...f, cargo: libre } : f;
-  // Une composition en cours IMPOSE sa destination : laisser la carte se re-router toute seule sous
-  // une correction de prix ferait disparaître de l'écran le chargement qu'on est en train de
-  // composer — le symptôme même qu'on corrige. Forcer l'arrivée au champ, elle, l'abandonne.
-  const ot = etat.MARKET.terminals[origin];
-  const dt = destTerminal == null ? null : etat.MARKET.terminals[destTerminal];
-  // PURE : elle ne décide plus d'abandonner, elle dit seulement si la composition vaut encore pour
-  // cette route. L'abandon est descendu dans les gestes qui CHANGENT de route — le rendu n'écrit
-  // plus rien (ADR-012 §4, et le point 3 de l'en-tête d'`etat.ts`).
-  const compo = compositionValide(
-    { name: ot.name, system: ot.system },
-    dt && { name: dt.name, system: dt.system },
-    destSystem,
-    (nom, systeme) => stationMap.get(stationLabel(nom, systeme)),
-    findCommodity,
-  );
-  const cible = compo ? compo.destIdx : destTerminal;
-  const man = bestManifest(etat.MARKET, origin, destSystem, fLibre, effVals, cible, feeResolver(f))
-    || (compo ? manifesteSansOptimal(origin, cible, fLibre) : null);
-  if (!man) {
-    card.hidden = false;
-    peindre(card, indiceAucunChargement(aBord > 0 ? fmt(libre) : null));
-    return;
-  }
-  // Les lignes EFFECTIVES : celles de l'utilisateur, moins ce qu'UEX ne publie plus. Le filtre est
-  // fait par `compositionValide`, qui ne persiste rien — le prochain geste réécrit l'objet entier.
-  if (compo) man.lines = lignesComposees(compo.lignes, origin, cible);
-  man.originIdx = origin;
-  man.f = fLibre;
-  man.aBord = aBord; // pour que la carte dise pourquoi elle ne remplit que ça
-  // `man.fee` (le contexte de frais) vient de manifestsFrom : on ne le reconstruit pas, on ne
-  // risque donc pas de le reconstruire AUTREMENT que ce qui a servi à choisir la destination.
-  man.feeInfo = feeCtx(f, man.origin.name, man.dest.name, man.origin, man.dest);
-  currentManifest = man;
-  // La GÉNÉRATION distingue les deux façons de repeindre la carte, et c'est tout ce qui reste du
-  // comportement de l'ancien `card.innerHTML` :
-  //   - ici, le manifeste vient d'être RECALCULÉ (départ changé, « ↺ optimal », correction de
-  //     prix…) : les champs SCU doivent adopter les nouvelles valeurs, donc ils se remontent ;
-  //   - depuis `updateManifestTotals`, on est EN TRAIN de taper : la génération ne bouge pas, le
-  //     champ garde son nœud, sa valeur et son curseur.
-  // Sans elle, un champ non contrôlé garderait à jamais ce que l'utilisateur y a tapé — « ↺
-  // optimal » remettait `value="96"` dans l'attribut pendant que le champ affichait encore 30.
-  manifestGen++;
-  paintManifest();
-}
 
-function renderEnRoute() {
-  // #empty est PARTAGÉ avec Trajets / Boucles, et cette vue n'a encore rien de VRAI à y écrire :
-  // ce n'est pas un filtre qui vide le tableau, c'est le marché qui manque. Symétrie du
-  // Le message par défaut posé en tête des vues à tableau (#55) manquait ici parce que le
-  // retour anticipé précède toute écriture — et withMarket ne re-rend PAS en cas d'échec, donc le
-  // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
-  if (!etat.MARKET) { $("empty").hidden = true; withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  resolveDest();
-  const f = readFilters();
-  const emptyMsg = $("empty");
 
-  renderManifest(indexOrigine(), $("destSystem").value, f, enrouteDest);
 
-  if (indexOrigine() == null) {
-    peindre($("enrouteRows"), null);
-    emptyMsg.hidden = false;
-    emptyMsg.textContent = "Choisis un terminal de départ pour voir le fret à emporter.";
-    return;
-  }
-
-  const destSystem = $("destSystem").value;
-  // sysFilter:"" — le système d'arrivée est filtré par destSystem (ou le terminal forcé), pas par le menu « système d'achat ».
-  const ef = { ...f, sysFilter: "" };
-  // Le contexte de frais descend DANS enRouteDeals : elle ne garde qu'UNE vente par commodité, donc
-  // une destination meilleure en net n'entrerait jamais dans la liste — et la carte Manifeste, juste
-  // au-dessus, afficherait la destination inverse (bestManifest, lui, tranche déjà sur le net).
-  let deals = enRouteDeals(etat.MARKET, indexOrigine(), destSystem, enrouteDest, f, feeResolver(f))
-    .filter((r) => routePasses(r, ef))
-    .map((r) => evaluate(r, f));
-
-  deals.sort(bySort(etat.sortKey, etat.sortDir));
-  peindre($("enrouteRows"), vueTrajets({ ...propsTrajetsCommunes(), ...propsLignesSimples(), lignes: deals }));
-  emptyMsg.hidden = deals.length > 0;
-  if (!deals.length) emptyMsg.textContent = "Aucun fret rentable depuis ce terminal avec ces filtres.";
-  notifySuperseded();
-}
 
 // ---------- Vue « Chaîne » (multi-sauts A -> B -> C ...) ----------
 
@@ -1079,7 +952,7 @@ function clearJourney() {
 // Engage le manifeste d'« En route » comme nouvelle jambe du voyage (bouton de la carte Manifeste).
 // La garde d'état est REJOUÉE ici : le rendu peut dater d'avant un changement de parcours.
 function manifestToJourney() {
-  const m = currentManifest;
+  const m = chargementCourant();
   if (!m || !m.lines.length || !etat.MARKET) return;
   if (manifestJourneyState(etat.JOURNEY, m.origin, m.dest).etat !== "ajouter") return;
   const intent = manifestIntent(m.lines);
@@ -1436,10 +1309,14 @@ const debounce = (fn, ms = 150) => {
 };
 
 function refresh() {
-  // « En route » est la DERNIÈRE vue d'onglet encore peinte ici. Les sept autres vivent dans
-  // l'arbre et se réévaluent seules au `notifier()` de la fin — chacune sous sa propre garde de
-  // vue, donc sans que celle qu'on ne regarde pas ne coûte rien (ADR-012 §3).
-  if (etat.view === "enroute") renderEnRoute();
+  // PLUS AUCUNE BRANCHE DE VUE : les huit vivent dans l'arbre et se réévaluent seules au
+  // `notifier()` de la fin, chacune sous sa propre garde. Ce qui reste ici, c'est le BANDEAU —
+  // visible dans six vues sur huit — et `saveState()`.
+  //
+  // La génération de la carte de chargement bouge ICI et nulle part ailleurs : un cycle complet est
+  // par définition un RECALCUL, donc les champs SCU doivent adopter les nouvelles valeurs. Une
+  // frappe, elle, n'appelle que `notifier()` et laisse la génération tranquille (manifeste-etat.ts).
+  nouvelleGenerationManifeste();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
   // bénéfices du voyage — alors qu'une jambe non ajustée est justement, par contrat, branchée sur
@@ -1923,7 +1800,7 @@ async function init() {
   // rien n'oblige à choisir dans la liste) : même debounce que ci-dessus. Sans lui, chaque frappe
   // re-rendait la vue ET réécrivait le hash — or WebKit plafonne history.replaceState à 100 appels
   // par 10 s : taper deux noms de terminal suffisait à le franchir. Les résolveurs restent DANS le
-  // rappel, donc dans le même ordre qu'avant ; renderEnRoute / renderChain / renderCorrections les
+  // rappel, donc dans le même ordre qu'avant ; les vues de l'arbre les
   // rejouent de toute façon avant de peindre.
   // CHANGER DE ROUTE ABANDONNE LA COMPOSITION, et c'est un GESTE — plus une décision du rendu.
   // `compositionValide` se contente désormais de dire qu'elle ne vaut plus ; c'est ici qu'on

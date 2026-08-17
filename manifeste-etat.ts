@@ -107,3 +107,18 @@ export function compositionValide(
 
   return { edit, lignes, destIdx: destIdx as number };
 }
+
+// ── LA GÉNÉRATION DE LA CARTE ─────────────────────────────────────────────────────────────────
+// Elle distingue les DEUX façons de repeindre le chargement, et c'est tout ce qui reste du
+// comportement de l'ancien `innerHTML` :
+//   — un RECALCUL (départ changé, « ↺ optimal », prix corrigé…) : les champs SCU doivent adopter
+//     les nouvelles valeurs, donc ils se remontent — d'où la génération dans leur `key` ;
+//   — une FRAPPE : la génération ne bouge pas, le champ garde son nœud, sa valeur et son curseur.
+//
+// Sans elle, un champ non contrôlé garderait à jamais ce que l'utilisateur y a tapé : « ↺ optimal »
+// remettait `value="96"` dans l'attribut pendant que le champ affichait encore 30.
+let generation = 0;
+
+/** Appelée par le cycle de rendu complet, jamais par la frappe. */
+export const nouvelleGenerationManifeste = (): void => { generation++; };
+export const generationManifeste = (): number => generation;
