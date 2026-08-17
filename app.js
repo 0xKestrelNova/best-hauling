@@ -38,12 +38,13 @@ import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResol
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
+import { manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
 import { evaluate } from "./vues/trajets-vue.tsx";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
-import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import { figerJambe, jambeChargee, legSuggestCtx, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 // (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
 // depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
@@ -410,16 +411,11 @@ function manifesteSansOptimal(originIdx, destIdx, f) {
 // Espace/budget restants d'après les SCU actuellement affectés.
 // m = contexte de manifeste { lines, cargo, f, originIdx, destIdx, origin, dest } ; par défaut
 // celui d'« En route », mais une jambe de voyage passe le sien (cf. legSuggestCtx).
-function manifestRemaining(m = currentManifest) {
-  const { scu, invest } = manifestTotals(m.lines);
-  const budgetLeft = m.f.useBudget && m.f.budget > 0 ? m.f.budget - invest : Infinity;
-  return { scu, invest, cargoLeft: m.cargo - scu, budgetLeft };
-}
+
 
 // Commodités qui pourraient remplir l'espace libre (même origine -> même destination), non chargées.
 // Le calcul vit dans logic.mjs (partagé avec le manifeste optimal, donc éligibilité identique) ;
 // app.js ne fournit que le marché et le résolveur de corrections.
-const suggestionsFor = (m = currentManifest) => suggestionsFrom(etat.MARKET, m, effVals);
 
 // addableUnits vient de logic.mjs.
 
@@ -430,9 +426,10 @@ const suggestionsFor = (m = currentManifest) => suggestionsFrom(etat.MARKET, m, 
 // et n'a plus lieu d'être : deux fabriques du même bloc auraient fini par diverger.
 
 function addSuggestion(name) {
-  const it = suggestionsFor().find((x) => x.name === name);
+  if (!currentManifest) return;
+  const it = suggestionsFor(currentManifest).find((x) => x.name === name);
   if (!it) return;
-  const u = addableUnits(it, manifestRemaining());
+  const u = addableUnits(it, manifestRemaining(currentManifest));
   if (u <= 0) return;
   currentManifest.lines.push({ ...it, units: u, cap: u });
   retenirManifeste();
@@ -449,7 +446,7 @@ function addManifestCommodity(name) {
   if (!m || !etat.MARKET) return;
   const c = findCommodity(name);
   if (!c || m.lines.some((l) => l.name === c.name)) return; // inconnue ou déjà dans le manifeste
-  m.lines.push(freeManifestLine(etat.MARKET, m.originIdx, m.destIdx, c, manifestRemaining().cargoLeft, effVals));
+  m.lines.push(freeManifestLine(etat.MARKET, m.originIdx, m.destIdx, c, manifestRemaining(m).cargoLeft, effVals));
   retenirManifeste();
   paintManifest();
 }
@@ -1105,20 +1102,7 @@ function manifestToJourney() {
 
 // Contexte de manifeste d'une jambe, à la forme attendue par suggestionsFor/manifestRemaining
 // (mêmes suggestions de remplissage qu'« En route »). null si le terminal ou la soute manque.
-function legSuggestCtx(leg, lines, f) {
-  if (!etat.MARKET || !stationMap.size) return null;
-  if (!f.useCargo || !(f.cargo > 0)) return null; // sans soute bornée, « SCU libres » n'a pas de sens
-  const originIdx = stationMap.get(stationLabel(leg.from, leg.fromSystem));
-  const destIdx = stationMap.get(stationLabel(leg.to, leg.toSystem));
-  if (originIdx == null || destIdx == null) return null;
-  const ctx = legFeeCtx(leg, f);
-  return {
-    lines, originIdx, destIdx,
-    origin: { name: leg.from, system: leg.fromSystem },
-    dest: { name: leg.to, system: leg.toSystem },
-    cargo: f.cargo, f, fee: ctx && ctx.pair, // même filtrage des suggestions qu'« En route »
-  };
-}
+
 
 // Actions d'édition d'une jambe (i = index de jambe).
 function toggleLegEditor(i) {

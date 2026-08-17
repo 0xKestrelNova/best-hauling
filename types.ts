@@ -780,9 +780,21 @@ export type MetriquesTrajet = {
   fiabilite: number; fees: number; nLines: number; commodity: string; buyPrice: number; sellPrice: number;
 };
 
+/** Un chargement EN COURS, quel que soit le porteur : la carte d'« En route » ou une jambe du
+ *  parcours. `suggestionsFrom` (logic.ts) n'en lit que la moitié — `lines`, `destIdx`, `f` — mais
+ *  `manifestRemaining` (manifeste-donnees.ts) a besoin de `cargo` pour dire combien il reste, et
+ *  `legSuggestCtx` le fabrique complet. Le type porte donc la forme RÉELLE, pas le sous-ensemble
+ *  d'un seul lecteur : c'est ce qui permet aux deux porteurs de passer par les mêmes fonctions. */
 export type ContexteManifeste = {
   lines: Array<{ name: string }>; originIdx: number; destIdx: number;
-  origin: { name: string }; dest: { name: string }; f: Filtres;
+  /** Le `system` accompagne le nom parce que `legSuggestCtx` l'a sous la main et que la carte
+   *  l'affiche ; `suggestionsFrom` ne lit que le nom. */
+  origin: { name: string; system?: string }; dest: { name: string; system?: string }; f: Filtres;
+  /** Le plafond de soute retenu. `legSuggestCtx` refuse de fabriquer un contexte sans lui : sans
+   *  soute bornée, « SCU libres » n'a aucun sens. */
+  cargo: number;
+  /** Le contexte de frais de la paire, quand l'autoload est actif. */
+  fee?: PaireFrais | null;
 };
 
 export type ChiffrageSaut = { units: number; profit: number; lines: LigneManifeste[]; cargo: number };
