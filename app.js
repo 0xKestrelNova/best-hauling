@@ -12,7 +12,7 @@ import {
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, journeyMap,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -36,7 +36,7 @@ import { showToast } from "./messages.ts";
 import { construireIndex, findCommodity, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
-import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
+import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
 import { evaluate } from "./vues/trajets-vue.tsx";
@@ -54,7 +54,6 @@ import { vueTrajets } from "./vues/trajets.tsx";
 import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
-import { carteParcours } from "./vues/carte.tsx";
 import { carteDeclaration } from "./vues/declaration.tsx";
 import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 
@@ -1028,26 +1027,10 @@ function renderSoute(synchrone = false) {
 // que le branchement à l'état — les globales JOURNEY / MARKET / STARMAP, qu'un îlot ne lit pas.
 
 // Dessine (ou masque) le panneau carte. Appelé par renderJourney, donc à chaque refresh.
-function renderJourneyMap() {
-  const box = $("journeyMap");
-  if (!box) return;
-  // Masquer NE SUFFIT PAS : le conteneur reste possédé par React, donc on le repeint à vide. Une
-  // branche qui se contenterait de poser `hidden` laisserait le dessin précédent en place, prêt à
-  // réapparaître tel quel — c'est la même règle que pour les messages vides des autres îlots.
-  if (!etat.JOURNEY || !etat.MARKET) { box.hidden = true; peindre(box, null); return; }
-  if (!etat.STARMAP) { ensureStarmap(renderJourneyMap); box.hidden = true; peindre(box, null); return; }
-  const info = (nom) => {
-    const i = stationMap.get(stationLabel(nom, (journeyStations(etat.JOURNEY).find((s) => s.name === nom) || {}).system || ""));
-    return i == null ? null : etat.MARKET.terminals[i];
-  };
-  // Jambe courante chargée = on a payé et on est parti : le vaisseau quitte le quai sur la carte.
-  const legCourante = etat.JOURNEY.legs[etat.JOURNEY.current];
-  const enVol = !!legCourante && jambeChargee(legCourante, etat.JOURNEY.current);
-  const c = journeyMap(journeyStations(etat.JOURNEY), etat.JOURNEY.current, etat.STARMAP, info, enVol);
-  if (!c) { box.hidden = true; peindre(box, null); return; }
-  box.hidden = false;
-  peindre(box, carteParcours(c));
-}
+// `renderJourneyMap` est passée dans `vues/carte-vue.tsx`, avec une garde `si="plan"` : elle était
+// rejouée à chaque `refresh()` depuis les huit vues, pour un <aside> que sept d'entre elles
+// n'affichent pas (ADR-012).
+
 
 // ---------- Compagnon de voyage : résumé du parcours (près du vaisseau) ----------
 // `pickJourney` et `syncViewsToJourney` sont passées dans `voyage-actions.ts` : les QUATRE vues qui
@@ -1316,7 +1299,6 @@ function renderJourney({ frappe = false } = {}) {
     card.hidden = false;
     const recap0 = $("journeyRecap"); if (recap0) { recap0.hidden = true; peindre(recap0, null); } // pas de récap sans voyage
     const row0 = $("shipJourneyRow"); if (row0) row0.classList.remove("stacked");
-    renderJourneyMap();
     renderSoute();
     renderEntrepots();
     peindre(card, inviteVoyage(), { synchrone: true });
@@ -1385,7 +1367,6 @@ function renderJourney({ frappe = false } = {}) {
   }), { synchrone: true });
 
   renderJourneyRecap({ n, totalProfit, totalScu, totalFees, systems: new Set(stations.map((s) => s.system)).size });
-  renderJourneyMap();
   // SYNCHRONES, les quatre : `ajusterRangeeVoyage` MESURE les hauteurs juste en dessous
   // (`getBoundingClientRect`) pour décider d'empiler les colonnes. Un rendu React groupé les lui
   // ferait lire AVANT peinture — la carte basculait de 1172 px à 640 px de large selon l'état,

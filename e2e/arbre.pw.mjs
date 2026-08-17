@@ -176,3 +176,21 @@ test("Trajets : une correction ouverte pendant un re-tri reste sur SA commodité
     await expect(ouvert.first(), "l'éditeur a changé de commodité sous les doigts").toHaveAttribute("data-c", commodite);
   }
 });
+
+test("Arbre : la carte du parcours ne se redessine pas hors du Plan de vol", async ({ page }) => {
+  // Elle vit DANS la section du Plan, donc une vue sur huit — mais elle était repeinte à chaque
+  // rendu depuis les sept autres, géométrie de tous les arrêts recalculée pour un <aside> masqué.
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+  await page.click("#viewPlan");
+  await expect(page.locator("#journeyMap svg")).toBeVisible({ timeout: 20000 });
+
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "journeyMap");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "la carte du parcours a été redessinée hors du Plan de vol").toBe(0);
+});
