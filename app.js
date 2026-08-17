@@ -16,7 +16,7 @@ import {
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
-  journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
+  journeyConnects, setJourneyPosition, journeyMargin,
   removeJourneyStop as removeStopPure,
   reindexerRangsJambe, detacherLotsDeJambe,
   soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
@@ -38,6 +38,7 @@ import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResol
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
+import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
@@ -1247,18 +1248,9 @@ function renderJourneyMap() {
 }
 
 // ---------- Compagnon de voyage : résumé du parcours (près du vaisseau) ----------
-// Sélectionne un trajet/une boucle/une chaîne -> met à jour le parcours (étend si ça s'enchaîne).
-// `apresAjout` (optionnel) tourne une fois le parcours à jour mais AVANT le rendu : c'est là que le
-// manifeste d'« En route » dépose son chargement ajusté, pour que la jambe s'affiche du premier
-// coup avec les bons SCU et son badge ✎.
-function pickJourney(legs, apresAjout) {
-  if (!legs || !legs.length) return;
-  etat.JOURNEY = addToJourney(etat.JOURNEY, legs);
-  if (apresAjout) apresAjout();
-  syncViewsToJourney();
-  renderJourney();
-  refresh(); // reflète la nouvelle destination/origine dans la vue courante
-}
+// `pickJourney` et `syncViewsToJourney` sont passées dans `voyage-actions.ts` : les QUATRE vues qui
+// restent ici les appellent, et aucune ne peut emménager tant qu'elles vivent dans un fichier qui
+// n'exporte rien (ADR-012).
 
 // « Je suis ici » : pose la position courante et recale les vues. Deux chemins y mènent — le fil
 // d'étapes textuel (⦿) et les escales de la carte — et c'est délibéré : la carte n'introduit pas
@@ -1276,21 +1268,7 @@ function setJourneyStop(i) {
 
 // Pré-remplit les contrôles des vues d'après la POSITION COURANTE du parcours.
 // « Pré-rempli » : on pose les défauts, l'utilisateur reste libre de les changer.
-function syncViewsToJourney() {
-  if (!etat.JOURNEY) return;
-  const here = journeyStations(etat.JOURNEY)[etat.JOURNEY.current]; // station où l'on se trouve
-  if (!here) return;
-  const originLabel = stationLabel(here.name, here.system);
-  $("origin").value = originLabel;    // En route : départ = station courante
-  $("chainOrigin").value = originLabel; // Chaîne : départ = station courante
-  const leg = currentLeg(etat.JOURNEY);
-  if (leg) {
-    $("destTerminal").value = stationLabel(leg.to, leg.toSystem); // arrivée forcée = jambe courante
-    $("destSystem").value = "";
-  } else {
-    $("destTerminal").value = ""; // au bout du parcours : on cherche le fret onward, pas d'arrivée imposée
-  }
-}
+
 function clearJourney() {
   etat.JOURNEY = null;
   // Sans cette purge, les manifestes édités survivaient à l'effacement du voyage et ressortaient
