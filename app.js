@@ -4,7 +4,7 @@
 import {
   tripMinutes, ageDays, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  autoloadFee, kFromReading, kPlausible,
+  kFromReading, kPlausible,
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
@@ -34,7 +34,7 @@ import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, s
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
 import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
-import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
+import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
@@ -377,9 +377,6 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // invisible au garde — le panneau resterait sur l'ancienne station à côté d'un champ vide.
 let derniereStation;
 const memoriserStation = () => { derniereStation = indexStationExacte(); };
-// Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
-// une saisie en cours y survit (#24).
-let feesRendus = null;
 
 // Charge le graphe de marché à la demande. Deux règles, apprises à la dure :
 //   - on mémorise la PROMESSE en vol, pas seulement son résultat : sinon chaque frappe pendant le
@@ -2059,34 +2056,11 @@ function resetAllReadings() {
 // (marche.ts) : la station se dérive du champ à chaque lecture, au lieu d'être mise en cache par
 // une fonction de rendu. Voir marche.ts pour pourquoi ce n'est pas `resolveStationLabel`.
 
-// Relevé du tarif d'autoload d'une station. L'utilisateur ne saisit PAS `k` : personne ne lit un
-// coefficient en jeu, on lit une facture. Il donne un montant observé pour une quantité, et `k` s'en
-// déduit. Les champs ne portent PAS la classe `.editv` : le handler global de l'édition inline
-// l'attrape partout dans le document et écrirait dans les corrections de prix.
-function stationFeeHTML(S) {
-  const t = etat.MARKET.terminals[S];
-  const head = `<div class="fee-head">◈ Frais d'autoload — ${esc(t.name)}</div>`;
-  const wrap = (body) => `<div class="fee-panel">${head}${body}</div>`;
-  // Deux non-dits distincts, et aucun ne doit se lire « 0 aUEC » : le champ absent (instantané de
-  // market.json antérieur au build qui l'ajoute) et le service réellement indisponible.
-  if (t.autoload == null) return wrap('<p class="fee-off">Donnée d\'autoload absente de cet export UEX : aucun frais n\'est facturé à cette station tant qu\'elle manque.</p>');
-  if (t.autoload !== true) return wrap('<p class="fee-off">Cette station ne propose pas l\'autoload : aucun frais n\'y est facturé, quel que soit ton réglage.</p>');
-  const rec = etat.AUTOLOAD_K[alKey(t.name)];
-  const k = kFor(t.name);
-  const scu = rec ? rec.scu : 32;
-  const note = `<div class="fee-note">Tarif retenu : <b>k = ${kFmt(k)}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
-  return wrap(
-    `<div class="fee-row">
-       <span>Montant observé</span>
-       <input id="alAmount" type="number" min="0" step="1" value="${rec ? rec.amount : ""}" placeholder="ex : 1159" aria-label="Montant payé en aUEC" />
-       <span>aUEC pour</span>
-       <input id="alScu" type="number" min="1" step="1" value="${scu}" aria-label="Quantité en SCU" />
-       <span>SCU</span>
-       <button id="alSave" type="button" class="copy-btn">Enregistrer</button>
-       ${rec ? `<button type="button" class="corr-del al-del" data-key="${esc(alKey(t.name))}" title="Oublier ce relevé" aria-label="Oublier ce relevé">✕</button>` : ""}
-     </div>${note}`
-  );
-}
+// `stationFeeHTML` et `autoloadListHTML` sont passées dans `vues/frais-station.tsx` : c'étaient
+// les DEUX DERNIÈRES fonctions de vue rendant des chaînes HTML. Leur garde de signature part avec
+// elles — React ne réécrit pas un champ non contrôlé qu'il réconcilie (ADR-012).
+
+
 
 // Tableau éditable des commodités d'une station (prix/stock à l'achat, prix/demande à la vente).
 // `stationTableHTML` a été remplacé par vues/corrections.tsx.
@@ -2110,19 +2084,6 @@ function copierCorrections() {
   copierTexte(JSON.stringify(exporterCorrections(etat.OVERRIDES, nowSec()), null, 2), $("exportCorrections"), "⧉ Exporter");
 }
 
-// Liste des relevés d'autoload, à côté des corrections locales et sur le même modèle : ils sont de
-// la même nature (mesures faites en jeu, purement locales), mais ils ne comptent PAS dans le badge
-// « Corrections (n) » du rail et « Tout réinitialiser » ne les touche pas — ils ont leur propre store.
-function autoloadListHTML() {
-  const keys = Object.keys(etat.AUTOLOAD_K);
-  if (!keys.length) return "";
-  const items = keys.sort().map((key) => {
-    const o = etat.AUTOLOAD_K[key];
-    const terminal = key.slice(key.indexOf("|") + 1);
-    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${kFmt(o.k)}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
-  }).join("");
-  return `<div class="corr-list-head"><span>${keys.length} relevé${keys.length > 1 ? "s" : ""} d'autoload</span><button id="resetAllK" class="reset-ov">Tout oublier</button></div>${items}`;
-}
 
 // Prépare les tuiles d'une station pour l'îlot : app.js reste le seul à lire MARKET et à appeler
 // `effVals` — dont la purge d'une correction périmée est un effet de bord assumé.
@@ -2197,16 +2158,9 @@ function renderCorrections() {
     }));
   }
   peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections(S) }));
-  // Le panneau de frais n'est réécrit QUE si son contenu a changé (#24). Le sortir de
-  // #correctionsStation ne suffisait pas : renderCorrections réécrivait son nouveau conteneur tout
-  // aussi inconditionnellement, et un montant en cours de frappe repartait à vide au moindre
-  // re-rendu — un filtre tapé, une correction ailleurs. Le panneau ne dépend que de la station
-  // affichée et du store des relevés : cette signature suffit à décider.
-  const signature = `${S}|${JSON.stringify(etat.AUTOLOAD_K)}`;
-  if (signature !== feesRendus) {
-    feesRendus = signature;
-    $("correctionsFees").innerHTML = (S != null ? stationFeeHTML(S) : "") + autoloadListHTML();
-  }
+  // Le panneau de frais est rendu par l'arbre (`vues/frais-station.tsx`, portail #correctionsFees).
+  // Son garde de signature est parti avec lui : React ne réécrit pas un champ non contrôlé qu'il
+  // réconcilie, donc la raison d'être du garde — protéger une saisie en cours (#24) — s'évapore.
   notifySuperseded();
 }
 

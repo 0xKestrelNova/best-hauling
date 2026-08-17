@@ -443,3 +443,33 @@ test("relevé de station : une station restaurée par permalien reste actionnabl
   await expect(page.locator(".corr-item.autoload")).toContainText(label.split(" — ")[0]);
   await expect(page.locator(".corr-item.autoload")).toContainText("1,41");
 });
+
+// Le panneau de frais annonce « Tarif retenu : k = … », lu par `kFor` — qui retombe sur le
+// coefficient GLOBAL (`#alk`) tant qu'aucun relevé n'existe pour cette station. Or le garde qui
+// décide de réécrire le panneau ne regarde que la station et le store des relevés : changer `#alk`
+// en restant sur la vue Corrections laissait donc un chiffre PÉRIMÉ à l'écran, sous un intitulé qui
+// dit exactement d'où il vient. Le danger est asymétrique : le panneau n'est visible que la case
+// `#autoload` cochée, donc personne ne le voit se tromper.
+test("frais de station : « Tarif retenu » suit le coefficient global (#alk)", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await expect(page.locator("#alkField")).toBeVisible();
+
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("(k global)");
+
+  const avant = await page.locator("#correctionsFees .fee-note").innerText();
+  expect(avant).toContain("1,2"); // le défaut d'index.html
+
+  // On double le coefficient. Le panneau annonce toujours « k global » : il doit donc suivre.
+  await page.fill("#alk", "2.4");
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("2,4", { timeout: 10000 });
+  // Et le montant illustré suit aussi : c'est lui que l'utilisateur compare à sa facture.
+  const apres = await page.locator("#correctionsFees .fee-note").innerText();
+  expect(apres).not.toBe(avant);
+});

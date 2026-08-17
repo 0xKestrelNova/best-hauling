@@ -20,6 +20,8 @@ import { etat, getSnapshot, subscribe } from "./etat.ts";
 import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
 import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 import { VueCommodites } from "./vues/commodites-vue.tsx";
+import { PanneauFrais } from "./vues/frais-station.tsx";
+import { indexStationExacte } from "./marche.ts";
 
 /**
  * Rend `children` dans le conteneur `id`, et SEULEMENT si la vue `si` est celle qu'on regarde.
@@ -36,6 +38,16 @@ function Portail({ id, si, children }: { id: string; si?: string; children: Reac
   if (si != null && etat.view !== si) return null;
   const cible = document.getElementById(id);
   return cible ? createPortal(children, cible) : null;
+}
+
+/**
+ * Le panneau de frais a besoin de SA station, et il est le seul de son conteneur : il la dérive
+ * lui-même, comme toute vue de l'arbre. `etat.MARKET` peut manquer — la vue Corrections est encore
+ * peinte par `app.js`, qui déclenche le chargement.
+ */
+function PanneauFraisStation() {
+  const S = etat.MARKET ? indexStationExacte() : null;
+  return <PanneauFrais terminal={S != null ? etat.MARKET!.terminals[S] : null} />;
 }
 
 export function App() {
@@ -55,6 +67,11 @@ export function App() {
           vue est faite en tête de `VueCommodites`, AU-DESSUS du calcul. La répéter sur trois
           portails frères ferait recalculer tout le marché trois fois (ADR-012 §3). */}
       <VueCommodites />
+      {/* Le panneau de frais passe en JSX AVANT le reste de la vue Corrections, et dans son propre
+          commit : `corrections.tsx` avertit que changer son garde de re-rendu ET migrer la vue dans
+          la même PR rendrait un échec inexploitable. Conteneur distinct, aucun conflit de racines
+          avec les `peindre()` qu'app.js applique encore aux deux autres. */}
+      <Portail id="correctionsFees" si="corrections"><PanneauFraisStation /></Portail>
     </>
   );
 }
