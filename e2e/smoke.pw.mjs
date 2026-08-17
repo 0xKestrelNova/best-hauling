@@ -152,6 +152,53 @@ test("vue Corrections : rechercher une station affiche ses commodités éditable
   expect(await page.locator("#correctionsStation .editv").count()).toBeGreaterThan(0);
 });
 
+// Affiche une station, et n'en rend la main que quand le panneau est VRAIMENT le sien. Sans cette
+// attente, la cellule saisie est encore celle de la station précédente : le panneau se repeint
+// pendant le geste, et la correction part sur le mauvais comptoir — silencieusement.
+async function ouvrirStation(page, label) {
+  await page.fill("#station", label);
+  await expect(page.locator("#correctionsStation .stn-hero-name")).toHaveText(label.split(" — ")[0]);
+}
+
+// Corrige le PREMIER stock d'achat de la station affichée, et rend le nom de la commodité touchée.
+// La valeur est dérivée de celle qu'affiche la cellule : identique, l'édition ne s'enregistre pas
+// (c'est un comportement acquis — consulter n'écrit rien), et le test passerait sans rien poser.
+async function corrigerPremierStock(page, label) {
+  await ouvrirStation(page, label);
+  const cell = page.locator('#correctionsStation .editv[data-s="buy"][data-f="vol"]').first();
+  await expect(cell).toBeVisible({ timeout: 8000 });
+  const nom = await cell.getAttribute("data-c");
+  const avant = Number(await cell.getAttribute("data-v")) || 0;
+  await cell.click();
+  await cell.locator("input").fill(String(avant + 1234));
+  await cell.locator("input").press("Enter");
+  await expect(page.locator("#correctionsStation .editv.ov").first()).toBeVisible();
+  return nom;
+}
+
+// `#stnClear` n'avait AUCUN test, et c'est la quatrième porte vers le gel des jambes — les trois
+// autres sont couvertes. Il lit la station affichée, boucle sur le store, et fige les jambes avant
+// d'effacer. Rendu muet, il ne dit rien : pas de message, pas de log, et la suite reste verte.
+test("Corrections : « ✕ n corrections » n'efface QUE la station affichée", async ({ page }) => {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+
+  await corrigerPremierStock(page, "Levski — Nyx");
+  await corrigerPremierStock(page, "GrimHEX — Stanton");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (2)");
+
+  // Retour sur Levski : c'est SA correction que le bouton annonce, et elle seule qu'il efface.
+  await ouvrirStation(page, "Levski — Nyx");
+  await expect(page.locator("#stnClear")).toHaveText(/1 correction/);
+  await page.locator("#stnClear").click();
+
+  await expect(page.locator("#correctionsStation .editv.ov")).toHaveCount(0);
+  await expect(page.locator("#stnClear")).toHaveCount(0);        // plus rien à effacer ici
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (1)"); // l'autre est intacte
+  // Et la bande garde bien la vignette de GrimHEX : ce n'est pas « tout réinitialiser ».
+  await expect(page.locator('#correctionsIndex .stn-tile[data-terminal="GrimHEX"]')).toBeVisible();
+});
+
 test("vue Corrections : les commodités d'une station tiennent sur PLUSIEURS colonnes", async ({ page }) => {
   // En une seule colonne, GrimHEX (92 commodités) faisait 4 546 px : quatre écrans et demi à
   // parcourir pour corriger un chiffre, pendant que les colonnes du tableau mesuraient 444 px

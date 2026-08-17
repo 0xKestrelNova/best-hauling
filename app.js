@@ -33,7 +33,7 @@ import { readFilters } from "./filtres.ts";
 import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
@@ -371,7 +371,16 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // Nom de terminal -> terminal de market.json. Pont indispensable aux frais d'autoload : routes.json
 // et loops.json ne portent QUE des noms, et les noms sont déjà la clé métier du dépôt (corrections
 // locales, jambes de voyage). Peuplée en même temps que stationMap.
-let stationSel = null;        // index de la station sélectionnée (vue Corrections)
+// La dernière station RENDUE. Elle ne sert QU'au garde du champ #station — ne pas re-rendre si la
+// station résolue n'a pas changé, sans quoi le rendu différé du debounce détache l'éditeur d'un
+// chiffre ouvert entre les deux (même famille que #24). Ce n'est donc PAS la station affichée :
+// celle-là se dérive à chaque lecture par `indexStationExacte()`.
+//
+// `undefined` et non `null` : `null` est une valeur mesurée (« le champ ne désigne rien »), et les
+// confondre rendrait la première transition « restaurée par permalien → champ rendu illisible »
+// invisible au garde — le panneau resterait sur l'ancienne station à côté d'un champ vide.
+let derniereStation;
+const memoriserStation = () => { derniereStation = indexStationExacte(); };
 // Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
 // une saisie en cours y survit (#24).
 let feesRendus = null;
@@ -441,9 +450,9 @@ function monteStationPicker() {
       });
       return html;
     },
-    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : resolveStation résout par correspondance
-    // exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
-    choisir: (s) => { input.value = s.label; resolveStation(); refresh(); saveState(); },
+    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : `indexStationExacte` résout par
+    // correspondance exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
+    choisir: (s) => { input.value = s.label; memoriserStation(); refresh(); saveState(); },
   });
 }
 
@@ -2020,8 +2029,9 @@ function resetAllOverrides() {
 // quantité observés en plus de `k` : c'est la MESURE qui fait foi, `k` n'en est que la lecture — si
 // la grille change à un patch, un relevé conservé reste réinterprétable.
 function saveStationReading() {
-  if (stationSel == null) return;
-  const t = etat.MARKET.terminals[stationSel];
+  const S = indexStationExacte();
+  if (S == null) return;
+  const t = etat.MARKET.terminals[S];
   const amount = Number($("alAmount").value);
   const scu = Math.floor(Number($("alScu").value));
   const k = kFromReading(amount, scu, t.maxBox);
@@ -2050,10 +2060,9 @@ function resetAllReadings() {
 }
 
 // ---------- Vue « Corrections » : liste + édition par station ----------
-function resolveStation() {
-  const v = $("station").value.trim();
-  stationSel = stationMap.has(v) ? stationMap.get(v) : null;
-}
+// `resolveStation` et la globale `stationSel` sont remplacées par `indexStationExacte()`
+// (marche.ts) : la station se dérive du champ à chaque lecture, au lieu d'être mise en cache par
+// une fonction de rendu. Voir marche.ts pour pourquoi ce n'est pas `resolveStationLabel`.
 
 // Relevé du tarif d'autoload d'une station. L'utilisateur ne saisit PAS `k` : personne ne lit un
 // coefficient en jeu, on lit une facture. Il donne un montant observé pour une quantité, et `k` s'en
@@ -2152,8 +2161,8 @@ function tuilesStation(S, q) {
 }
 
 // Les stations corrigées, la station affichée épinglée en tête.
-function groupesCorrections() {
-  const actif = stationSel != null ? etat.MARKET.terminals[stationSel].name : null;
+function groupesCorrections(S) {
+  const actif = S != null ? etat.MARKET.terminals[S].name : null;
   return groupOverridesByTerminal(etat.OVERRIDES, actif).map((g) => ({
     terminal: g.terminal,
     corrections: g.corrections,
@@ -2167,34 +2176,41 @@ function groupesCorrections() {
 function renderCorrections() {
   if (!etat.MARKET) { withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
-  resolveStation();
+  // UNE dérivation, en tête, et tout le rendu s'y réfère : la station ne peut pas changer entre
+  // deux lectures dans la même passe.
+  const S = indexStationExacte();
   const q = $("search").value.trim().toLowerCase();
   // La bande est peinte APRÈS le panneau, bien qu'elle s'affiche au-dessus : la préparation des
   // tuiles appelle effVals, dont la purge des volumes périmés est un EFFET DE BORD. Compter d'abord
   // afficherait une correction que le rendu suivant vient d'effacer. L'ordre est donc un contrat.
-  if (stationSel == null) peindre($("correctionsStation"), inviteStation());
+  if (S == null) peindre($("correctionsStation"), inviteStation());
   else {
-    const t = etat.MARKET.terminals[stationSel];
+    const t = etat.MARKET.terminals[S];
+    // Deux `const`, dans cet ordre, et non deux propriétés d'un littéral : `tuilesStation` PURGE en
+    // chemin (via effVals), donc compter avant elle annoncerait une correction qu'elle vient
+    // d'effacer. L'ordre des propriétés d'un objet le donnerait aussi, mais par accident.
+    const tuiles = tuilesStation(S, q);
+    const nbCorrections = Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length;
     peindre($("correctionsStation"), vueStation({
       terminal: t,
-      tuiles: tuilesStation(stationSel, q),
+      tuiles,
       filtre: !!q,
-      nbCorrections: Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length,
+      nbCorrections,
       // Cette vue-ci ferme sur SA station : elle passe cinq arguments, pas six. L'enveloppe remet
       // le terminal à sa place — la substituer nue décalerait tout, en silence.
       corriger: (commodite, cote, champ, valeur, releve) => corriger(commodite, t.name, cote, champ, valeur, releve),
     }));
   }
-  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections() }));
+  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections(S) }));
   // Le panneau de frais n'est réécrit QUE si son contenu a changé (#24). Le sortir de
   // #correctionsStation ne suffisait pas : renderCorrections réécrivait son nouveau conteneur tout
   // aussi inconditionnellement, et un montant en cours de frappe repartait à vide au moindre
   // re-rendu — un filtre tapé, une correction ailleurs. Le panneau ne dépend que de la station
   // affichée et du store des relevés : cette signature suffit à décider.
-  const signature = `${stationSel}|${JSON.stringify(etat.AUTOLOAD_K)}`;
+  const signature = `${S}|${JSON.stringify(etat.AUTOLOAD_K)}`;
   if (signature !== feesRendus) {
     feesRendus = signature;
-    $("correctionsFees").innerHTML = (stationSel != null ? stationFeeHTML(stationSel) : "") + autoloadListHTML();
+    $("correctionsFees").innerHTML = (S != null ? stationFeeHTML(S) : "") + autoloadListHTML();
   }
   notifySuperseded();
 }
@@ -2437,9 +2453,9 @@ async function init() {
   // pour rien — en détachant au passage l'éditeur d'un chiffre ouvert entre les deux. Même famille
   // que #24 : tout re-rendu gratuit de cette vue efface une saisie en cours.
   $("station").addEventListener("input", debounce(() => {
-    const avant = stationSel;
-    resolveStation();
-    if (stationSel !== avant) refresh();
+    const avant = derniereStation;
+    memoriserStation();
+    if (derniereStation !== avant) refresh();
   }));
   $("corrections").addEventListener("click", (e) => {
     // Les relevés d'autoload se testent AVANT les corrections : leur ✕ porte aussi `.corr-del`
@@ -2447,11 +2463,11 @@ async function init() {
     const alDel = e.target.closest(".al-del");
     if (alDel) { forgetStationReading(alDel.dataset.key); return; }
     // Vignette de la bande : recharge sa station. Écrit le LIBELLÉ CANONIQUE, comme le sélecteur —
-    // resolveStation résout par correspondance exacte, et c'est lui que le permalien transporte.
+    // la résolution est exacte, et c'est ce libellé-là que le permalien transporte.
     const tuile = e.target.closest(".stn-tile");
     if (tuile && !tuile.disabled) {
       const t = termByName.get(tuile.dataset.terminal);
-      if (t) { $("station").value = stationLabel(t.name, t.system); resolveStation(); refresh(); saveState(); }
+      if (t) { $("station").value = stationLabel(t.name, t.system); memoriserStation(); refresh(); saveState(); }
       return;
     }
     // Retour à la valeur UEX d'un chiffre corrigé.
@@ -2469,7 +2485,8 @@ async function init() {
     }
     // Efface les corrections de la SEULE station affichée (bouton du bandeau).
     if (e.target.closest("#stnClear")) {
-      const nom = stationSel != null ? etat.MARKET.terminals[stationSel].name : null;
+      const S = indexStationExacte();
+      const nom = S != null ? etat.MARKET.terminals[S].name : null;
       if (nom) {
         for (const k of Object.keys(etat.OVERRIDES)) {
           const [commodity, terminal, side] = k.split("|");
