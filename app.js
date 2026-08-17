@@ -35,6 +35,7 @@ import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, libell
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
+import { brancherRendu } from "./rendu.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { jambeChargee, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
@@ -2449,6 +2450,10 @@ async function init() {
   // ni des messages. `setupEnRoute` DOIT tourner avant chaque rappel de `withMarket` — le déclarer
   // ici une fois vaut mieux que de le répéter à seize appels.
   brancher({ apresMarche: setupEnRoute, signalerIndisponible: marketUnavailable });
+  // Le crochet de rendu : c'est ce qui rend `refresh()` joignable depuis un module, et donc depuis
+  // une vue de l'arbre qui porte une ACTION. `notifier()` seule ne suffirait pas — elle ne rejoue
+  // ni la carte du voyage, ni la soute, ni `saveState()`. Voir l'en-tête de `rendu.ts`.
+  brancherRendu({ rafraichir: refresh });
   // La racine unique. Elle s'abonne à `etat` : à partir d'ici, une vue qui y vit se re-rend
   // toute seule à chaque `notifier()`, sans que `refresh()` ait à la nommer.
   monterRacine();
