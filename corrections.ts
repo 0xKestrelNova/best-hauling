@@ -89,6 +89,20 @@ export function resetOverrides(): void {
 }
 
 /**
+ * Ce champ porte-t-il une correction locale ? Lecture seule, aucun effet de bord — c'est ce qui la
+ * distingue d'`effVals`, qui purge en chemin. Elle sert à décider d'un ✎, jamais d'une valeur.
+ */
+export const isOv = (
+  commodity: string,
+  terminal: string,
+  side: CoteMarche,
+  field: ChampCorrection,
+): boolean => {
+  const o = etat.OVERRIDES[ovKey(commodity, terminal, side)];
+  return !!(o && o[field] != null);
+};
+
+/**
  * Combien de corrections ont péri pendant le rendu qui vient de finir, et pourquoi — puis remet les
  * compteurs à zéro. C'est un RELEVÉ : appeler deux fois de suite rend zéro la seconde fois, ce qui
  * est exactement ce qu'on veut d'une notification.

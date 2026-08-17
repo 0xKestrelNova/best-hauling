@@ -98,6 +98,23 @@ export const indexOrigine = (): number | null => indexDepart("origin");
 /** Le même, pour le départ de la vue « Chaîne » — même champ de nature, même piège évité. */
 export const indexDepartChaine = (): number | null => indexDepart("chainOrigin");
 
+/**
+ * La station affichée par la vue « Corrections », dérivée du champ `#station`. Vif, comme les deux
+ * ci-dessus, et pour la même raison : c'était une globale `stationSel` qu'une seule fonction de
+ * rendu rafraîchissait. Une valeur dérivée qu'il faut penser à recalculer est une valeur qui sera
+ * un jour lue périmée — ici, par « Enregistrer » un relevé après une restauration par permalien,
+ * qui repose le champ sans le résoudre.
+ *
+ * Correspondance EXACTE, et surtout PAS `resolveStationLabel` : sa seconde passe retombe sur le nom
+ * seul, insensible à la casse, et deux homonymes de systèmes différents — Pyro Gateway (Stanton) et
+ * Pyro Gateway (Nyx) — se résoudraient au premier trouvé. Ce champ-ci porte toujours le libellé
+ * canonique : le sélecteur l'écrit, la vignette de la bande l'écrit, le permalien le transporte.
+ */
+export const indexStationExacte = (): number | null => {
+  const v = champ("station");
+  return stationMap.has(v) ? (stationMap.get(v) as number) : null;
+};
+
 const indexDepart = (id: string): number | null => {
   const v = champ(id);
   return originMap.has(v) ? (originMap.get(v) as number) : null;

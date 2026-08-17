@@ -18,11 +18,12 @@
 // eux-mêmes.
 
 import {
-  bestManifest, manifestIntent, manifestIntentSurvives, hydrateManifestLine,
+  bestManifest, legsToPin, manifestIntent, manifestIntentSurvives, hydrateManifestLine,
 } from "./logic.ts";
-import type { Filtres, Jambe, LigneManifeste } from "./types.ts";
+import type { CoteMarche, Filtres, Jambe, LigneManifeste } from "./types.ts";
 import { etat } from "./etat.ts";
 import { stationLabel } from "./logic.ts";
+import { readFilters } from "./filtres.ts";
 import { findCommodity, stationMap } from "./marche.ts";
 import { effVals } from "./corrections.ts";
 import { feeCtx, feeResolver } from "./frais.ts";
@@ -107,10 +108,42 @@ export function legIntent(leg: Jambe, i: number, f: Filtres) {
   return etat.JOURNEY_EDITS[k];
 }
 
-// Fige les jambes qu'une correction de volume rebattrait, AVANT qu'elle soit appliquée : on capture
-// donc les quantités telles qu'elles sont encore. La sélection est pure (legsToPin) ; ici on ne
-// fournit que ce que logic.mjs ne peut pas connaître — les chargements effectifs du moment.
 // Fige les SCU d'une jambe : son chargement devient une INTENTION persistée, et le 🔒 dit que ce
 // n'est pas la main de l'utilisateur qui l'a voulu. Rend `true` si quelque chose a bougé.
 // Une jambe déjà ajustée (✎) ou déjà figée n'est pas retouchée : ses quantités ne bougeaient plus,
 // et l'écraser effacerait un ajustement fait à la main.
+export function figerJambe(i: number, lignes: LigneManifeste[] | null): boolean {
+  if (!etat.JOURNEY) return false;
+  const k = legKey(etat.JOURNEY.legs[i], i);
+  if (etat.JOURNEY_EDITS[k]) return false;
+  etat.JOURNEY_EDITS[k] = manifestIntent(lignes || []);
+  etat.JOURNEY_PINS[k] = true;
+  return true;
+}
+
+// Fige les jambes qu'une correction de volume rebattrait, AVANT qu'elle soit appliquée : on capture
+// donc les quantités telles qu'elles sont encore. La sélection est pure (legsToPin) ; ici on ne
+// fournit que ce que logic.ts ne peut pas connaître — les chargements effectifs du moment.
+//
+// Le gel consulte l'état « chargée » de chaque jambe (#48) : une jambe qu'on n'a pas payée n'est
+// plus figée par une correction de volume, elle RECALCULE. Voir `legsToPin` pour le renversement.
+export function pinLegsForVolume(commodity: string, terminal: string, side: CoteMarche): void {
+  if (!etat.JOURNEY || !etat.JOURNEY.legs.length || !etat.MARKET) return;
+  const f = readFilters();
+  const lignes = etat.JOURNEY.legs.map((leg, i) => legEffectiveLines(leg, i, f));
+  const chargees = etat.JOURNEY.legs.map((leg, i) => jambeChargee(leg, i));
+  let change = false;
+  for (const i of legsToPin(etat.JOURNEY.legs, lignes, commodity, terminal, side, chargees)) {
+    if (figerJambe(i, lignes[i])) change = true;
+  }
+  if (change) { saveJourneyEdits(); saveJourneyPins(); }
+}
+
+// Ensemble des commodités transportées au moins une fois sur le parcours (union des manifestes).
+export function journeyCarriedCommodities(): Set<string> {
+  const set = new Set<string>();
+  if (!etat.JOURNEY || !etat.MARKET) return set;
+  const f = readFilters();
+  etat.JOURNEY.legs.forEach((leg, i) => legEffectiveLines(leg, i, f).forEach((l) => set.add(l.name)));
+  return set;
+}

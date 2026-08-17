@@ -412,3 +412,34 @@ test("relevé de station : un zéro de trop se fait confirmer avant d'être rete
   await page.click("#alSave");
   await expect(page.locator(".corr-item.autoload")).toContainText("413,415");
 });
+
+// Le piège silencieux de la vue Corrections, et il est INVISIBLE dans le reste de la suite : les
+// huit tests qui touchent cette vue remplissent tous `#station` par `fill` juste avant d'agir, ce
+// qui rejoue l'écouteur du champ. Aucun ne restaure une station par PERMALIEN puis clique une
+// action de station — or `applyState` repose la valeur du champ sans la résoudre.
+test("relevé de station : une station restaurée par permalien reste actionnable", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alAmount")).toBeVisible();
+
+  // Le lien porte la station ET la vue. On repart de lui, dans un onglet qui n'a rien tapé.
+  const lien = await page.evaluate(() => location.hash);
+  expect(lien).toContain("station=");
+  await page.goto("/index.html" + lien);
+  await expect(page.locator("#correctionsControls")).toBeVisible();
+  await expect(page.locator("#station")).toHaveValue(label);
+
+  // SANS retoucher au champ : c'est tout le test. Le panneau de frais doit être là, et
+  // « Enregistrer » doit savoir de quelle station il parle.
+  await expect(page.locator("#alAmount")).toBeVisible({ timeout: 15000 });
+  await page.fill("#alAmount", "1159");
+  await page.fill("#alScu", "32");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toContainText(label.split(" — ")[0]);
+  await expect(page.locator(".corr-item.autoload")).toContainText("1,41");
+});

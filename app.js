@@ -5,14 +5,14 @@ import {
   tripMinutes, ageDays, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   autoloadFee, kFromReading, kPlausible,
-  ovKey, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
+  ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin, journeyMap,
+  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, journeyMap,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -30,14 +30,17 @@ import { peindre } from "./pont.js";
 import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
-import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
-import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
+import { showToast } from "./messages.ts";
+import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
+import { brancherRendu } from "./rendu.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
-import { jambeChargee, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
@@ -131,35 +134,8 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 //   - nom de terminal -> terminal de market.json, parce que routes.json et loops.json (vues
 //     « Trajets » et « Boucles ») ne portent que des noms ;
 //   - terminal -> coefficient `k`, relevé par l'utilisateur ou valeur globale par défaut.
-// Flash discret quand des corrections ont été périmées par une mise à jour UEX.
-let toastTimer = null;
-function showToast(msg) {
-  let el = $("toast");
-  if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
-  el.textContent = msg;
-  el.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
-}
-// DEUX causes de péremption, donc deux messages : dire « mise à jour UEX » à propos d'un volume qui a
-// simplement vieilli serait faux, et enverrait chercher un changement de données qui n'a pas eu lieu.
-// Si les deux tombent dans le même rendu, la mise à jour UEX passe en premier — c'est un fait
-// extérieur, l'autre est une simple horloge.
-function notifySuperseded() {
-  // Le RELEVÉ vide les compteurs : appeler deux fois de suite ne redit rien. La donnée vit dans
-  // `corrections.ts`, le message reste ici — c'est ce qui permet à `effVals` d'être appelée trente
-  // fois au fond du rendu sans traîner `showToast` derrière elle.
-  const { uex: nUex, age: nAge } = relevePerimees();
-  if (!nUex && !nAge) return;
-  updateOvBadge();
-  const s = (n) => (n > 1 ? "s" : "");
-  if (nUex) showToast(`✎ ${nUex} correction${s(nUex)} périmée${s(nUex)} par une mise à jour UEX`);
-  if (nAge) {
-    const h = Math.round(DUREE_VOL / 3600);
-    const msg = `✎ ${nAge} volume${s(nAge)} corrigé${s(nAge)} périmé${s(nAge)} — plus de ${h} h, le comptoir s'est rempli depuis`;
-    if (nUex) setTimeout(() => showToast(msg), 1200); else showToast(msg);
-  }
-}
+// `showToast` est passée dans `messages.ts`, `notifySuperseded` dans `corrections-actions.ts` :
+// toutes deux doivent être appelables depuis une vue de l'arbre (ADR-012).
 
 // Applique les corrections à une paire buy/sell et renvoie des copies patchées + marge/roi.
 function applyOverrides(commodity, buy, sell) {
@@ -229,12 +205,9 @@ function propsTrajetsCommunes() {
     avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
-    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
-      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    // Le contrat de cette vue est celui du module : six arguments, dans le même ordre. On le passe
+    // donc NU — c'est le seul des quatre sites, avec le manifeste, à pouvoir le faire.
+    corriger,
   };
 }
 
@@ -398,7 +371,16 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // Nom de terminal -> terminal de market.json. Pont indispensable aux frais d'autoload : routes.json
 // et loops.json ne portent QUE des noms, et les noms sont déjà la clé métier du dépôt (corrections
 // locales, jambes de voyage). Peuplée en même temps que stationMap.
-let stationSel = null;        // index de la station sélectionnée (vue Corrections)
+// La dernière station RENDUE. Elle ne sert QU'au garde du champ #station — ne pas re-rendre si la
+// station résolue n'a pas changé, sans quoi le rendu différé du debounce détache l'éditeur d'un
+// chiffre ouvert entre les deux (même famille que #24). Ce n'est donc PAS la station affichée :
+// celle-là se dérive à chaque lecture par `indexStationExacte()`.
+//
+// `undefined` et non `null` : `null` est une valeur mesurée (« le champ ne désigne rien »), et les
+// confondre rendrait la première transition « restaurée par permalien → champ rendu illisible »
+// invisible au garde — le panneau resterait sur l'ancienne station à côté d'un champ vide.
+let derniereStation;
+const memoriserStation = () => { derniereStation = indexStationExacte(); };
 // Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
 // une saisie en cours y survit (#24).
 let feesRendus = null;
@@ -468,9 +450,9 @@ function monteStationPicker() {
       });
       return html;
     },
-    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : resolveStation résout par correspondance
-    // exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
-    choisir: (s) => { input.value = s.label; resolveStation(); refresh(); saveState(); },
+    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : `indexStationExacte` résout par
+    // correspondance exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
+    choisir: (s) => { input.value = s.label; memoriserStation(); refresh(); saveState(); },
   });
 }
 
@@ -598,10 +580,7 @@ function manifesteSansOptimal(originIdx, destIdx, f) {
   };
 }
 
-const isOv = (commodity, terminal, side, field) => {
-  const o = etat.OVERRIDES[ovKey(commodity, terminal, side)];
-  return !!(o && o[field] != null);
-};
+// `isOv` est passée dans `corrections.ts`, à côté d'`effVals` : elle lit le même store.
 
 // `m` = manifeste courant (il porte `fee`, le contexte de frais qui l'a produit) ; `t` = ses totaux.
 // Les totaux du manifeste sont rendus par vues/manifeste.tsx (`<Totaux>`).
@@ -685,12 +664,7 @@ function paintManifest() {
     texteBoutFrais: feeEndText,
     minutesTrajet: tripMinutes(0, m.cross),
     estCorrige: isOv,
-    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
-      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    corriger, // six arguments dans le même ordre : passé nu, comme pour les Trajets
   }));
 }
 
@@ -1348,38 +1322,9 @@ function clearJourney() {
   // l'effacement jusqu'au geste suivant. `refresh` finit par `saveState`, inutile de le doubler.
   refresh();
 }
-// Ensemble des commodités transportées au moins une fois sur le parcours (union des manifestes).
-function journeyCarriedCommodities() {
-  const set = new Set();
-  if (!etat.JOURNEY || !etat.MARKET) return set;
-  const f = readFilters();
-  etat.JOURNEY.legs.forEach((leg, i) => legEffectiveLines(leg, i, f).forEach((l) => set.add(l.name)));
-  return set;
-}
-
-// Manifeste optimal d'une jambe (from -> to) : remplissage multi-commodité, terminal d'arrivée forcé.
-function figerJambe(i, lignes) {
-  const k = legKey(etat.JOURNEY.legs[i], i);
-  if (etat.JOURNEY_EDITS[k]) return false;
-  etat.JOURNEY_EDITS[k] = manifestIntent(lignes || []);
-  etat.JOURNEY_PINS[k] = true;
-  return true;
-}
-
-// Le gel consulte désormais l'état « chargée » de chaque jambe (#48) : une jambe qu'on n'a pas
-// payée n'est plus figée par une correction de volume, elle RECALCULE. Voir legsToPin (logic.mjs)
-// pour le pourquoi du renversement.
-function pinLegsForVolume(commodity, terminal, side) {
-  if (!etat.JOURNEY || !etat.JOURNEY.legs.length || !etat.MARKET) return;
-  const f = readFilters();
-  const lignes = etat.JOURNEY.legs.map((leg, i) => legEffectiveLines(leg, i, f));
-  const chargees = etat.JOURNEY.legs.map((leg, i) => jambeChargee(leg, i));
-  let change = false;
-  for (const i of legsToPin(etat.JOURNEY.legs, lignes, commodity, terminal, side, chargees)) {
-    if (figerJambe(i, lignes[i])) change = true;
-  }
-  if (change) { saveJourneyEdits(); saveJourneyPins(); }
-}
+// `journeyCarriedCommodities`, `figerJambe` et `pinLegsForVolume` sont passées dans
+// `voyage-donnees.ts` : elles ne rendent rien, et le gel doit être appelable depuis une vue de
+// l'arbre (ADR-012). Leurs commentaires les y attendaient déjà, orphelins.
 
 // Engage le manifeste d'« En route » comme nouvelle jambe du voyage (bouton de la carte Manifeste).
 // La garde d'état est REJOUÉE ici : le rendu peut dater d'avant un changement de parcours.
@@ -1761,7 +1706,13 @@ function refresh() {
   else if (etat.view === "chain") renderChain();
   else if (etat.view === "corrections") renderCorrections();
   else if (etat.view === "commodities") renderCommodities();
-  else render();
+  // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
+  // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
+  // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
+  // que rien ne masque, donc « Aucune route ne correspond aux filtres. » revenait sous une vue qui
+  // n'a pas de tableau (#147). Chaque vue qui emménagera dans l'arbre passera par ce même repli :
+  // le nommer une fois vaut mieux que d'y penser à chaque migration.
+  else if (etat.view === "routes") render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
   // bénéfices du voyage — alors qu'une jambe non ajustée est justement, par contrat, branchée sur
@@ -2063,29 +2014,8 @@ async function copyShareLink() {
 // pas la vue, le ✎ reste DANS le span — sont portés par le composant, et couverts par
 // `e2e/edition.pw.mjs`.
 
-// Met à jour le libellé du bouton de vue « Corrections » (compteur).
-function updateOvBadge() {
-  const n = ovCount();
-  const bouton = $("viewCorrections");
-  const rl = bouton.querySelector(".rl");
-  // On écrit DANS le .rl, au lieu d'écraser le bouton entier en textContent : cette écriture-là
-  // détruisait le <span class="rn">, et le numéro de Corrections n'a donc jamais existé à l'écran
-  // (#45). Le rail annonce une touche par numéro — il ne peut pas en manquer un sur huit.
-  rl.textContent = "Corrections";
-  // Le compteur en plus petit, sans interlettrage : mesuré, il rend 20 px au libellé. Sans lui
-  // « Corrections (123) » repart à la ligne, et le bouton fait deux fois la hauteur des sept
-  // autres — un rail qui cède quand la place manque, c'est le symptôme de #86.
-  if (n) {
-    const compteur = document.createElement("span");
-    compteur.className = "ov-n";
-    compteur.textContent = `(${n})`;
-    rl.append(" ", compteur);
-  }
-  // Le libellé étant maintenant dans un .rl, il disparaît au rail rétracté : l'aria-label est le
-  // seul à porter le compteur à ce moment-là, et il doit donc suivre. Même geste que
-  // copyShareLink() sur #share.
-  bouton.setAttribute("aria-label", n ? `Corrections (${n})` : "Corrections");
-}
+// `updateOvBadge` est passée dans `corrections-actions.ts`. Elle y reste impérative : le nœud
+// qu'elle touche est dans le RAIL, qu'aucun portail ne possède (ADR-012).
 
 function resetAllOverrides() {
   if (!ovCount()) return;
@@ -2099,8 +2029,9 @@ function resetAllOverrides() {
 // quantité observés en plus de `k` : c'est la MESURE qui fait foi, `k` n'en est que la lecture — si
 // la grille change à un patch, un relevé conservé reste réinterprétable.
 function saveStationReading() {
-  if (stationSel == null) return;
-  const t = etat.MARKET.terminals[stationSel];
+  const S = indexStationExacte();
+  if (S == null) return;
+  const t = etat.MARKET.terminals[S];
   const amount = Number($("alAmount").value);
   const scu = Math.floor(Number($("alScu").value));
   const k = kFromReading(amount, scu, t.maxBox);
@@ -2129,10 +2060,9 @@ function resetAllReadings() {
 }
 
 // ---------- Vue « Corrections » : liste + édition par station ----------
-function resolveStation() {
-  const v = $("station").value.trim();
-  stationSel = stationMap.has(v) ? stationMap.get(v) : null;
-}
+// `resolveStation` et la globale `stationSel` sont remplacées par `indexStationExacte()`
+// (marche.ts) : la station se dérive du champ à chaque lecture, au lieu d'être mise en cache par
+// une fonction de rendu. Voir marche.ts pour pourquoi ce n'est pas `resolveStationLabel`.
 
 // Relevé du tarif d'autoload d'une station. L'utilisateur ne saisit PAS `k` : personne ne lit un
 // coefficient en jeu, on lit une facture. Il donne un montant observé pour une quantité, et `k` s'en
@@ -2231,8 +2161,8 @@ function tuilesStation(S, q) {
 }
 
 // Les stations corrigées, la station affichée épinglée en tête.
-function groupesCorrections() {
-  const actif = stationSel != null ? etat.MARKET.terminals[stationSel].name : null;
+function groupesCorrections(S) {
+  const actif = S != null ? etat.MARKET.terminals[S].name : null;
   return groupOverridesByTerminal(etat.OVERRIDES, actif).map((g) => ({
     terminal: g.terminal,
     corrections: g.corrections,
@@ -2246,38 +2176,41 @@ function groupesCorrections() {
 function renderCorrections() {
   if (!etat.MARKET) { withMarket(refresh); return; }
   if (!enrouteReady) setupEnRoute();
-  resolveStation();
+  // UNE dérivation, en tête, et tout le rendu s'y réfère : la station ne peut pas changer entre
+  // deux lectures dans la même passe.
+  const S = indexStationExacte();
   const q = $("search").value.trim().toLowerCase();
   // La bande est peinte APRÈS le panneau, bien qu'elle s'affiche au-dessus : la préparation des
   // tuiles appelle effVals, dont la purge des volumes périmés est un EFFET DE BORD. Compter d'abord
   // afficherait une correction que le rendu suivant vient d'effacer. L'ordre est donc un contrat.
-  if (stationSel == null) peindre($("correctionsStation"), inviteStation());
+  if (S == null) peindre($("correctionsStation"), inviteStation());
   else {
-    const t = etat.MARKET.terminals[stationSel];
+    const t = etat.MARKET.terminals[S];
+    // Deux `const`, dans cet ordre, et non deux propriétés d'un littéral : `tuilesStation` PURGE en
+    // chemin (via effVals), donc compter avant elle annoncerait une correction qu'elle vient
+    // d'effacer. L'ordre des propriétés d'un objet le donnerait aussi, mais par accident.
+    const tuiles = tuilesStation(S, q);
+    const nbCorrections = Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length;
     peindre($("correctionsStation"), vueStation({
       terminal: t,
-      tuiles: tuilesStation(stationSel, q),
+      tuiles,
       filtre: !!q,
-      nbCorrections: Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length,
-      // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME fige d'abord les jambes planifiées.
-      corriger: (commodite, cote, champ, valeur, releve) => {
-        if (champ === "vol") pinLegsForVolume(commodite, t.name, cote);
-        setOverride(commodite, t.name, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-        updateOvBadge();
-        refresh();
-      },
+      nbCorrections,
+      // Cette vue-ci ferme sur SA station : elle passe cinq arguments, pas six. L'enveloppe remet
+      // le terminal à sa place — la substituer nue décalerait tout, en silence.
+      corriger: (commodite, cote, champ, valeur, releve) => corriger(commodite, t.name, cote, champ, valeur, releve),
     }));
   }
-  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections() }));
+  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections(S) }));
   // Le panneau de frais n'est réécrit QUE si son contenu a changé (#24). Le sortir de
   // #correctionsStation ne suffisait pas : renderCorrections réécrivait son nouveau conteneur tout
   // aussi inconditionnellement, et un montant en cours de frappe repartait à vide au moindre
   // re-rendu — un filtre tapé, une correction ailleurs. Le panneau ne dépend que de la station
   // affichée et du store des relevés : cette signature suffit à décider.
-  const signature = `${stationSel}|${JSON.stringify(etat.AUTOLOAD_K)}`;
+  const signature = `${S}|${JSON.stringify(etat.AUTOLOAD_K)}`;
   if (signature !== feesRendus) {
     feesRendus = signature;
-    $("correctionsFees").innerHTML = (stationSel != null ? stationFeeHTML(stationSel) : "") + autoloadListHTML();
+    $("correctionsFees").innerHTML = (S != null ? stationFeeHTML(S) : "") + autoloadListHTML();
   }
   notifySuperseded();
 }
@@ -2339,15 +2272,9 @@ function paintCommodityDetail() {
     nomCommodite: p.name,
     butin: loot,
     estCorrige: (terminal, cote, champ) => isOv(p.name, terminal, cote, champ),
-    // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME doit d'abord figer les jambes déjà
-    // planifiées (avant d'écrire, pour capturer les SCU encore en vigueur), qu'un PRIX ne fige
-    // rien, et que le compteur de corrections doit suivre.
-    corriger: (terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(p.name, terminal, cote);
-      setOverride(p.name, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    // Le détail ferme sur SA commodité et laisse varier le terminal — l'exact inverse de la vue
+    // Corrections. Cinq arguments là aussi, et l'enveloppe les remet dans l'ordre du module.
+    corriger: (terminal, cote, champ, valeur, releve) => corriger(p.name, terminal, cote, champ, valeur, releve),
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
   }));
@@ -2443,6 +2370,10 @@ async function init() {
   // ni des messages. `setupEnRoute` DOIT tourner avant chaque rappel de `withMarket` — le déclarer
   // ici une fois vaut mieux que de le répéter à seize appels.
   brancher({ apresMarche: setupEnRoute, signalerIndisponible: marketUnavailable });
+  // Le crochet de rendu : c'est ce qui rend `refresh()` joignable depuis un module, et donc depuis
+  // une vue de l'arbre qui porte une ACTION. `notifier()` seule ne suffirait pas — elle ne rejoue
+  // ni la carte du voyage, ni la soute, ni `saveState()`. Voir l'en-tête de `rendu.ts`.
+  brancherRendu({ rafraichir: refresh });
   // La racine unique. Elle s'abonne à `etat` : à partir d'ici, une vue qui y vit se re-rend
   // toute seule à chaque `notifier()`, sans que `refresh()` ait à la nommer.
   monterRacine();
@@ -2522,9 +2453,9 @@ async function init() {
   // pour rien — en détachant au passage l'éditeur d'un chiffre ouvert entre les deux. Même famille
   // que #24 : tout re-rendu gratuit de cette vue efface une saisie en cours.
   $("station").addEventListener("input", debounce(() => {
-    const avant = stationSel;
-    resolveStation();
-    if (stationSel !== avant) refresh();
+    const avant = derniereStation;
+    memoriserStation();
+    if (derniereStation !== avant) refresh();
   }));
   $("corrections").addEventListener("click", (e) => {
     // Les relevés d'autoload se testent AVANT les corrections : leur ✕ porte aussi `.corr-del`
@@ -2532,11 +2463,11 @@ async function init() {
     const alDel = e.target.closest(".al-del");
     if (alDel) { forgetStationReading(alDel.dataset.key); return; }
     // Vignette de la bande : recharge sa station. Écrit le LIBELLÉ CANONIQUE, comme le sélecteur —
-    // resolveStation résout par correspondance exacte, et c'est lui que le permalien transporte.
+    // la résolution est exacte, et c'est ce libellé-là que le permalien transporte.
     const tuile = e.target.closest(".stn-tile");
     if (tuile && !tuile.disabled) {
       const t = termByName.get(tuile.dataset.terminal);
-      if (t) { $("station").value = stationLabel(t.name, t.system); resolveStation(); refresh(); saveState(); }
+      if (t) { $("station").value = stationLabel(t.name, t.system); memoriserStation(); refresh(); saveState(); }
       return;
     }
     // Retour à la valeur UEX d'un chiffre corrigé.
@@ -2554,7 +2485,8 @@ async function init() {
     }
     // Efface les corrections de la SEULE station affichée (bouton du bandeau).
     if (e.target.closest("#stnClear")) {
-      const nom = stationSel != null ? etat.MARKET.terminals[stationSel].name : null;
+      const S = indexStationExacte();
+      const nom = S != null ? etat.MARKET.terminals[S].name : null;
       if (nom) {
         for (const k of Object.keys(etat.OVERRIDES)) {
           const [commodity, terminal, side] = k.split("|");
