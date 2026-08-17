@@ -20,7 +20,7 @@
 import {
   bestManifest, legsToPin, manifestIntent, manifestIntentSurvives, hydrateManifestLine,
 } from "./logic.ts";
-import type { Filtres, Jambe, LigneManifeste } from "./types.ts";
+import type { CoteMarche, Filtres, Jambe, LigneManifeste } from "./types.ts";
 import { etat } from "./etat.ts";
 import { stationLabel } from "./logic.ts";
 import { readFilters } from "./filtres.ts";
@@ -127,7 +127,7 @@ export function figerJambe(i: number, lignes: LigneManifeste[] | null): boolean 
 //
 // Le gel consulte l'état « chargée » de chaque jambe (#48) : une jambe qu'on n'a pas payée n'est
 // plus figée par une correction de volume, elle RECALCULE. Voir `legsToPin` pour le renversement.
-export function pinLegsForVolume(commodity: string, terminal: string, side: "buy" | "sell"): void {
+export function pinLegsForVolume(commodity: string, terminal: string, side: CoteMarche): void {
   if (!etat.JOURNEY || !etat.JOURNEY.legs.length || !etat.MARKET) return;
   const f = readFilters();
   const lignes = etat.JOURNEY.legs.map((leg, i) => legEffectiveLines(leg, i, f));

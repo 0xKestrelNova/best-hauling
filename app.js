@@ -5,7 +5,7 @@ import {
   tripMinutes, ageDays, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
   autoloadFee, kFromReading, kPlausible,
-  ovKey, DUREE_VOL, groupOverridesByTerminal, safeKey, encodeState, decodeState,
+  ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
@@ -30,7 +30,9 @@ import { peindre } from "./pont.js";
 import { etat, notifier } from "./etat.ts";
 import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
-import { effVals, loadOverrides, ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
+import { showToast } from "./messages.ts";
 import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
@@ -132,35 +134,8 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 //   - nom de terminal -> terminal de market.json, parce que routes.json et loops.json (vues
 //     « Trajets » et « Boucles ») ne portent que des noms ;
 //   - terminal -> coefficient `k`, relevé par l'utilisateur ou valeur globale par défaut.
-// Flash discret quand des corrections ont été périmées par une mise à jour UEX.
-let toastTimer = null;
-function showToast(msg) {
-  let el = $("toast");
-  if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
-  el.textContent = msg;
-  el.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
-}
-// DEUX causes de péremption, donc deux messages : dire « mise à jour UEX » à propos d'un volume qui a
-// simplement vieilli serait faux, et enverrait chercher un changement de données qui n'a pas eu lieu.
-// Si les deux tombent dans le même rendu, la mise à jour UEX passe en premier — c'est un fait
-// extérieur, l'autre est une simple horloge.
-function notifySuperseded() {
-  // Le RELEVÉ vide les compteurs : appeler deux fois de suite ne redit rien. La donnée vit dans
-  // `corrections.ts`, le message reste ici — c'est ce qui permet à `effVals` d'être appelée trente
-  // fois au fond du rendu sans traîner `showToast` derrière elle.
-  const { uex: nUex, age: nAge } = relevePerimees();
-  if (!nUex && !nAge) return;
-  updateOvBadge();
-  const s = (n) => (n > 1 ? "s" : "");
-  if (nUex) showToast(`✎ ${nUex} correction${s(nUex)} périmée${s(nUex)} par une mise à jour UEX`);
-  if (nAge) {
-    const h = Math.round(DUREE_VOL / 3600);
-    const msg = `✎ ${nAge} volume${s(nAge)} corrigé${s(nAge)} périmé${s(nAge)} — plus de ${h} h, le comptoir s'est rempli depuis`;
-    if (nUex) setTimeout(() => showToast(msg), 1200); else showToast(msg);
-  }
-}
+// `showToast` est passée dans `messages.ts`, `notifySuperseded` dans `corrections-actions.ts` :
+// toutes deux doivent être appelables depuis une vue de l'arbre (ADR-012).
 
 // Applique les corrections à une paire buy/sell et renvoie des copies patchées + marge/roi.
 function applyOverrides(commodity, buy, sell) {
@@ -230,12 +205,9 @@ function propsTrajetsCommunes() {
     avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
-    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
-      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    // Le contrat de cette vue est celui du module : six arguments, dans le même ordre. On le passe
+    // donc NU — c'est le seul des quatre sites, avec le manifeste, à pouvoir le faire.
+    corriger,
   };
 }
 
@@ -599,10 +571,7 @@ function manifesteSansOptimal(originIdx, destIdx, f) {
   };
 }
 
-const isOv = (commodity, terminal, side, field) => {
-  const o = etat.OVERRIDES[ovKey(commodity, terminal, side)];
-  return !!(o && o[field] != null);
-};
+// `isOv` est passée dans `corrections.ts`, à côté d'`effVals` : elle lit le même store.
 
 // `m` = manifeste courant (il porte `fee`, le contexte de frais qui l'a produit) ; `t` = ses totaux.
 // Les totaux du manifeste sont rendus par vues/manifeste.tsx (`<Totaux>`).
@@ -686,12 +655,7 @@ function paintManifest() {
     texteBoutFrais: feeEndText,
     minutesTrajet: tripMinutes(0, m.cross),
     estCorrige: isOv,
-    corriger: (commodite, terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
-      setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    corriger, // six arguments dans le même ordre : passé nu, comme pour les Trajets
   }));
 }
 
@@ -2041,29 +2005,8 @@ async function copyShareLink() {
 // pas la vue, le ✎ reste DANS le span — sont portés par le composant, et couverts par
 // `e2e/edition.pw.mjs`.
 
-// Met à jour le libellé du bouton de vue « Corrections » (compteur).
-function updateOvBadge() {
-  const n = ovCount();
-  const bouton = $("viewCorrections");
-  const rl = bouton.querySelector(".rl");
-  // On écrit DANS le .rl, au lieu d'écraser le bouton entier en textContent : cette écriture-là
-  // détruisait le <span class="rn">, et le numéro de Corrections n'a donc jamais existé à l'écran
-  // (#45). Le rail annonce une touche par numéro — il ne peut pas en manquer un sur huit.
-  rl.textContent = "Corrections";
-  // Le compteur en plus petit, sans interlettrage : mesuré, il rend 20 px au libellé. Sans lui
-  // « Corrections (123) » repart à la ligne, et le bouton fait deux fois la hauteur des sept
-  // autres — un rail qui cède quand la place manque, c'est le symptôme de #86.
-  if (n) {
-    const compteur = document.createElement("span");
-    compteur.className = "ov-n";
-    compteur.textContent = `(${n})`;
-    rl.append(" ", compteur);
-  }
-  // Le libellé étant maintenant dans un .rl, il disparaît au rail rétracté : l'aria-label est le
-  // seul à porter le compteur à ce moment-là, et il doit donc suivre. Même geste que
-  // copyShareLink() sur #share.
-  bouton.setAttribute("aria-label", n ? `Corrections (${n})` : "Corrections");
-}
+// `updateOvBadge` est passée dans `corrections-actions.ts`. Elle y reste impérative : le nœud
+// qu'elle touche est dans le RAIL, qu'aucun portail ne possède (ADR-012).
 
 function resetAllOverrides() {
   if (!ovCount()) return;
@@ -2237,13 +2180,9 @@ function renderCorrections() {
       tuiles: tuilesStation(stationSel, q),
       filtre: !!q,
       nbCorrections: Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length,
-      // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME fige d'abord les jambes planifiées.
-      corriger: (commodite, cote, champ, valeur, releve) => {
-        if (champ === "vol") pinLegsForVolume(commodite, t.name, cote);
-        setOverride(commodite, t.name, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-        updateOvBadge();
-        refresh();
-      },
+      // Cette vue-ci ferme sur SA station : elle passe cinq arguments, pas six. L'enveloppe remet
+      // le terminal à sa place — la substituer nue décalerait tout, en silence.
+      corriger: (commodite, cote, champ, valeur, releve) => corriger(commodite, t.name, cote, champ, valeur, releve),
     }));
   }
   peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections() }));
@@ -2317,15 +2256,9 @@ function paintCommodityDetail() {
     nomCommodite: p.name,
     butin: loot,
     estCorrige: (terminal, cote, champ) => isOv(p.name, terminal, cote, champ),
-    // L'ÉCRITURE reste à app.js : lui seul sait qu'un VOLUME doit d'abord figer les jambes déjà
-    // planifiées (avant d'écrire, pour capturer les SCU encore en vigueur), qu'un PRIX ne fige
-    // rien, et que le compteur de corrections doit suivre.
-    corriger: (terminal, cote, champ, valeur, releve) => {
-      if (champ === "vol") pinLegsForVolume(p.name, terminal, cote);
-      setOverride(p.name, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
-      updateOvBadge();
-      refresh();
-    },
+    // Le détail ferme sur SA commodité et laisse varier le terminal — l'exact inverse de la vue
+    // Corrections. Cinq arguments là aussi, et l'enveloppe les remet dans l'ordre du module.
+    corriger: (terminal, cote, champ, valeur, releve) => corriger(p.name, terminal, cote, champ, valeur, releve),
     legendeAchat: BUY_STATUS,
     legendeVente: SELL_STATUS,
   }));
