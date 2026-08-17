@@ -62,3 +62,14 @@ export function pickJourney(legs: Jambe[] | null | undefined, apresAjout?: () =>
   syncViewsToJourney();
   rafraichir();
 }
+
+// ── LA GÉNÉRATION DU COMPAGNON ────────────────────────────────────────────────────────────────
+// Même mécanique que la carte de chargement (`manifeste-etat.ts`) : elle remonte les champs SCU
+// d'une jambe à chaque RECALCUL, et ne bouge pas pendant qu'on tape. Sans elle, la valeur calculée
+// reprendrait la main sous les doigts ; avec elle bougeant à la frappe, le champ perdrait son
+// curseur à chaque caractère.
+let generation = 0;
+
+/** Appelée par le cycle de rendu complet, jamais par la frappe dans un champ SCU de jambe. */
+export const nouvelleGenerationVoyage = (): void => { generation++; };
+export const generationVoyage = (): number => generation;

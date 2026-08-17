@@ -27,6 +27,7 @@ import { VueChaineArbitrage } from "./vues/chaine-vue.tsx";
 import { VueTrajetsArbitrage } from "./vues/trajets-vue.tsx";
 import { CarteParcours } from "./vues/carte-vue.tsx";
 import { VueEnRoute } from "./vues/enroute-vue.tsx";
+import { Bandeau } from "./vues/bandeau-vue.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -91,6 +92,9 @@ export function App() {
       {/* La HUITIÈME et dernière vue d'onglet. Elle occupe deux conteneurs — la carte de chargement
           et la table du fret rentable — qui partagent les filtres, le départ et l'arrivée forcée. */}
       <VueEnRoute />
+      {/* LE BANDEAU. Sa garde est NÉGATIVE — il est visible dans six vues sur huit, seul le Plan de
+          vol le masque. C'est l'inverse du patron des vues d'onglet, et le seul de son espèce. */}
+      <Bandeau />
     </>
   );
 }
