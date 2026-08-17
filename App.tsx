@@ -24,6 +24,7 @@ import { PanneauFrais } from "./vues/frais-station.tsx";
 import { VueCorrections } from "./vues/corrections-vue.tsx";
 import { VueBouclesArbitrage } from "./vues/boucles-vue.tsx";
 import { VueChaineArbitrage } from "./vues/chaine-vue.tsx";
+import { VueTrajetsArbitrage } from "./vues/trajets-vue.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -81,6 +82,7 @@ export function App() {
           son propre portail — voir `vues/message-vide.ts` pour pourquoi ce n'en est pas un second. */}
       <VueBouclesArbitrage />
       <VueChaineArbitrage />
+      <VueTrajetsArbitrage />
     </>
   );
 }

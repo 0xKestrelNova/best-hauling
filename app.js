@@ -2,7 +2,7 @@
 
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
-  tripMinutes, ageDays, pairAge,
+  tripMinutes, ageDays, lineFreshUpdated, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes,
   kFromReading, kPlausible,
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
@@ -28,7 +28,7 @@ import {
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { peindre } from "./pont.js";
 import { etat, notifier } from "./etat.ts";
-import { fmt, fmtVol, fmtFee, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
+import { fmt, fmtVol, fmtFee, scuBoxesLabel, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
@@ -38,6 +38,8 @@ import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResol
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
+import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
+import { evaluate } from "./vues/trajets-vue.tsx";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
@@ -48,7 +50,7 @@ import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines,
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
 import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
-import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
+import { vueTrajets } from "./vues/trajets.tsx";
 import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
@@ -62,13 +64,9 @@ import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 // terminal d'achat est disponible, parce que c'est exactement la décomposition que la facture
 // d'autoload utilise — un « 📦 1×32 » à côté d'un montant calculé sur deux caisses de 16 serait
 // une incohérence directement visible.
-const boxesLabel = (boxes) => (boxes.length ? boxes.map((b) => `${b.count}×${b.size}`).join(" · ") : "");
-function scuBoxesLabel(n, maxBox) {
-  return boxesLabel(scuBoxes(n, maxBox));
-}
+
 // Même libellé pour un chargement à plusieurs commodités : une caisse ne contient qu'une commodité,
 // la décomposition se fait donc ligne par ligne (cargoBoxes) et jamais sur le total des SCU.
-const cargoBoxesLabel = (lines, maxBox) => boxesLabel(cargoBoxes(lines, maxBox));
 
 // État global
 // Tri par défaut : le PROFIT NET par voyage (ADR-005). Le score composite classait mal — la route
@@ -107,10 +105,7 @@ function sysBadge(system) {
 // ---------- Fiabilité : fraîcheur, statut de stock, aberrations ----------
 // (ageDays/pairAge et les calculs de temps/score viennent de logic.mjs)
 // Fraîcheur d'une ligne de manifeste = le plus ancien des relevés achat/vente (ou l'un des deux).
-function lineFreshUpdated(l) {
-  const b = l.buyUpdated || 0, s = l.sellUpdated || 0;
-  return b && s ? Math.min(b, s) : b || s || 0;
-}
+
 
 // `BUY_STATUS` et `SELL_STATUS` sont passées dans `vues/communs.tsx`, à côté de la pastille qui les
 // lit : app.js ne faisait que les repasser en props à deux vues.
@@ -132,34 +127,11 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 // toutes deux doivent être appelables depuis une vue de l'arbre (ADR-012).
 
 // Applique les corrections à une paire buy/sell et renvoie des copies patchées + marge/roi.
-function applyOverrides(commodity, buy, sell) {
-  const b = effVals(commodity, buy.terminal, "buy", buy.price, buy.stock, buy.updated);
-  const s = effVals(commodity, sell.terminal, "sell", sell.price, sell.demand, sell.updated);
-  const nb = { ...buy, price: b.price, stock: b.vol, ovPrice: b.oprice, ovVol: b.ovol };
-  const ns = { ...sell, price: s.price, demand: s.vol, ovPrice: s.oprice, ovVol: s.ovol };
-  const margin = ns.price - nb.price;
-  const roi = nb.price > 0 ? Math.round((margin / nb.price) * 1000) / 10 : 0;
-  return { buy: nb, sell: ns, margin, roi };
-}
+
 
 // Calcule les champs dérivés d'une route selon les entrées utilisateur : applique les corrections
 // locales (impur, globales OVERRIDES) puis délègue le calcul pur à routeMetrics (logic.mjs).
-function evaluate(r, f) {
-  const { buy, sell, margin } = applyOverrides(r.commodity, r.buy, r.sell);
-  // routes.json et enRouteDeals ne donnent que des NOMS de terminaux : c'est ici, du côté impur,
-  // qu'ils deviennent des tarifs. routeMetrics, lui, reçoit un contexte déjà résolu.
-  const feeInfo = feeCtx(f, buy.terminal, sell.terminal);
-  const metrics = routeMetrics({
-    buyPrice: buy.price, buyStock: buy.stock, sellDemand: sell.demand, margin,
-    distance: r.distance, sameSystem: r.same_system,
-    buyUpdated: buy.updated, sellUpdated: sell.updated,
-    demandKnown: sell.ovVol, // ovVol = demande corrigée par l'utilisateur = fiable
-  }, f, feeInfo && feeInfo.pair);
-  // Marge et ROI nets des frais, comme en mode multi : la même colonne garde la même définition
-  // d'un mode à l'autre. Sans frais, netMarginRoi rend exactement la marge de marché et l'ancien ROI.
-  const net = netMarginRoi(margin, buy.price, metrics.units, metrics.fees);
-  return { ...r, buy, sell, buyPrice: buy.price, sellPrice: sell.price, feeInfo, ...metrics, ...net };
-}
+
 
 // Cellule de FIABILITÉ : mini-barre + valeur, de 10 à 100 (ADR-005). Ce n'est plus un classement
 // mais ce qu'on sait de la donnée — fraîcheur du relevé × part de volume publiée. Elle ne trie plus
@@ -189,121 +161,24 @@ function fiabiliteCell(f, age, part) {
 // Message de #empty tel qu'il est écrit dans index.html. Le <p> est PARTAGÉ par les vues Trajets /
 // Boucles / En route, et « En route » comme le mode multi-commodité réécrivent son texte : sans
 // remise à zéro en tête de rendu, un état vide légitime affichait le message d'une AUTRE vue.
-const EMPTY_DEFAULT = "Aucune route ne correspond aux filtres.";
 
 // Ce que les deux modes de Trajets partagent. app.js garde l'ÉTAT — les frais dépendent de
 // l'interrupteur d'autoload et des relevés par station, l'écriture d'une correction doit figer les
 // jambes déjà planifiées, et `#empty` reste écrit ici (il est partagé par trois vues).
-function propsTrajetsCommunes() {
-  return {
-    avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
-    legendeAchat: BUY_STATUS,
-    legendeVente: SELL_STATUS,
-    // Le contrat de cette vue est celui du module : six arguments, dans le même ordre. On le passe
-    // donc NU — c'est le seul des quatre sites, avec le manifeste, à pouvoir le faire.
-    corriger,
-  };
-}
+
 
 // Ce qui se calcule LIGNE PAR LIGNE, et qui vaut pour les deux tables à lignes simples : « Trajets »
 // (`#rows`) et « En route » (`#enrouteRows`). Elles ont toujours partagé leur rendu — c'était la
 // fonction `routeRowHTML`, appelée des deux endroits. L'îlot React la remplace, donc il doit servir
 // les deux appelants : ne peindre que `#rows` laisserait « En route » sans lignes.
-function propsLignesSimples() {
-  return {
-    celluleFrais: (r) => feeCell(r.feeInfo, r.fees, () => feeLoadText(r.units, (termByName.get(r.buy.terminal) || {}).maxBox), r.units > 0),
-    suspect: (r) => {
-      const d = pairAge(r.buy.updated, r.sell.updated);
-      if (d != null && d > 10) return "relevé de plus de 10 jours";
-      if (r.refSell > 0 && r.refBuy > 0 && (r.sell.price > r.refSell * 1.5 || r.buy.price < r.refBuy * 0.67))
-        return "prix très éloigné de la moyenne UEX";
-      return null;
-    },
-    // Le plafond de caisse vient du MARCHÉ, pas du contexte de frais : c'est une propriété physique
-    // de la station. Le prendre dans `feeInfo` le faisait disparaître dès l'interrupteur relâché, et
-    // la ligne annonçait « 3×32 » à côté d'un manifeste qui affichait « 6×16 » pour la même cargaison.
-    libelleCaisses: (r) => (r.units ? scuBoxesLabel(r.units, (termByName.get(r.buy.terminal) || {}).maxBox) : null),
-    // ▶ : le rappel est ÉTALÉ avec le reste, donc il sert les DEUX tables à lignes simples d'un
-    // coup. Le poser au seul site d'appel de `#rows` ferait taire le ▶ d'« En route » — la
-    // sur-suppression de #116 en négatif. C'est désormais gardé (e2e/choix-trajet.pw.mjs).
-    choisirTrajet: (r) => pickJourney([legFromRoute(r)]),
-  };
-}
 
-function render() {
-  const f = readFilters();
-  $("empty").textContent = EMPTY_DEFAULT;
-  if (f.multi) return renderMulti(f);
-  ensureFeeMarket(f, refresh); // re-rend la vue RÉELLEMENT active à l'arrivée du marché, pas celle d'alors
 
-  let rows = etat.ROUTES.filter((r) => routePasses(r, f)).map((r) => evaluate(r, f));
 
-  rows.sort(bySort(etat.sortKey, etat.sortDir));
-
-  peindre($("rows"), vueTrajets({
-    ...propsTrajetsCommunes(),
-    ...propsLignesSimples(),
-    lignes: rows,
-  }));
-  $("empty").hidden = rows.length > 0;
-  notifySuperseded();
-}
 
 // ---------- Vue « Trajets » en mode MULTI-COMMODITÉ ----------
 // Même tableau, mais chaque ligne est un chargement A->B composé de PLUSIEURS commodités
 // (remplissage par marge décroissante, plafonné par stock/demande et budget).
-function renderMulti(f) {
-  const empty = $("empty");
-  // Sans soute bornée, « remplir la soute » n'a pas de sens (cf. manifeste d'« En route »).
-  if (!f.useCargo || !(f.cargo > 0)) {
-    peindre($("rows"), null);
-    empty.hidden = false;
-    empty.textContent = "Active la soute (SCU) pour calculer des trajets multi-commodité.";
-    return;
-  }
-  // Graphe requis. On vide comme le fait la branche « soute inactive » juste au-dessus : laisser
-  // les trajets à UNE commodité sous un mode qui promet des chargements combinés, c'est afficher
-  // autre chose que ce qu'on annonce. (Historiquement le motif était plus dur : le tableau ne
-  // correspondait plus à `shownMulti`, et ▶ comme 📦 y lisaient un index vide — clic mort, #25.
-  // Les deux boutons portent maintenant leur ligne, mais vider reste la bonne réponse.)
-  // #empty reste masqué : le tableau n'est pas vide à cause des filtres, le marché n'est pas là.
-  if (!etat.MARKET) {
-    peindre($("rows"), null);
-    empty.hidden = true;
-    withMarket(refresh);
-    return;
-  }
-  // Le contexte de frais descend DANS multiTrips (et non après coup) : c'est lui qui trie puis
-  // TRONQUE à 300 trajets, un trajet meilleur en net serait donc coupé avant d'atteindre le tableau.
-  const trips = multiTrips(etat.MARKET, f, effVals, 300, f.multiAll ? 1 : 2, feeResolver(f))
-    .map((t) => ({ ...t, feeInfo: feeCtx(f, t.origin.name, t.dest.name, t.origin, t.dest), ...tripMetrics(t) }));
-  trips.sort(bySort(etat.sortKey, etat.sortDir));
-  peindre($("rows"), vueTrajetsMulti({
-    ...propsTrajetsCommunes(),
-    lignes: trips,
-    celluleFrais: (t) => feeCell(t.feeInfo, t.fees, () => feeCargoText(t.lines, t.origin.maxBox), t.units > 0),
-    libelleCaisses: (t) => (t.units ? cargoBoxesLabel(t.lines, t.origin.maxBox) : null),
-    // Le relevé le plus ANCIEN du chargement : un trajet ne vaut pas mieux que sa ligne la moins sûre.
-    releveLePlusAncien: (t) => t.lines.reduce((m, l) => { const u = lineFreshUpdated(l); return m && u ? Math.min(m, u) : m || u; }, 0),
-    // Les deux que le DÉPLIANT réclame. Elles restent ici : la première dépend du contexte de
-    // frais, la seconde du plafond de caisse du terminal d'achat — ni l'un ni l'autre n'est connu
-    // de l'îlot.
-    texteProfitLigne: lineProfitText,
-    libelleCaissesScu: scuBoxesLabel,
-    // EXPLICITE, et pas par `propsLignesSimples()` : cette vue-ci ne l'étale pas, et un chargement
-    // multi ne devient pas une jambe par le même chemin qu'une ligne simple.
-    choisirTrajet: (t) => pickJourney([legFromTrip(t)]),
-  }));
-  empty.hidden = trips.length > 0;
-  // Rappel : seuls les chargements COMBINÉS (≥ 2 commodités) sont listés ici — un trajet dont le
-  // remplissage optimal tient en une seule commodité est déjà dans la vue « Trajets » normale.
-  if (!trips.length) {
-    empty.textContent = f.multiAll
-      ? "Aucun chargement depuis ces terminaux avec ces filtres — élargis la soute ou le budget."
-      : "Aucun chargement combinant plusieurs commodités avec ces filtres — agrandis la soute, ou passe la liste sur « avec les simples ».";
-  }
-  notifySuperseded();
-}
+
 
 // Le chargement déplié d'un trajet multi est rendu par `ChargementDeplie` (vues/trajets.tsx), avec
 // l'état d'ouverture — `multiCargoHTML` y a disparu, et `commodityIcon`/`illegalTag` avec lui : ils
@@ -745,7 +620,7 @@ function renderManifest(origin, destSystem, f, destTerminal) {
 function renderEnRoute() {
   // #empty est PARTAGÉ avec Trajets / Boucles, et cette vue n'a encore rien de VRAI à y écrire :
   // ce n'est pas un filtre qui vide le tableau, c'est le marché qui manque. Symétrie du
-  // EMPTY_DEFAULT posé en tête de render() / renderLoops() (#55), qui manquait ici parce que le
+  // Le message par défaut posé en tête des vues à tableau (#55) manquait ici parce que le
   // retour anticipé précède toute écriture — et withMarket ne re-rend PAS en cas d'échec, donc le
   // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
   if (!etat.MARKET) { $("empty").hidden = true; withMarket(refresh); return; }
@@ -1598,14 +1473,10 @@ const debounce = (fn, ms = 150) => {
 };
 
 function refresh() {
+  // « En route » est la DERNIÈRE vue d'onglet encore peinte ici. Les sept autres vivent dans
+  // l'arbre et se réévaluent seules au `notifier()` de la fin — chacune sous sa propre garde de
+  // vue, donc sans que celle qu'on ne regarde pas ne coûte rien (ADR-012 §3).
   if (etat.view === "enroute") renderEnRoute();
-  // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
-  // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
-  // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
-  // que rien ne masque, donc « Aucune route ne correspond aux filtres. » revenait sous une vue qui
-  // n'a pas de tableau (#147). Chaque vue qui emménagera dans l'arbre passera par ce même repli :
-  // le nommer une fois vaut mieux que d'y penser à chaque migration.
-  else if (etat.view === "routes") render();
   // La carte Voyage est affichée À CÔTÉ des tableaux, dans toutes les vues : la laisser hors du
   // cycle de rendu la figeait sur l'état d'avant. Corriger un prix ne mettait donc pas à jour les
   // bénéfices du voyage — alors qu'une jambe non ajustée est justement, par contrat, branchée sur
@@ -1686,7 +1557,6 @@ function setupSort() {
         etat.sortDir = key === "commodity" ? 1 : -1;
       }
       applySortIndicators(); // classes ET aria-sort, pour les deux tables
-      render();
       saveState();
       notifier(); // rendu CIBLÉ : il ne passe pas par `refresh()`, il propage lui-même
     });

@@ -116,3 +116,63 @@ test("Arbre : taper depuis les Trajets ne recalcule pas la Chaîne", async ({ pa
 
   expect(await lots(), "la Chaîne a été recalculée depuis les Trajets").toBe(0);
 });
+
+test("Arbre : depuis les Boucles, taper ne recalcule pas le tableau des Trajets", async ({ page }) => {
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.click("#viewLoops");
+  await expect(page.locator("#loopRows tr").first()).toBeVisible({ timeout: 20000 });
+
+  const lots = await compterLots(page, "rows");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "le tableau des Trajets a été recalculé depuis les Boucles").toBe(0);
+});
+
+// La panne la plus coûteuse du lot, et elle ne fait rougir AUCUN test d'apparence : `withMarket`
+// enveloppe son rappel dans un `.then()`, donc une exception jetée par le rendu qui suit est
+// avalée par le `.catch()` et se présente comme « Marché indisponible ». Un identifiant libre dans
+// `app.js` — que `tsc` ne lit pas — se déguise ainsi en panne réseau.
+test("Chargement : le marché arrivé, aucun rendu ne se déguise en panne réseau", async ({ page }) => {
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  // Ce clic déclenche `pickJourney`, donc `renderJourney`, donc le chargement du marché.
+  await page.locator("#rows tr").first().locator(".journey-pick").click();
+
+  // Le marché arrive VRAIMENT : les listes se peuplent.
+  await expect(page.locator("#originList option").first()).toBeAttached({ timeout: 20000 });
+  // Et la carte du voyage sort de son « calcul… » au lieu de rester dessus.
+  await expect(page.locator("#journeyCard .jcargo-item").first()).toBeVisible({ timeout: 20000 });
+  // Aucun toast d'indisponibilité : il ne peut venir que du `.catch` de `withMarket`.
+  await expect(page.locator("#toast.show")).toHaveCount(0);
+});
+
+// #128 : `key={i}` ancre l'état d'édition au RANG de la ligne, pas au trajet. Un re-rendu qui
+// reclasse le tableau — un filtre tapé, un tri — laisse donc l'éditeur ouvert à la même PLACE, sur
+// un autre trajet, et `clore()` lit les props COURANTES : la correction part sur la mauvaise
+// commodité.
+//
+// Le déclencheur ne doit surtout PAS déplacer le focus : l'input porte `onBlur={() => clore(true)}`,
+// donc cliquer un en-tête de tri ou le champ de recherche referme l'éditeur AVANT le reclassement —
+// et le test passerait sans rien prouver. On dispatche donc `input` en JS, sans toucher au focus.
+test("Trajets : une correction ouverte pendant un re-tri reste sur SA commodité (#128)", async ({ page }) => {
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  // Une ligne qui n'est pas la première : la tête de liste bouge moins au filtrage.
+  const cellule = page.locator("#rows tr").nth(4).locator('.editv[data-s="buy"][data-f="price"]').first();
+  const commodite = await cellule.getAttribute("data-c");
+  await cellule.click();
+  await expect(page.locator("#rows .editv input")).toHaveCount(1);
+
+  // Re-tri SANS blur : la valeur est posée et l'événement dispatché en JS.
+  await page.$eval("#search", (el) => {
+    el.value = "a";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page).toHaveURL(/search=a/, { timeout: 10000 });
+
+  // L'éditeur, s'il est encore ouvert, doit l'être sur LA MÊME commodité.
+  const ouvert = page.locator("#rows .editv:has(input)");
+  if (await ouvert.count()) {
+    await expect(ouvert.first(), "l'éditeur a changé de commodité sous les doigts").toHaveAttribute("data-c", commodite);
+  }
+});

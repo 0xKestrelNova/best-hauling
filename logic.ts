@@ -44,6 +44,18 @@ export function pairAge(a: number | null | undefined, b: number | null | undefin
   const u = a && b ? Math.min(a, b) : a || b || 0;
   return ageDays(u, nowSec);
 }
+
+/**
+ * Le relevé d'une ligne de manifeste : le plus ANCIEN de ses deux bouts, ou celui qui existe.
+ *
+ * Même règle que `pairAge` — une ligne ne vaut pas mieux que son côté le moins sûr — mais elle rend
+ * la DATE et non l'âge, parce que ses appelants l'affichent en pastille de fraîcheur ou la
+ * réduisent sur tout un chargement.
+ */
+export function lineFreshUpdated(l: { buyUpdated?: number; sellUpdated?: number }): number {
+  const b = l.buyUpdated || 0, s = l.sellUpdated || 0;
+  return b && s ? Math.min(b, s) : b || s || 0;
+}
 // Facteur de fraîcheur : 1.0 tout frais -> 0.2 au-delà de ~11 j ; 0.5 si date inconnue.
 export function freshnessFactor(age: number | null): number {
   if (age == null) return 0.5;
