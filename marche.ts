@@ -135,3 +135,15 @@ export function stationCourante(): number | null {
 /** Une commodité par son nom OU son code UEX. `null` si le marché n'est pas là ou si rien ne colle. */
 export const findCommodity = (name: string) =>
   etat.MARKET ? resolveCommodity(etat.MARKET.commodities, name) : null;
+
+/**
+ * Le terminal d'ARRIVÉE forcé de la vue « En route », dérivé du champ `#destTerminal`.
+ *
+ * Vif comme ses trois voisins ci-dessus, et pour la même raison : c'était une globale
+ * `enrouteDest` qu'une fonction `resolveDest()` rafraîchissait en tête de rendu. Tous ses lecteurs
+ * dépendaient donc d'avoir été appelés APRÈS elle.
+ */
+export const indexArriveeForcee = (): number | null => {
+  const v = champ("destTerminal");
+  return stationMap.has(v) ? (stationMap.get(v) as number) : null;
+};

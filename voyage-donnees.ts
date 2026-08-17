@@ -20,7 +20,7 @@
 import {
   bestManifest, legsToPin, manifestIntent, manifestIntentSurvives, hydrateManifestLine,
 } from "./logic.ts";
-import type { CoteMarche, Filtres, Jambe, LigneManifeste } from "./types.ts";
+import type { ContexteManifeste, CoteMarche, Filtres, Jambe, LigneManifeste } from "./types.ts";
 import { etat } from "./etat.ts";
 import { stationLabel } from "./logic.ts";
 import { readFilters } from "./filtres.ts";
@@ -146,4 +146,28 @@ export function journeyCarriedCommodities(): Set<string> {
   const f = readFilters();
   etat.JOURNEY.legs.forEach((leg, i) => legEffectiveLines(leg, i, f).forEach((l) => set.add(l.name)));
   return set;
+}
+
+/**
+ * Le contexte de chargement d'une JAMBE, à la forme que `suggestionsFor` et `manifestRemaining`
+ * attendent — la même que celle de la carte d'« En route ».
+ *
+ * Il vit ici et non dans le module du manifeste parce qu'il est lu par le RENDU du compagnon et par
+ * deux de ses actions : c'est de la donnée de parcours, pas de la donnée de carte.
+ *
+ * `null` sans soute bornée : « SCU libres » n'a alors aucun sens, et les suggestions non plus.
+ */
+export function legSuggestCtx(leg: Jambe, lines: LigneManifeste[], f: Filtres & { cargo?: number; useCargo?: boolean }): ContexteManifeste | null {
+  if (!etat.MARKET || !stationMap.size) return null;
+  if (!f.useCargo || !(f.cargo && f.cargo > 0)) return null;
+  const originIdx = stationMap.get(stationLabel(leg.from, leg.fromSystem));
+  const destIdx = stationMap.get(stationLabel(leg.to, leg.toSystem));
+  if (originIdx == null || destIdx == null) return null;
+  const ctx = legFeeCtx(leg, f);
+  return {
+    lines, originIdx, destIdx,
+    origin: { name: leg.from, system: leg.fromSystem },
+    dest: { name: leg.to, system: leg.toSystem },
+    cargo: f.cargo, f, fee: ctx && ctx.pair, // même filtrage des suggestions qu'« En route »
+  };
 }
