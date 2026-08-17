@@ -4,7 +4,7 @@
 import {
   tripMinutes, ageDays, pairAge,
   scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
-  autoloadFee, kFromReading, kPlausible,
+  kFromReading, kPlausible,
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
@@ -34,22 +34,21 @@ import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, s
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
 import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
-import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, kFor, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
+import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
-import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
+// (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
+// depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
 import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
-import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
-import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
 import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
@@ -377,9 +376,6 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // invisible au garde — le panneau resterait sur l'ancienne station à côté d'un champ vide.
 let derniereStation;
 const memoriserStation = () => { derniereStation = indexStationExacte(); };
-// Signature du panneau de frais déjà peint : tant qu'elle ne bouge pas, on ne le réécrit pas, et
-// une saisie en cours y survit (#24).
-let feesRendus = null;
 
 // Charge le graphe de marché à la demande. Deux règles, apprises à la dure :
 //   - on mémorise la PROMESSE en vol, pas seulement son résultat : sinon chaque frappe pendant le
@@ -1700,7 +1696,6 @@ function refresh() {
   if (etat.view === "loops") renderLoops();
   else if (etat.view === "enroute") renderEnRoute();
   else if (etat.view === "chain") renderChain();
-  else if (etat.view === "corrections") renderCorrections();
   // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
   // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
   // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
@@ -2059,34 +2054,11 @@ function resetAllReadings() {
 // (marche.ts) : la station se dérive du champ à chaque lecture, au lieu d'être mise en cache par
 // une fonction de rendu. Voir marche.ts pour pourquoi ce n'est pas `resolveStationLabel`.
 
-// Relevé du tarif d'autoload d'une station. L'utilisateur ne saisit PAS `k` : personne ne lit un
-// coefficient en jeu, on lit une facture. Il donne un montant observé pour une quantité, et `k` s'en
-// déduit. Les champs ne portent PAS la classe `.editv` : le handler global de l'édition inline
-// l'attrape partout dans le document et écrirait dans les corrections de prix.
-function stationFeeHTML(S) {
-  const t = etat.MARKET.terminals[S];
-  const head = `<div class="fee-head">◈ Frais d'autoload — ${esc(t.name)}</div>`;
-  const wrap = (body) => `<div class="fee-panel">${head}${body}</div>`;
-  // Deux non-dits distincts, et aucun ne doit se lire « 0 aUEC » : le champ absent (instantané de
-  // market.json antérieur au build qui l'ajoute) et le service réellement indisponible.
-  if (t.autoload == null) return wrap('<p class="fee-off">Donnée d\'autoload absente de cet export UEX : aucun frais n\'est facturé à cette station tant qu\'elle manque.</p>');
-  if (t.autoload !== true) return wrap('<p class="fee-off">Cette station ne propose pas l\'autoload : aucun frais n\'y est facturé, quel que soit ton réglage.</p>');
-  const rec = etat.AUTOLOAD_K[alKey(t.name)];
-  const k = kFor(t.name);
-  const scu = rec ? rec.scu : 32;
-  const note = `<div class="fee-note">Tarif retenu : <b>k = ${kFmt(k)}</b> ${rec ? "(ton relevé)" : "(k global)"} — soit ≈ <b>${fmt(autoloadFee(scu, t.maxBox, k))}</b> aUEC pour ${fmt(scu)} SCU${t.maxBox ? `, caisses de ${fmt(t.maxBox)} SCU max` : ""}.</div>`;
-  return wrap(
-    `<div class="fee-row">
-       <span>Montant observé</span>
-       <input id="alAmount" type="number" min="0" step="1" value="${rec ? rec.amount : ""}" placeholder="ex : 1159" aria-label="Montant payé en aUEC" />
-       <span>aUEC pour</span>
-       <input id="alScu" type="number" min="1" step="1" value="${scu}" aria-label="Quantité en SCU" />
-       <span>SCU</span>
-       <button id="alSave" type="button" class="copy-btn">Enregistrer</button>
-       ${rec ? `<button type="button" class="corr-del al-del" data-key="${esc(alKey(t.name))}" title="Oublier ce relevé" aria-label="Oublier ce relevé">✕</button>` : ""}
-     </div>${note}`
-  );
-}
+// `stationFeeHTML` et `autoloadListHTML` sont passées dans `vues/frais-station.tsx` : c'étaient
+// les DEUX DERNIÈRES fonctions de vue rendant des chaînes HTML. Leur garde de signature part avec
+// elles — React ne réécrit pas un champ non contrôlé qu'il réconcilie (ADR-012).
+
+
 
 // Tableau éditable des commodités d'une station (prix/stock à l'achat, prix/demande à la vente).
 // `stationTableHTML` a été remplacé par vues/corrections.tsx.
@@ -2110,105 +2082,14 @@ function copierCorrections() {
   copierTexte(JSON.stringify(exporterCorrections(etat.OVERRIDES, nowSec()), null, 2), $("exportCorrections"), "⧉ Exporter");
 }
 
-// Liste des relevés d'autoload, à côté des corrections locales et sur le même modèle : ils sont de
-// la même nature (mesures faites en jeu, purement locales), mais ils ne comptent PAS dans le badge
-// « Corrections (n) » du rail et « Tout réinitialiser » ne les touche pas — ils ont leur propre store.
-function autoloadListHTML() {
-  const keys = Object.keys(etat.AUTOLOAD_K);
-  if (!keys.length) return "";
-  const items = keys.sort().map((key) => {
-    const o = etat.AUTOLOAD_K[key];
-    const terminal = key.slice(key.indexOf("|") + 1);
-    return `<div class="corr-item autoload"><div><b>${esc(terminal)}</b> <span class="corr-side">autoload</span><div class="loc-sub">k = <b>${kFmt(o.k)}</b> · ${fmt(o.amount)} aUEC observés pour ${fmt(o.scu)} SCU</div></div><button class="corr-del al-del" data-key="${esc(key)}" title="Oublier ce relevé">✕</button></div>`;
-  }).join("");
-  return `<div class="corr-list-head"><span>${keys.length} relevé${keys.length > 1 ? "s" : ""} d'autoload</span><button id="resetAllK" class="reset-ov">Tout oublier</button></div>${items}`;
-}
 
-// Prépare les tuiles d'une station pour l'îlot : app.js reste le seul à lire MARKET et à appeler
-// `effVals` — dont la purge d'une correction périmée est un effet de bord assumé.
-function tuilesStation(S, q) {
-  const t = etat.MARKET.terminals[S];
-  const tuiles = [];
-  etat.MARKET.commodities.forEach((c) => {
-    if (q && !c.name.toLowerCase().includes(q)) return;
-    const b = c.buys.find((x) => x[0] === S);
-    const s = c.sells.find((x) => x[0] === S);
-    if (!b && !s) return;
-    const cote = (p, side, libelle, unite) => {
-      const e = effVals(c.name, t.name, side, p[1], p[2], p[3]);
-      return {
-        cote: side, libelle, unite,
-        prix: e.price, volume: e.vol,
-        prixCorrige: e.oprice, volumeCorrige: e.ovol,
-        prixBrut: p[1], volumeBrut: p[2],
-        releve: p[3],
-      };
-    };
-    const cotes = [];
-    if (b) cotes.push(cote(b, "buy", "achat", "stock"));
-    if (s) cotes.push(cote(s, "sell", "vente", "dem."));
-    // Une seule ligne par côté RÉEL. La classe de la tuile porte le côté : c'est elle qui donne au
-    // liseré et à l'étiquette leur couleur, nécessaire depuis que l'en-tête de section sort de
-    // l'écran au défilement.
-    tuiles.push({ nom: c.name, kind: c.kind, illegal: c.illegal, achat: !!b, cotes });
-  });
-  return tuiles;
-}
 
-// Les stations corrigées, la station affichée épinglée en tête.
-function groupesCorrections(S) {
-  const actif = S != null ? etat.MARKET.terminals[S].name : null;
-  return groupOverridesByTerminal(etat.OVERRIDES, actif).map((g) => ({
-    terminal: g.terminal,
-    corrections: g.corrections,
-    actif: g.actif,
-    // `null` quand le terminal a disparu de market.json : la vignette s'affiche quand même, sinon
-    // la correction deviendrait invisible ET ineffaçable.
-    info: termByName.get(g.terminal) || null,
-  }));
-}
 
-function renderCorrections() {
-  if (!etat.MARKET) { withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  // UNE dérivation, en tête, et tout le rendu s'y réfère : la station ne peut pas changer entre
-  // deux lectures dans la même passe.
-  const S = indexStationExacte();
-  const q = $("search").value.trim().toLowerCase();
-  // La bande est peinte APRÈS le panneau, bien qu'elle s'affiche au-dessus : la préparation des
-  // tuiles appelle effVals, dont la purge des volumes périmés est un EFFET DE BORD. Compter d'abord
-  // afficherait une correction que le rendu suivant vient d'effacer. L'ordre est donc un contrat.
-  if (S == null) peindre($("correctionsStation"), inviteStation());
-  else {
-    const t = etat.MARKET.terminals[S];
-    // Deux `const`, dans cet ordre, et non deux propriétés d'un littéral : `tuilesStation` PURGE en
-    // chemin (via effVals), donc compter avant elle annoncerait une correction qu'elle vient
-    // d'effacer. L'ordre des propriétés d'un objet le donnerait aussi, mais par accident.
-    const tuiles = tuilesStation(S, q);
-    const nbCorrections = Object.keys(etat.OVERRIDES).filter((k) => k.split("|")[1] === t.name).length;
-    peindre($("correctionsStation"), vueStation({
-      terminal: t,
-      tuiles,
-      filtre: !!q,
-      nbCorrections,
-      // Cette vue-ci ferme sur SA station : elle passe cinq arguments, pas six. L'enveloppe remet
-      // le terminal à sa place — la substituer nue décalerait tout, en silence.
-      corriger: (commodite, cote, champ, valeur, releve) => corriger(commodite, t.name, cote, champ, valeur, releve),
-    }));
-  }
-  peindre($("correctionsIndex"), vueBandeCorrections({ groupes: groupesCorrections(S) }));
-  // Le panneau de frais n'est réécrit QUE si son contenu a changé (#24). Le sortir de
-  // #correctionsStation ne suffisait pas : renderCorrections réécrivait son nouveau conteneur tout
-  // aussi inconditionnellement, et un montant en cours de frappe repartait à vide au moindre
-  // re-rendu — un filtre tapé, une correction ailleurs. Le panneau ne dépend que de la station
-  // affichée et du store des relevés : cette signature suffit à décider.
-  const signature = `${S}|${JSON.stringify(etat.AUTOLOAD_K)}`;
-  if (signature !== feesRendus) {
-    feesRendus = signature;
-    $("correctionsFees").innerHTML = (S != null ? stationFeeHTML(S) : "") + autoloadListHTML();
-  }
-  notifySuperseded();
-}
+
+
+// `renderCorrections`, `tuilesStation` et `groupesCorrections` sont passées dans
+// `vues/corrections-vue.tsx` : la vue vit dans l'arbre (ADR-012).
+
 
 // ---------- Vue « Commodités » ----------
 // `marginTier` est passée dans `logic.ts` sous le nom `palierMarge`, avec le maximum en PARAMÈTRE
@@ -2366,17 +2247,11 @@ async function init() {
       }
       return;
     }
-    const del = e.target.closest(".corr-del");
-    if (del) {
-      // Supprimer une correction de volume rend le stock d'UEX : c'est encore un changement de
-      // volume, donc la même règle s'applique — le voyage déjà planifié ne doit pas s'y rebattre.
-      const cle = del.dataset.key;
-      if (etat.OVERRIDES[cle] && etat.OVERRIDES[cle].vol != null) {
-        const [commodity, terminal, side] = cle.split("|");
-        pinLegsForVolume(commodity, terminal, side);
-      }
-      delete etat.OVERRIDES[cle]; saveOverrides(); updateOvBadge(); refresh(); return;
-    }
+    // La branche `.corr-del` générique est partie : elle était MORTE. Les deux seuls producteurs de
+    // cette classe (`vues/frais-station.tsx`) posent aussi `.al-del`, interceptée trois lignes plus
+    // haut avec un `return`. Elle datait de la liste plate de corrections, remplacée par la bande de
+    // vignettes. La garder « par prudence » rouvrirait un chemin d'écriture d'OVERRIDES qui n'existe
+    // plus — et un test asserte au contraire qu'aucun `.corr-item:not(.autoload)` ne subsiste.
     if (e.target.closest("#alSave")) { saveStationReading(); return; }
     if (e.target.closest("#resetAllK")) { resetAllReadings(); return; }
     // Avant « Tout réinitialiser » ici aussi : rien ne doit s'effacer sans qu'on ait pu l'emporter.

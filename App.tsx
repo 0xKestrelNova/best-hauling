@@ -20,6 +20,9 @@ import { etat, getSnapshot, subscribe } from "./etat.ts";
 import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
 import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 import { VueCommodites } from "./vues/commodites-vue.tsx";
+import { PanneauFrais } from "./vues/frais-station.tsx";
+import { VueCorrections } from "./vues/corrections-vue.tsx";
+import { indexStationExacte } from "./marche.ts";
 
 /**
  * Rend `children` dans le conteneur `id`, et SEULEMENT si la vue `si` est celle qu'on regarde.
@@ -36,6 +39,16 @@ function Portail({ id, si, children }: { id: string; si?: string; children: Reac
   if (si != null && etat.view !== si) return null;
   const cible = document.getElementById(id);
   return cible ? createPortal(children, cible) : null;
+}
+
+/**
+ * Le panneau de frais a besoin de SA station, et il est le seul de son conteneur : il la dérive
+ * lui-même, comme toute vue de l'arbre. `etat.MARKET` peut manquer — la vue Corrections est encore
+ * peinte par `app.js`, qui déclenche le chargement.
+ */
+function PanneauFraisStation() {
+  const S = etat.MARKET ? indexStationExacte() : null;
+  return <PanneauFrais terminal={S != null ? etat.MARKET!.terminals[S] : null} />;
 }
 
 export function App() {
@@ -55,6 +68,12 @@ export function App() {
           vue est faite en tête de `VueCommodites`, AU-DESSUS du calcul. La répéter sur trois
           portails frères ferait recalculer tout le marché trois fois (ADR-012 §3). */}
       <VueCommodites />
+      {/* La vue Corrections occupe TROIS conteneurs. Les deux premiers vivent dans un seul
+          composant, parce que l'ordre dans lequel ils sont calculés est un contrat : les tuiles
+          purgent les corrections périmées en chemin, la bande doit compter APRÈS (ADR-012 §4).
+          Le panneau de frais, lui, est indépendant — il ne lit ni les corrections ni la purge. */}
+      <VueCorrections />
+      <Portail id="correctionsFees" si="corrections"><PanneauFraisStation /></Portail>
     </>
   );
 }

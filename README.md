@@ -541,6 +541,11 @@ prennent un **`k` global réglable** (défaut 1,2, milieu des deux mesures). S'y
 caisses, qui dépend du plafond de conteneur du terminal (`max_container_size` d'UEX), **replié sur 32
 quand UEX renvoie 0** : ce repli sous-estime les frais plutôt que de les inventer.
 
+La vue **Corrections** affiche, pour la station cherchée, le tarif qu'elle retiendrait : « Tarif retenu :
+`k = …` », suivi de « (ton relevé) » ou « (k global) » selon d'où il vient, et du montant que ça donne
+pour 32 SCU. Ce panneau **suit le `k` global en direct** : le changer met le chiffre à jour sans quitter
+la vue.
+
 D'où le **`≈` sur tout montant** : l'app donne un ordre de grandeur fiable, pas un chiffre exact. Si tu
 relèves le tarif réel d'une station, tu peux **l'enregistrer** (montant observé pour une quantité donnée →
 `k` déduit) : c'est **local**, comme les corrections, jamais partagé ni mis dans l'URL — seuls

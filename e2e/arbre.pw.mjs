@@ -63,3 +63,23 @@ test("Arbre : le board se peint bien quand on le regarde, lui", async ({ page })
   expect(await lots(), "le board n'a pas suivi le filtre alors qu'il est à l'écran").toBeGreaterThan(0);
   expect(await page.locator("#commGrid .comm-tile").count()).toBeGreaterThan(0);
 });
+
+test("Arbre : taper depuis les Trajets ne repeint pas la vue Corrections", async ({ page }) => {
+  // Même mesure, sur la vue la plus chère des deux : `tuilesStation` parcourt tout le catalogue de
+  // commodités et appelle `effVals` — qui PURGE et PERSISTE — une à deux fois par tuile. La
+  // réévaluer depuis une autre vue ne serait pas seulement du calcul perdu : ce serait des
+  // écritures de `localStorage` déclenchées par une frappe qui ne la concerne pas.
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 20000 });
+  await page.fill("#station", "Levski — Nyx");
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible({ timeout: 20000 });
+
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "correctionsStation");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "la vue Corrections a été repeinte depuis les Trajets").toBe(0);
+});
