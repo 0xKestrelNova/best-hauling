@@ -1,3 +1,6 @@
+import { cargoBoxes, scuBoxes } from "./logic.ts";
+import type { LigneManifeste } from "./types.ts";
+
 // Les formateurs partagés (ADR-011).
 //
 // Ils étaient définis dans `app.js` et INJECTÉS en props : `fmt` traversait onze composants, `fmtVol`
@@ -31,3 +34,24 @@ export const fmtFee = (n: number, fees: number): string => (fees > 0 ? "≈ " + 
  * frais mangeaient la marge — en vert, sur le seul chiffre qui disait de ne pas charger la ligne.
  */
 export const signe = (n: number, texte: string): string => (n < 0 ? texte : "+" + texte);
+
+// ── Les libellés de CAISSES ────────────────────────────────────────────────────────────────────
+// Ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ». `maxBox` est le plafond de caisse du terminal de
+// CHARGEMENT quand on le connaît : c'est une propriété physique de la station, indépendante de
+// l'interrupteur de frais. On le propage partout où le terminal d'achat est disponible, parce que
+// c'est exactement la décomposition que la facture d'autoload utilise — un « 📦 1×32 » à côté d'un
+// montant calculé sur deux caisses de 16 serait une incohérence directement visible.
+//
+// Ils vivaient dans `app.js` alors qu'ils ne lisent aucun état : trois vues les consomment, et deux
+// d'entre elles vivent maintenant dans l'arbre.
+
+const boxesLabel = (boxes: { count: number; size: number }[]): string =>
+  boxes.length ? boxes.map((b) => `${b.count}×${b.size}`).join(" · ") : "";
+
+export const scuBoxesLabel = (n: number, maxBox?: number | null): string =>
+  boxesLabel(scuBoxes(n, maxBox));
+
+// Même libellé pour un chargement à PLUSIEURS commodités : une caisse ne contient qu'une commodité,
+// la décomposition se fait donc ligne par ligne (`cargoBoxes`) et jamais sur le total des SCU.
+export const cargoBoxesLabel = (lines: LigneManifeste[], maxBox?: number | null): string =>
+  boxesLabel(cargoBoxes(lines, maxBox));

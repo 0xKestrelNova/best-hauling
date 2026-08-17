@@ -15,6 +15,7 @@
 import { TEXTE_CAPACITE_INCONNUE, fmt, fmtFee, fmtVol } from "../format.ts";
 import { useState } from "react";
 import type { LigneManifeste, PaireFrais, Route } from "../types.ts";
+import type { ContexteFrais } from "../frais.ts";
 import { BadgeSysteme, TagAvantPoste, TagIllegal, IconeCommodite, PastilleFraicheur, CelluleFiabilite, ValeurEditable, PastilleStatut } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
@@ -31,7 +32,7 @@ export type ProprietesCommunes = {
 export type LigneTrajet = Route & {
   fiabilite: number; age: number | null; partVolume: number;
   units: number; investment: number; profit: number; profitHour: number; minutes: number; fees: number;
-  feeInfo: unknown;
+  feeInfo: ContexteFrais;
   buy: Route["buy"] & { ovPrice: boolean; ovVol: boolean };
   sell: Route["sell"] & { ovPrice: boolean; ovVol: boolean };
 };
@@ -159,7 +160,7 @@ export type LigneMulti = {
   fiabilite: number; age: number | null; partVolume: number;
   margin: number; roi: number; units: number; investment: number;
   profit: number; profitHour: number; minutes: number; fees: number;
-  feeInfo: unknown;
+  feeInfo: ContexteFrais;
 };
 
 export type ProprietesMulti = ProprietesCommunes & {
