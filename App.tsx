@@ -22,6 +22,8 @@ import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
 import { VueCommodites } from "./vues/commodites-vue.tsx";
 import { PanneauFrais } from "./vues/frais-station.tsx";
 import { VueCorrections } from "./vues/corrections-vue.tsx";
+import { VueBouclesArbitrage } from "./vues/boucles-vue.tsx";
+import { VueChaineArbitrage } from "./vues/chaine-vue.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -74,6 +76,11 @@ export function App() {
           Le panneau de frais, lui, est indépendant — il ne lit ni les corrections ni la purge. */}
       <VueCorrections />
       <Portail id="correctionsFees" si="corrections"><PanneauFraisStation /></Portail>
+      {/* Boucles ne rend qu'un `<tbody>`, mais elle écrit AUSSI `#empty`, un `<p>` partagé avec
+          Trajets et « En route » qui vivent encore dans app.js. Elle porte donc sa propre garde et
+          son propre portail — voir `vues/message-vide.ts` pour pourquoi ce n'en est pas un second. */}
+      <VueBouclesArbitrage />
+      <VueChaineArbitrage />
     </>
   );
 }

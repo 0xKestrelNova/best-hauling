@@ -83,3 +83,36 @@ test("Arbre : taper depuis les Trajets ne repeint pas la vue Corrections", async
 
   expect(await lots(), "la vue Corrections a été repeinte depuis les Trajets").toBe(0);
 });
+
+test("Arbre : taper depuis les Trajets ne repeint pas le tableau des Boucles", async ({ page }) => {
+  await page.click("#viewLoops");
+  await expect(page.locator("#loopRows tr").first()).toBeVisible({ timeout: 20000 });
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "loopRows");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "le tableau des Boucles a été repeint depuis les Trajets").toBe(0);
+});
+
+test("Arbre : taper depuis les Trajets ne recalcule pas la Chaîne", async ({ page }) => {
+  // La plus chère des cinq : `buildChainAdjacency` construit un graphe sur tout le marché, puis
+  // `bestChain` en fait une recherche par faisceau. La rejouer depuis une autre vue serait le
+  // gaspillage le plus cher du dépôt.
+  await page.fill("#cargo", "96");
+  await page.check("#useCargo");
+  await page.click("#viewChain");
+  await page.fill("#chainOrigin", "Megumi — Pyro");
+  await expect(page.locator("#chainOut .chain")).toBeVisible({ timeout: 20000 });
+
+  await page.click("#viewRoutes");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  const lots = await compterLots(page, "chainOut");
+  await page.locator("#search").pressSequentially("Laranite", { delay: 30 });
+  await expect(page).toHaveURL(/search=Laranite/, { timeout: 10000 });
+
+  expect(await lots(), "la Chaîne a été recalculée depuis les Trajets").toBe(0);
+});

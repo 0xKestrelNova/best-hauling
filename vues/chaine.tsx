@@ -27,6 +27,8 @@ export type ProprietesChaine = {
   // calcule et l'îlot n'en reçoit que le résultat.
   celluleFrais: (lignes: LigneManifeste[], fee: PaireFrais | null, a: Terminal, b: Terminal, scu: number, fees: number) => CelluleFrais;
   texteProfitLigne: (units: number, l: LigneManifeste, pair: PaireFrais | null) => string;
+  /** ▶ : ajouter CETTE chaîne au voyage. Reçoit la chaîne, jamais une globale relue au clic. */
+  choisirChaine: (c: Chaine) => void;
 };
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
@@ -52,7 +54,7 @@ function LigneDeSaut({ l, fee, texteProfitLigne }: {
   );
 }
 
-export function VueChaine({ chaine, cargo, terminal, celluleFrais, texteProfitLigne }: ProprietesChaine) {
+export function VueChaine({ chaine, cargo, terminal, celluleFrais, texteProfitLigne, choisirChaine }: ProprietesChaine) {
   const totaux = chaine.legs.map((leg) => manifestTotals(leg.lines || [], leg.fee));
   const invest = totaux[0] ? totaux[0].invest : 0;
   const totalFees = totaux.reduce((s, t) => s + t.fees, 0);
@@ -89,9 +91,12 @@ export function VueChaine({ chaine, cargo, terminal, celluleFrais, texteProfitLi
           {" · "}{chaine.legs.length} saut{chaine.legs.length > 1 ? "s" : ""}
           {" · "}{fmt(totalScu)} SCU chargés · capital de départ {fmt(invest)} · ~{Math.round(minutes)} min
         </span>
-        {/* L'id est un CONTRAT : app.js y attache l'ajout au voyage. Le renommer casserait le geste
-            sans qu'aucune erreur ne soit levée — le bouton resterait simplement inerte. */}
-        <button id="chainToJourney" className="chain-pick" title="Ajouter cette chaîne au voyage en cours">▶ Ajouter au voyage</button>
+        {/* L'id reste un CONTRAT de test (smoke.pw.mjs le clique), mais ce n'est plus lui qui porte
+            le geste : le bouton reçoit un rappel fermé sur SA chaîne. Avant, une délégation posée
+            sur `document` relisait `shownChain`, une globale écrite au RENDU et lue au CLIC — le
+            motif que la migration élimine partout. */}
+        <button id="chainToJourney" className="chain-pick" onClick={() => choisirChaine(chaine)}
+                title="Ajouter cette chaîne au voyage en cours">▶ Ajouter au voyage</button>
       </div>
       <div className="chain-legs">
         {chaine.legs.map((leg, i) => {

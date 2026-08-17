@@ -3,20 +3,20 @@
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
   tripMinutes, ageDays, pairAge,
-  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes, bestChain,
+  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes,
   kFromReading, kPlausible,
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
-  routePasses, loopPasses,
-  routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
+  routePasses,
+  routeMetrics, enRouteDeals, bestManifest, suggestionsFrom, netMarginRoi,
   commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
-  legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
+  legFromRoute, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, journeyMap,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
   offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
-  journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,
+  journeyConnects, setJourneyPosition, journeyMargin,
   removeJourneyStop as removeStopPure,
   reindexerRangsJambe, detacherLotsDeJambe,
   soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
@@ -33,18 +33,17 @@ import { readFilters } from "./filtres.ts";
 import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { construireIndex, findCommodity, indexDepartChaine, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
+import { construireIndex, findCommodity, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
 import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
 import { brancher, ensureFeeMarket, ensureStarmap, withMarket } from "./donnees.ts";
 import { brancherRendu } from "./rendu.ts";
+import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
 // (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
 // depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
-import { vueBoucles } from "./vues/boucles.tsx";
-import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
@@ -312,54 +311,11 @@ function renderMulti(f) {
 
 // Ligne de tableau pour une route évaluée (partagée par « Trajets simples » et « En route »).
 // `routeRowHTML` a été remplacé par vues/trajets.tsx, pour `#rows` ET `#enrouteRows`.
-function effLeg(leg, buyT, sellT) {
-  const b = effVals(leg.commodity, buyT, "buy", leg.buyPrice, leg.stock, leg.updated);
-  const s = effVals(leg.commodity, sellT, "sell", leg.sellPrice, leg.demand, leg.updated);
-  return { ...leg, buyPrice: b.price, stock: b.vol, sellPrice: s.price, demand: s.vol, demandKnown: s.ovol, margin: s.price - b.price };
-}
 
-function evaluateLoop(l, f) {
-  const out = effLeg(l.out, l.a.terminal, l.b.terminal);
-  const back = effLeg(l.back, l.b.terminal, l.a.terminal);
-  const cross = l.a.system !== l.b.system;
-  // Une boucle n'a pas un terminal d'achat et un de vente : elle a deux EXTRÉMITÉS qui sont tour à
-  // tour l'un et l'autre, d'où { a, b } et quatre opérations facturées (cf. loopMetrics).
-  const feeInfo = feeCtx(f, l.a.terminal, l.b.terminal);
-  const metrics = loopMetrics(out, back, l.distance, cross, f, feeInfo && { a: feeInfo.a.point, b: feeInfo.b.point });
-  return { ...l, out, back, cross, feeInfo, ...metrics };
-}
 
-function renderLoops() {
-  const f = readFilters();
-  $("empty").textContent = EMPTY_DEFAULT;
-  ensureFeeMarket(f, refresh); // idem render() : la vue peut avoir changé pendant le fetch
 
-  let rows = etat.LOOPS.filter((l) => loopPasses(l, f)).map((l) => evaluateLoop(l, f));
 
-  rows.sort(bySort(etat.loopSortKey, etat.loopSortDir));
-  // Compagnon : remonte en tête (sans filtrer) les boucles qui partent de la FIN du parcours —
-  // c'est le point d'extension (une boucle depuis là s'enchaîne au parcours). Cohérent avec addToJourney.
-  const hereArrival = etat.JOURNEY ? journeyEnd(etat.JOURNEY)?.name : null;
-  if (hereArrival) {
-    rows.forEach((l) => { l._fromHere = l.a.terminal === hereArrival || l.b.terminal === hereArrival; });
-    rows.sort((a, b) => (b._fromHere ? 1 : 0) - (a._fromHere ? 1 : 0)); // tri stable : pertinentes d'abord
-  }
-  // Le <tbody> passe à React ; le <thead> et ses `th[data-sort-loop]` restent dans index.html,
-  // câblés par setupLoopSort. React ne possède que le corps du tableau.
-  peindre($("loopRows"), vueBoucles({
-    lignes: rows,
-    celluleFrais: (l) => feeCell(l.feeInfo, l.fees, () => `${fmt(l.unitsOut)} + ${fmt(l.unitsBack)} SCU, 4 opérations (charge et décharge à chaque bout)`, l.units > 0),
-    avecTexteFrais: (base, cell) => (cell.text ? `${base} · ${cell.text}` : base),
-    // On entre dans le cycle par la FIN du parcours : la boucle l'étend au lieu de le remplacer.
-    // `journeyEnd(JOURNEY)` est relu DANS le corps de la flèche, donc au clic — et surtout PAS
-    // remplacé par `hereArrival` (calculé plus haut, au rendu) : le parcours a pu bouger entre les
-    // deux, et c'est la seule régression que ce lot pourrait introduire.
-    choisirBoucle: (l) => pickJourney(legsFromLoop(l, etat.JOURNEY ? journeyEnd(etat.JOURNEY)?.name : null)),
-  }));
 
-  $("empty").hidden = rows.length > 0;
-  notifySuperseded();
-}
 
 // ---------- Mode « En route » (trajet dirigé) + manifeste multi-commodité ----------
 let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
@@ -825,39 +781,11 @@ function renderEnRoute() {
 }
 
 // ---------- Vue « Chaîne » (multi-sauts A -> B -> C ...) ----------
-let shownChain = null;  // chaîne actuellement affichée (pour l'ajout au voyage)
 
 // buildChainAdjacency vit dans logic.mjs (fonction pure) ; appelée avec MARKET + effVals.
 
 // `chainCardHTML` a été remplacé par vues/chaine.tsx.
-function renderChain() {
-  if (!etat.MARKET) { withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  const box = $("chainOut");
-  const f = readFilters();
-  shownChain = null;
-  const hint = (noeud) => { peindre(box, noeud); notifySuperseded(); };
-  if (indexDepartChaine() == null) return hint(indiceDepart());
-  if (!f.useCargo || !(f.cargo > 0)) return hint(indiceSoute());
-  const hops = Number($("hops").value) || 3;
-  // Les frais sont estampillés sur chaque leg par buildChainAdjacency — seul endroit de la chaîne
-  // où les deux terminaux d'un saut coexistent — puis consommés par bestChain, dont l'élagage et la
-  // sélection portent alors sur le profit NET.
-  const chain = bestChain(buildChainAdjacency(etat.MARKET, f, effVals, feeResolver(f)), indexDepartChaine(), hops, { cargo: f.cargo });
-  if (!chain || !chain.legs.length) return hint(indiceAucune());
-  shownChain = chain;
-  // Le calcul de présentation vit dans l'îlot (il n'appelle que logic.ts) ; app.js ne lui passe que
-  // ce qui dépend de l'ÉTAT : le résolveur de terminaux, et les deux fonctions de frais.
-  peindre(box, vueChaine({
-    chaine: chain,
-    cargo: f.cargo,
-    terminal: (idx) => etat.MARKET.terminals[idx],
-    celluleFrais: (lignes, fee, a, b, scu, fees) =>
-      feeCell(feeCtx(f, a.name, b.name, a, b), fees, () => feeCargoText(lignes, a.maxBox), scu > 0),
-    texteProfitLigne: lineProfitText,
-  }));
-  notifySuperseded();
-}
+
 
 // ---------- La soute : ce qui est à bord, et ce qu'on l'a payé (ADR-002) ----------
 // Un lot par chargement — la même commodité peut y figurer deux fois à des prix différents.
@@ -1247,18 +1175,9 @@ function renderJourneyMap() {
 }
 
 // ---------- Compagnon de voyage : résumé du parcours (près du vaisseau) ----------
-// Sélectionne un trajet/une boucle/une chaîne -> met à jour le parcours (étend si ça s'enchaîne).
-// `apresAjout` (optionnel) tourne une fois le parcours à jour mais AVANT le rendu : c'est là que le
-// manifeste d'« En route » dépose son chargement ajusté, pour que la jambe s'affiche du premier
-// coup avec les bons SCU et son badge ✎.
-function pickJourney(legs, apresAjout) {
-  if (!legs || !legs.length) return;
-  etat.JOURNEY = addToJourney(etat.JOURNEY, legs);
-  if (apresAjout) apresAjout();
-  syncViewsToJourney();
-  renderJourney();
-  refresh(); // reflète la nouvelle destination/origine dans la vue courante
-}
+// `pickJourney` et `syncViewsToJourney` sont passées dans `voyage-actions.ts` : les QUATRE vues qui
+// restent ici les appellent, et aucune ne peut emménager tant qu'elles vivent dans un fichier qui
+// n'exporte rien (ADR-012).
 
 // « Je suis ici » : pose la position courante et recale les vues. Deux chemins y mènent — le fil
 // d'étapes textuel (⦿) et les escales de la carte — et c'est délibéré : la carte n'introduit pas
@@ -1276,21 +1195,7 @@ function setJourneyStop(i) {
 
 // Pré-remplit les contrôles des vues d'après la POSITION COURANTE du parcours.
 // « Pré-rempli » : on pose les défauts, l'utilisateur reste libre de les changer.
-function syncViewsToJourney() {
-  if (!etat.JOURNEY) return;
-  const here = journeyStations(etat.JOURNEY)[etat.JOURNEY.current]; // station où l'on se trouve
-  if (!here) return;
-  const originLabel = stationLabel(here.name, here.system);
-  $("origin").value = originLabel;    // En route : départ = station courante
-  $("chainOrigin").value = originLabel; // Chaîne : départ = station courante
-  const leg = currentLeg(etat.JOURNEY);
-  if (leg) {
-    $("destTerminal").value = stationLabel(leg.to, leg.toSystem); // arrivée forcée = jambe courante
-    $("destSystem").value = "";
-  } else {
-    $("destTerminal").value = ""; // au bout du parcours : on cherche le fret onward, pas d'arrivée imposée
-  }
-}
+
 function clearJourney() {
   etat.JOURNEY = null;
   // Sans cette purge, les manifestes édités survivaient à l'effacement du voyage et ressortaient
@@ -1693,9 +1598,7 @@ const debounce = (fn, ms = 150) => {
 };
 
 function refresh() {
-  if (etat.view === "loops") renderLoops();
-  else if (etat.view === "enroute") renderEnRoute();
-  else if (etat.view === "chain") renderChain();
+  if (etat.view === "enroute") renderEnRoute();
   // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
   // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
   // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
@@ -1797,9 +1700,8 @@ function setupLoopSort() {
       if (etat.loopSortKey === key) etat.loopSortDir *= -1;
       else { etat.loopSortKey = key; etat.loopSortDir = -1; }
       applySortIndicators();
-      renderLoops();
       saveState();
-      notifier(); // idem : hors `refresh()`
+      notifier(); // la vue Boucles vit dans l'arbre : la propagation suffit, hors `refresh()`
     });
   });
 }
@@ -2370,7 +2272,6 @@ async function init() {
   // `shownRoutes`, et la garde `isMultiRoutes()` qui rattrapait le mode déjà changé au moment du
   // clic (#25) — un rappel fermé sur SON trajet ne peut pas se tromper de tableau.
   document.addEventListener("click", (e) => {
-    if (e.target.closest("#chainToJourney") && shownChain) { pickJourney(legsFromChain(shownChain, etat.MARKET.terminals)); return; }
     if (e.target.closest("#journeyClear")) { clearJourney(); return; }
     // Démarrer un voyage « de zéro » : bouton « Commencer » depuis l'invite.
     if (e.target.closest("#journeyStartBtn")) { beginJourney($("journeyStart").value); return; }

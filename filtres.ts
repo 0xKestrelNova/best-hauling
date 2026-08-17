@@ -10,7 +10,7 @@
 // lues de l'application. Ils entreront dans l'état avec leur composant, pas avant — c'est la
 // décision prise avec le déménagement des globales (#135).
 
-import type { Filtres } from "./types.ts";
+import type { Filtres, FiltresVolume } from "./types.ts";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
 
@@ -20,8 +20,16 @@ const val = (id: string): string => $(id)?.value ?? "";
 /** L'état d'une case. */
 const coche = (id: string): boolean => !!($(id) as HTMLInputElement | null)?.checked;
 
-/** Les quatorze contrôles de la barre, lus d'un coup. */
-export function readFilters(): Filtres {
+/**
+ * Les quatorze contrôles de la barre, lus d'un coup.
+ *
+ * Le type de retour croise `FiltresVolume`, dont les cinq champs sont OPTIONNELS dans `Filtres` —
+ * parce que d'autres appelants en construisent des morceaux — mais que cette fonction-ci écrit
+ * TOUJOURS, toutes les cinq, sans branche. Le dire permet de passer le résultat directement à
+ * `routeMetrics`/`loopMetrics`/`computeUnits`, qui les exigent : sans ça, chaque vue migrée devrait
+ * poser un cast, c'est-à-dire affirmer sans preuve ce qui se lit ici en quatre lignes.
+ */
+export function readFilters(): Filtres & FiltresVolume {
   return {
     cargo: Math.max(0, Number(val("cargo")) || 0),
     budget: Math.max(0, Number(val("budget")) || 0),

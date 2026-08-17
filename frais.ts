@@ -123,7 +123,15 @@ export function feeCargoText(lines: LigneManifeste[], maxBox?: number): string {
 // resté brut au milieu d'une colonne nette, sans un mot, se lit comme un bug. Le marqueur ne va que
 // sur la colonne « profit » : le répéter sur « profit/heure » doublerait le bruit sans rien ajouter.
 const CELLULE_SANS_FRAIS: CelluleFrais = { mark: "", text: "" };
-export function feeCell(ctx: ReturnType<typeof feeCtx>, fees: number, what: () => string, bounded: boolean): CelluleFrais {
+/**
+ * Ce que `feeCtx` rend : les deux extrémités facturantes, ou `null` quand l'interrupteur est éteint
+ * ou le marché pas encore là. Nommé pour que les vues puissent le TRANSPORTER — elles le reçoivent
+ * de leur calcul et le repassent à `feeCell` sans jamais le lire, et le typer `unknown` les
+ * obligeait à un cast pour rendre une cellule.
+ */
+export type ContexteFrais = ReturnType<typeof feeCtx>;
+
+export function feeCell(ctx: ContexteFrais, fees: number, what: () => string, bounded: boolean): CelluleFrais {
   if (!ctx || !bounded) return CELLULE_SANS_FRAIS;
   const text = fees > 0
     ? `Frais d'autoload ≈ ${fmt(fees)} aUEC déduits — ${what()} · ${feeEndText(ctx.a)} · ${feeEndText(ctx.b)} · estimation ±3 %`
