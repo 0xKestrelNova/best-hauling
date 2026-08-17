@@ -1975,6 +1975,77 @@ test("le mode Butin survit au rechargement (permalien)", async ({ page }) => {
   expect(await page.locator("#commGrid .comm-tile.sell-only").count()).toBeGreaterThan(0);
 });
 
+// Le bouton de tri ACTIF n'avait aucun test, alors que celui du board en a deux. Ce n'est pas un
+// oubli anodin : cette mutation-là vit dans `renderCommodities` et non dans `syncCommBoardUI`,
+// donc on la rate exactement en ne reprenant que la seconde. « Marge » resterait allumé après un
+// clic sur « Catégorie », et la suite entière serait verte.
+test("board : le bouton de tri actif suit le mode choisi, et le tri change vraiment l'ordre", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+  await expect(page.locator('#commSortModes button[data-sort="margin"]')).toHaveClass(/active/);
+
+  const codes = () => page.locator("#commGrid .comm-tile .tile-code").allTextContents();
+  const parMarge = await codes();
+
+  await page.click('#commSortModes button[data-sort="kind"]');
+  await expect(page.locator('#commSortModes button[data-sort="kind"]')).toHaveClass(/active/);
+  await expect(page.locator('#commSortModes button[data-sort="margin"]')).not.toHaveClass(/active/);
+  expect(await codes()).not.toEqual(parMarge);
+
+  // « Code A→Z » n'était touché par aucun test non plus, et c'est le seul tri alphabétique.
+  await page.click('#commSortModes button[data-sort="code"]');
+  await expect(page.locator('#commSortModes button[data-sort="code"]')).toHaveClass(/active/);
+  await expect(page.locator('#commSortModes button[data-sort="kind"]')).not.toHaveClass(/active/);
+  const parCode = await codes();
+  expect(parCode).not.toEqual(parMarge);
+  expect([...parCode]).toEqual([...parCode].sort((a, b) => a.localeCompare(b, "fr")));
+});
+
+// La sélection était ÉCRITE pendant le rendu : `renderCommodities` remplaçait `etat.commSelected`
+// par la première ligne visible dès que la commodité choisie sortait du filtre. Elle était donc
+// perdue pour de bon — effacer le filtre ne la ramenait pas. C'est aussi l'un des trois chemins
+// qu'`etat.ts` cite pour refuser un magasin qui notifierait à l'écriture.
+test("board : la commodité choisie revient quand on efface le filtre qui la masquait", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+
+  // On choisit une tuile qui n'est PAS la première : sinon la revalidation la « retrouverait »
+  // par accident, et le test ne prouverait rien.
+  const tuile = page.locator("#commGrid .comm-tile").nth(3);
+  const nom = await tuile.getAttribute("data-name");
+  await tuile.click();
+  await expect(page.locator(`#commGrid .comm-tile[data-name="${nom}"]`)).toHaveClass(/selected/);
+  await expect(page.locator("#commDetail .comm-detail-title")).toContainText(nom);
+
+  // Un filtre qui l'exclut : le détail montre forcément autre chose.
+  await page.fill("#search", "zzzz");
+  await expect(page.locator("#commGrid .comm-tile")).toHaveCount(0);
+
+  await page.fill("#search", "");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible();
+  await expect(page.locator("#commDetail .comm-detail-title")).toContainText(nom);
+  await expect(page.locator(`#commGrid .comm-tile[data-name="${nom}"]`)).toHaveClass(/selected/);
+});
+
+// `#commHint` n'apparaissait dans AUCUN test. Son texte est écrit DEUX FOIS — en dur dans
+// index.html pour le premier affichage, et en JSX pour les rendus suivants — et l'écart entre les
+// deux, comme le doublon si l'un des deux cesse d'effacer l'autre, est purement visuel.
+test("board : l'aide suit le mode, et ne s'affiche jamais en double", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+
+  await expect(page.locator("#commHint")).toContainText("board de marché");
+  await expect(page.locator("#commHint")).not.toContainText("tout ce qui se vend");
+  expect(await page.locator("#commHint").evaluate((e) => e.childElementCount)).toBeLessThan(8);
+  const longueurMarche = (await page.locator("#commHint").innerText()).length;
+
+  await page.click('#commBoardModes button[data-board="loot"]');
+  await expect(page.locator("#commHint")).toContainText("tout ce qui se vend");
+  await expect(page.locator("#commHint")).not.toContainText("board de marché");
+  // Le doublon se verrait ici : deux aides superposées font un texte deux fois plus long.
+  expect((await page.locator("#commHint").innerText()).length).toBeLessThan(longueurMarche * 2);
+});
+
 // ---------- Régressions du mode Butin (PR #37) ----------
 
 test("Butin : deux tuiles ne portent jamais la même étiquette (code UEX non unique)", async ({ page }) => {

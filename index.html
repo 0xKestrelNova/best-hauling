@@ -352,7 +352,11 @@
               <button type="button" data-sort="kind">Catégorie</button>
             </div>
           </div>
-          <p class="enroute-hint" id="commHint">Le <b>board de marché</b> : chaque tuile = une commodité (code UEX) et sa <b>marge max</b>, colorée selon son intérêt. Clique une tuile — ou cherche via le champ <b>Commodité</b> — pour voir <b>tous ses points d'achat / vente</b> (stock, demande, prix) et surtout <b>où l'écouler</b> quand une station est saturée.</p>
+          <!-- VIDE, et c'est délibéré : l'aide est rendue par `vues/commodites-vue.tsx` à travers
+               un portail, et `createPortal` AJOUTE ses enfants là où `createRoot` effaçait. Y
+               laisser le texte en dur afficherait DEUX aides superposées dès le premier rendu.
+               Elle était de toute façon dupliquée mot pour mot dans `commodites.tsx`. -->
+          <p class="enroute-hint" id="commHint"></p>
         </section>
 
         <div id="commodities" class="commodities-wrap" hidden>

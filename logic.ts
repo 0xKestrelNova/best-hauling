@@ -1339,8 +1339,8 @@ export function resolveCommodity(commodities: Commodite[], query: string | null 
 
 // Codes portés par PLUSIEURS commodités de la liste. Le board n'affiche le code seul que s'il
 // identifie sa commodité : sinon deux tuiles seraient rigoureusement indiscernables à l'écran.
-export function ambiguousCodes(rows: { code?: string }[]): Set<unknown> {
-  const seen = new Set(), dup = new Set();
+export function ambiguousCodes(rows: { code?: string }[]): Set<string> {
+  const seen = new Set<string>(), dup = new Set<string>();
   for (const r of rows) {
     if (!r.code) continue;
     if (seen.has(r.code)) dup.add(r.code);
