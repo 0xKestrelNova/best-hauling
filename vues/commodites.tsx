@@ -27,13 +27,16 @@ export type ProprietesGrille = {
   transportees: Set<string>;
   /** Les codes UEX qui désignent PLUSIEURS commodités : ils ne peuvent pas servir d'étiquette. */
   codesAmbigus: Set<string>;
-  /** La classe de heatmap, calculée par app.js : elle diffère selon le board (rang en Butin,
-   *  ratio à la marge max en Marché) et l'une des deux lit une globale. */
+  /** La classe de heatmap : elle diffère selon le board — rang en Butin, ratio à la marge max du
+   *  board entier en Marché. La vue la fournit, la présentation ne connaît ni l'une ni l'autre. */
   palier: (c: ResumeCommodite) => string;
   valeurCompacte: (n: number) => string;
+  /** Choisir une tuile. C'était une délégation posée sur `#commGrid` : la tuile est un vrai
+   *  `<button>`, elle porte donc son propre geste depuis que la vue vit dans l'arbre. */
+  choisir: (nom: string) => void;
 };
 
-function Tuile({ c, butin, selection, transportees, codesAmbigus, palier, valeurCompacte }: {
+function Tuile({ c, butin, selection, transportees, codesAmbigus, palier, valeurCompacte, choisir }: {
   c: ResumeCommodite;
 } & Omit<ProprietesGrille, "lignes">) {
   const val = butin ? c.bestSell : c.margin;
@@ -59,7 +62,7 @@ function Tuile({ c, butin, selection, transportees, codesAmbigus, palier, valeur
   const etiquette = c.code && !codesAmbigus.has(c.code) ? c.code : c.name;
 
   return (
-    <button className={classes} data-name={c.name} title={title}>
+    <button className={classes} data-name={c.name} title={title} onClick={() => choisir(c.name)}>
       <span className="tile-code">
         {transportee ? <span className="tile-carried" title="Dans ton voyage">◆</span> : null}
         {etiquette}

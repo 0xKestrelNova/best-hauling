@@ -76,9 +76,7 @@ export interface Etat {
   sortDir: number;                  // -1 = décroissant, 1 = croissant
   loopSortKey: string;
   loopSortDir: number;
-  commMode: string;                 // margin | code | kind | custom
-  commSortKey: string;
-  commSortDir: number;
+  commMode: string;                 // margin | code | kind
   commSelected: string | null;
   commBoard: BoardCommodites;
   venteEnCours: string | null;      // commodité dont le champ « vendu » est ouvert
@@ -112,8 +110,6 @@ export const etat: Etat = {
   loopSortKey: "profit",
   loopSortDir: -1,
   commMode: "margin",
-  commSortKey: "margin",
-  commSortDir: -1,
   commSelected: null,
   commBoard: "market",
   venteEnCours: null,

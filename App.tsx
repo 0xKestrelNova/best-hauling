@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { etat, getSnapshot, subscribe } from "./etat.ts";
 import { VueTourneeEcoulement } from "./vues/tournee-vue.tsx";
 import { CorpsPlan, EnTetePlan } from "./vues/plan-vue.tsx";
+import { VueCommodites } from "./vues/commodites-vue.tsx";
 
 /**
  * Rend `children` dans le conteneur `id`, et SEULEMENT si la vue `si` est celle qu'on regarde.
@@ -50,6 +51,10 @@ export function App() {
           un élément à écouteurs directs se déménage en frère, jamais en enfant (leçon de #24). */}
       <Portail id="planHead" si="plan"><EnTetePlan /></Portail>
       <Portail id="planBody" si="plan"><CorpsPlan /></Portail>
+      {/* Trois conteneurs, mais UN composant — et donc pas de `<Portail si=…>` ici : la garde de
+          vue est faite en tête de `VueCommodites`, AU-DESSUS du calcul. La répéter sur trois
+          portails frères ferait recalculer tout le marché trois fois (ADR-012 §3). */}
+      <VueCommodites />
     </>
   );
 }

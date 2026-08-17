@@ -8,7 +8,7 @@ import {
   ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
   routePasses, loopPasses,
   routeMetrics, loopMetrics, enRouteDeals, bestManifest, buildChainAdjacency, suggestionsFrom, netMarginRoi,
-  commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
+  commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
   multiTrips, tripMetrics, legFromTrip,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
@@ -44,7 +44,10 @@ import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines,
 import { vueTournee, messageSouteVide, messageChargement, messageOuEsTu } from "./vues/tournee.tsx";
 import { vueBoucles } from "./vues/boucles.tsx";
 import { vueChaine, indiceDepart, indiceSoute, indiceAucune } from "./vues/chaine.tsx";
-import { vueGrilleCommodites, aideBoard, vueDetailCommodite, inviteDetail } from "./vues/commodites.tsx";
+// La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
+// `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
+// ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
+import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
 import { vueStation, vueBandeCorrections, inviteStation } from "./vues/corrections.tsx";
 import { enTetePlan, corpsPlan } from "./vues/plan.tsx";
 import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
@@ -53,7 +56,7 @@ import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
 import { carteParcours } from "./vues/carte.tsx";
 import { carteDeclaration } from "./vues/declaration.tsx";
-import { KIND_ICON } from "./vues/communs.tsx";
+import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
 // `maxBox` = plafond de caisse du terminal de CHARGEMENT, quand on le connaît : c'est une propriété
@@ -73,16 +76,10 @@ const cargoBoxesLabel = (lines, maxBox) => boxesLabel(cargoBoxes(lines, maxBox))
 // Tri par défaut : le PROFIT NET par voyage (ADR-005). Le score composite classait mal — la route
 // la plus rentable de l'instantané tombait au 8e rang — et le profit horaire repose sur une durée
 // fictive pour 49 % des routes, faute de distance. Un montant, lui, ne ment pas.
-// Vue « Commodités » : mode de tri (margin|code|kind|custom), clé/sens custom, sélection.
-let shownCommodities = [];
-// Board « Commodités » : "market" = marge achat→vente ; "loot" = prix de revente d'une ressource
-// trouvée (le coût d'acquisition est nul, la marge n'a plus de sens).
-let commTiers = new Map();
-// Codes UEX portés par plusieurs commodités du board courant : leurs tuiles affichent le nom,
-// sinon elles seraient rigoureusement identiques à l'écran (COPP = Copper ET Copper (Ore)).
-let commDupCodes = new Set();
-let commMaxMargin = 0; // marge max de la liste courante (pour colorer la heatmap en relatif)
-let commCarried = new Set(); // commodités transportées au moins 1 fois dans le voyage (highlight board)
+// Les CINQ caches de rendu du board Commodités — `shownCommodities`, `commTiers`, `commDupCodes`,
+// `commMaxMargin`, `commCarried` — sont devenus des variables locales de `vues/commodites-vue.tsx`.
+// Ils n'existaient que parce qu'une fonction calculait et que trois autres peignaient ; un composant
+// qui fait les deux dans la même passe n'en a pas besoin. Aucun n'avait de lecteur hors de la vue.
 // Compagnon de voyage : parcours sélectionné { legs[], current } ou null.
 // Affiche la carte du vaisseau correspondant au champ (défini par loadShips ; utilisé à la restauration).
 let showShipCard = () => {};
@@ -117,9 +114,8 @@ function lineFreshUpdated(l) {
   return b && s ? Math.min(b, s) : b || s || 0;
 }
 
-// Légendes de statut d'inventaire UEX (couleurs officielles).
-const BUY_STATUS = { 1: ["Vide", "red"], 2: ["Très bas", "red"], 3: ["Bas", "orange"], 4: ["Moyen", "blue"], 5: ["Élevé", "blue"], 6: ["Très élevé", "green"], 7: ["Plein", "green"] };
-const SELL_STATUS = { 1: ["Forte demande", "green"], 2: ["Bonne demande", "green"], 3: ["Demande correcte", "blue"], 4: ["Demande moyenne", "blue"], 5: ["Demande faible", "orange"], 6: ["Demande très faible", "red"], 7: ["Saturé (aucune demande)", "red"] };
+// `BUY_STATUS` et `SELL_STATUS` sont passées dans `vues/communs.tsx`, à côté de la pastille qui les
+// lit : app.js ne faisait que les repasser en props à deux vues.
 
 // ---------- Corrections locales (prix & stock) ----------
 // L'utilisateur peut corriger un prix ou un volume (stock à l'achat / demande à la vente)
@@ -1705,7 +1701,6 @@ function refresh() {
   else if (etat.view === "enroute") renderEnRoute();
   else if (etat.view === "chain") renderChain();
   else if (etat.view === "corrections") renderCorrections();
-  else if (etat.view === "commodities") renderCommodities();
   // La vue Trajets est NOMMÉE, elle n'est plus le repli. Les deux vues qui vivent dans l'arbre
   // (Tournée, Plan de vol) tombaient ici : `render()` recalculait tout le tableau des trajets pour
   // le repeindre dans un `<tbody>` masqué — et reposait `#empty`, qui est un frère de `#routes` et
@@ -2215,137 +2210,15 @@ function renderCorrections() {
   notifySuperseded();
 }
 
-// ---------- Vue « Commodités » : grand tableau + tous les points d'achat/vente ----------
-// Tri du tableau : 3 modes prédéfinis (boutons) + tri par colonne (clic en-tête).
-function sortCommodities(rows) {
-  // La « valeur » d'une tuile dépend du board : marge en Marché, prix de revente en Butin.
-  const vk = etat.commBoard === "loot" ? "bestSell" : "margin";
-  if (etat.commMode === "margin") return rows.sort(bySort(vk, -1));                        // plus lucratif d'abord
-  if (etat.commMode === "code") return rows.sort(bySort("code", 1));                        // code A→Z
-  if (etat.commMode === "kind")                                                             // catégorie puis valeur
-    return rows.sort((a, b) => (a.kind || "").localeCompare(b.kind || "", "fr") || (b[vk] ?? -Infinity) - (a[vk] ?? -Infinity));
-  return rows.sort(bySort(etat.commSortKey, etat.commSortDir));                                  // colonne (mode custom)
-}
+// ---------- Vue « Commodités » ----------
+// `marginTier` est passée dans `logic.ts` sous le nom `palierMarge`, avec le maximum en PARAMÈTRE
+// au lieu de la globale `commMaxMargin` — et donc testable unitairement, ce qu'elle n'était pas.
 
-// Applique un tri (bouton mode ou clic en-tête) et re-rend.
-function setCommSort(key) {
-  if (key === "margin" || key === "code" || key === "kind") {
-    etat.commMode = key;
-  } else {
-    if (etat.commMode === "custom" && etat.commSortKey === key) etat.commSortDir *= -1;
-    else { etat.commSortKey = key; etat.commSortDir = key === "bestBuy" || key === "name" || key === "code" ? 1 : -1; }
-    etat.commMode = "custom";
-  }
-  renderCommodities();
-  saveState();
-  notifier(); // idem : hors `refresh()`
-}
-
-// Palier de couleur d'une tuile, RELATIF à la meilleure marge de la liste (heatmap :
-// rouge = tête de peloton → bleu correct → gris atone → sans marge). S'adapte aux données.
-function marginTier(m) {
-  if (m == null || m <= 0) return "t-none";
-  const r = commMaxMargin > 0 ? m / commMaxMargin : 0;
-  if (r >= 0.66) return "t-hot";
-  if (r >= 0.40) return "t-warm";
-  if (r >= 0.18) return "t-mid";
-  return "t-low";
-}
-
-// Une tuile du board : code UEX + valeur compacte (K/M), colorée par palier.
-// En Marché la valeur est la marge (heatmap linéaire) ; en Butin le prix de revente
-// (heatmap par rang, cf. valueTiers — les prix s'étalent sur cinq ordres de grandeur).
-// `commodityTileHTML` a été remplacé par vues/commodites.tsx.
-// Détail d'une commodité : tous ses points d'achat (moins cher d'abord) et de vente (mieux payé
-// d'abord). En mode Butin, l'achat n'a pas de sens : on ne garde que « où l'écouler ».
-function paintCommodityDetail() {
-  const box = $("commDetail");
-  const loot = etat.commBoard === "loot";
-  if (!etat.commSelected) { peindre(box, inviteDetail(loot)); return; }
-  // `effVals` : le détail affiche les valeurs CORRIGÉES, comme les tableaux. Et puisqu'elles le
-  // sont, elles passent par une valeur éditable — clic pour corriger sur place. Le board est ainsi
-  // le point d'entrée naturel pour rectifier un prix « chez toutes les stations qui la vendent ».
-  const p = commodityPoints(etat.MARKET, etat.commSelected, readFilters(), effVals);
-  if (!p) { peindre(box, null); return; }
-  peindre(box, vueDetailCommodite({
-    points: p,
-    nomCommodite: p.name,
-    butin: loot,
-    estCorrige: (terminal, cote, champ) => isOv(p.name, terminal, cote, champ),
-    // Le détail ferme sur SA commodité et laisse varier le terminal — l'exact inverse de la vue
-    // Corrections. Cinq arguments là aussi, et l'enveloppe les remet dans l'ordre du module.
-    corriger: (terminal, cote, champ, valeur, releve) => corriger(p.name, terminal, cote, champ, valeur, releve),
-    legendeAchat: BUY_STATUS,
-    legendeVente: SELL_STATUS,
-  }));
-}
-// Reflète le board courant dans les contrôles. « Marge » n'a aucun sens quand l'acquisition est
-// gratuite : le premier bouton de tri devient « Revente ».
-function syncCommBoardUI() {
-  const loot = etat.commBoard === "loot";
-  document.querySelectorAll("#commBoardModes button").forEach((b) => b.classList.toggle("active", b.dataset.board === etat.commBoard));
-  const first = document.querySelector('#commSortModes button[data-sort="margin"]');
-  if (first) first.textContent = loot ? "Revente" : "Marge";
-  peindre($("commHint"), aideBoard(loot));
-}
-
-function setCommBoard(board) {
-  if (board !== "market" && board !== "loot") return;
-  if (board === etat.commBoard) return;
-  etat.commBoard = board;
-  renderCommodities(); // la sélection courante est revalidée par le rendu (elle peut disparaître)
-  saveState();
-  notifier(); // idem : hors `refresh()`
-}
-
-// La grille, peinte à part : la sélection d'une tuile la repeint SANS tout recalculer. Avant React,
-// la délégation basculait la classe `selected` à la main sur les nœuds — une mutation qu'un arbre
-// React ne voit pas, et qu'il écraserait au rendu suivant sans savoir qu'elle avait eu lieu.
-function peindreGrilleCommodites() {
-  peindre($("commGrid"), vueGrilleCommodites({
-    lignes: shownCommodities,
-    butin: etat.commBoard === "loot",
-    selection: etat.commSelected,
-    transportees: commCarried,
-    codesAmbigus: commDupCodes,
-    // La heatmap est calculée par app.js : celle du Marché lit une globale (commMaxMargin), celle
-    // du Butin vient de logic.ts (valeurTiers, par rang). L'îlot ne connaît ni l'une ni l'autre.
-    palier: (c) => (etat.commBoard === "loot" ? commTiers.get(c.name) || "t-none" : marginTier(c.margin)),
-    valeurCompacte: compactValue,
-  }));
-}
-
-function renderCommodities() {
-  if (!etat.MARKET) { withMarket(refresh); return; }
-  if (!enrouteReady) setupEnRoute();
-  const f = { ...readFilters(), board: etat.commBoard };
-  const q = f.q;
-  // `effVals` : marge, couleur de tuile et rang suivent les corrections locales. Sans lui, la tuile
-  // continuait d'afficher la marge d'UEX après qu'on ait corrigé le prix dans un tableau.
-  const all = commoditySummaries(etat.MARKET, f, effVals); // légales + avant-postes + board s'appliquent ici
-  // Les DEUX heatmaps se calculent sur TOUT le board, jamais sur le sous-ensemble visible : la
-  // couleur d'une tuile prétend situer la commodité dans l'ensemble du marché. Calculée après le
-  // filtre de recherche, taper « iron » suffisait à repeindre Iron (3 900 aUEC/SCU, le bas du
-  // classement) en `t-hot`, le palier réservé aux 15 % les mieux payés — rang 0 sur 1 ligne restante.
-  commMaxMargin = all.reduce((mx, c) => Math.max(mx, c.margin || 0), 0); // heatmap relative (Marché)
-  commTiers = etat.commBoard === "loot" ? valueTiers(all) : new Map();        // heatmap par rang (Butin)
-  const rows = all.filter(
-    (c) => !q || c.name.toLowerCase().includes(q) || (c.code && c.code.toLowerCase().includes(q))
-  );
-  sortCommodities(rows);
-  shownCommodities = rows;
-  commDupCodes = ambiguousCodes(rows);                                    // codes UEX non discriminants
-  commCarried = journeyCarriedCommodities(); // commodités du voyage à surligner
-  // Sélection : garde la commodité choisie si toujours visible, sinon prend la 1re.
-  if (etat.commSelected && !rows.some((r) => r.name === etat.commSelected)) etat.commSelected = null;
-  if (!etat.commSelected && rows.length) etat.commSelected = rows[0].name;
-  peindreGrilleCommodites();
-  // Bouton de mode de tri actif.
-  document.querySelectorAll("#commSortModes button").forEach((b) => b.classList.toggle("active", b.dataset.sort === etat.commMode));
-  syncCommBoardUI();
-  paintCommodityDetail();
-  notifySuperseded();
-}
+// Toute la vue Commodités vit désormais dans `vues/commodites-vue.tsx` : la grille, le détail et
+// l'aide y sont rendus par UN composant, dans trois portails (ADR-012 §3). Sont partis d'ici :
+// `paintCommodityDetail`, `syncCommBoardUI`, `setCommBoard`, `setCommSort`, `sortCommodities`,
+// `peindreGrilleCommodites` et `renderCommodities` — plus les cinq caches de rendu du board, qui
+// n'avaient aucun lecteur ailleurs et sont devenus des variables locales du composant.
 
 // Grise le champ soute/budget quand sa contrainte est désactivée.
 function syncToggles() {
@@ -2426,15 +2299,10 @@ async function init() {
   // Contrôles « Commodités » : modes de tri + sélection d'une tuile.
   $("commSortModes").addEventListener("click", (e) => { const b = e.target.closest("button[data-sort]"); if (b) setCommSort(b.dataset.sort); });
   $("commBoardModes").addEventListener("click", (e) => { const b = e.target.closest("button[data-board]"); if (b) setCommBoard(b.dataset.board); });
-  $("commGrid").addEventListener("click", (e) => {
-    const tile = e.target.closest(".comm-tile");
-    if (!tile) return;
-    etat.commSelected = tile.dataset.name;
-    peindreGrilleCommodites();
-    paintCommodityDetail();
-    saveState();
-    notifier(); // idem : hors `refresh()`
-  });
+  // La délégation sur `#commGrid` est partie avec la vue : la tuile est un vrai `<button>`, elle
+  // porte donc son propre `onClick`. La laisser doublerait l'action, ce que seul le compteur de
+  // propagations aurait vu. Les deux au-dessus restent : leurs `<div>` sont du markup d'index.html
+  // qu'aucun portail ne possède, et leurs boutons sont statiques (ADR-012 §2).
   // Contrôles « En route ». Ces champs de terminal sont eux aussi à SAISIE LIBRE (datalist, mais
   // rien n'oblige à choisir dans la liste) : même debounce que ci-dessus. Sans lui, chaque frappe
   // re-rendait la vue ET réécrivait le hash — or WebKit plafonne history.replaceState à 100 appels
@@ -2772,7 +2640,7 @@ async function init() {
     // Applique l'état restauré une fois le menu système peuplé, puis affiche la bonne vue.
     // Les trois synchros d'interface restent ici ; le module les appelle DANS le verrou de
     // restauration, pour qu'aucune ne puisse resauver au milieu.
-    applyState(saved, () => { applySortIndicators(); syncToggles(); syncCommBoardUI(); });
+    applyState(saved, () => { applySortIndicators(); syncToggles(); refletBoardCommodites(); });
     showShipCard(); // ré-affiche la carte du vaisseau restauré (image comprise)
     // Le compagnon de voyage vient d'un permalien, donc de données non fiables. S'il échoue, il ne
     // doit pas emporter TOUTE l'app dans le catch ci-dessous, qui accuserait alors data/routes.json
