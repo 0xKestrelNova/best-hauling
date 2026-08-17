@@ -132,11 +132,22 @@ function LigneSimple({ r, celluleFrais, suspect, libelleCaisses, choisirTrajet, 
   );
 }
 
+// La CLÉ D'UNE LIGNE SIMPLE. `key={i}` était un piège dès qu'une ligne porte un état : après un
+// re-tri, la ligne *i* est un AUTRE trajet, et React réutilise l'instance à sa place — donc son
+// éditeur ouvert. `clore()` lit alors les props COURANTES, et la correction part sur la mauvaise
+// commodité (#128). Le déclencheur doit seulement éviter de blurrer l'input, ce qu'une frappe
+// débouncée dans un autre champ fait très bien.
+//
+// Le triplet est unique par construction : `routes.json` ne porte qu'une ligne par
+// (commodité, comptoir d'achat, comptoir de vente) — 316/316 vérifiées — et `enRouteDeals` ne garde
+// qu'UNE vente par commodité depuis un départ donné.
+const cleLigne = (r: LigneTrajet) => `${r.commodity}|${r.buy.terminal}|${r.sell.terminal}`;
+
 export function VueTrajets({ lignes, celluleFrais, suspect, libelleCaisses, choisirTrajet, ...c }: ProprietesTrajets) {
   return (
     <>
-      {lignes.map((r, i) => (
-        <LigneSimple key={i} r={r} celluleFrais={celluleFrais} suspect={suspect}
+      {lignes.map((r) => (
+        <LigneSimple key={cleLigne(r)} r={r} celluleFrais={celluleFrais} suspect={suspect}
                      libelleCaisses={libelleCaisses} choisirTrajet={choisirTrajet} {...c} />
       ))}
     </>

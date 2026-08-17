@@ -31,7 +31,6 @@ import { MESSAGE_VIDE, messageVide } from "./message-vide.ts";
 import { propsLignesSimples, propsTrajetsCommunes } from "./trajets-props.tsx";
 import { VueTrajets, VueTrajetsMulti } from "./trajets.tsx";
 
-// Fraîcheur d'une ligne de manifeste = le plus ancien des relevés achat/vente (ou l'un des deux).
 /** Applique les corrections à une paire buy/sell et rend des copies patchées + marge/ROI. */
 function applyOverrides(commodity: string, buy: Route["buy"], sell: Route["sell"]) {
   const b = effVals(commodity, buy.terminal, "buy", buy.price, buy.stock, buy.updated);

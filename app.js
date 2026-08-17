@@ -50,7 +50,7 @@ import { figerJambe, jambeChargee, journeyCarriedCommodities, legEffectiveLines,
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
 import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
-import { vueTrajets, vueTrajetsMulti } from "./vues/trajets.tsx";
+import { vueTrajets } from "./vues/trajets.tsx";
 import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
 import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
 import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
@@ -161,7 +161,6 @@ function fiabiliteCell(f, age, part) {
 // Message de #empty tel qu'il est écrit dans index.html. Le <p> est PARTAGÉ par les vues Trajets /
 // Boucles / En route, et « En route » comme le mode multi-commodité réécrivent son texte : sans
 // remise à zéro en tête de rendu, un état vide légitime affichait le message d'une AUTRE vue.
-const EMPTY_DEFAULT = "Aucune route ne correspond aux filtres.";
 
 // Ce que les deux modes de Trajets partagent. app.js garde l'ÉTAT — les frais dépendent de
 // l'interrupteur d'autoload et des relevés par station, l'écriture d'une correction doit figer les
@@ -621,7 +620,7 @@ function renderManifest(origin, destSystem, f, destTerminal) {
 function renderEnRoute() {
   // #empty est PARTAGÉ avec Trajets / Boucles, et cette vue n'a encore rien de VRAI à y écrire :
   // ce n'est pas un filtre qui vide le tableau, c'est le marché qui manque. Symétrie du
-  // EMPTY_DEFAULT posé en tête de render() / renderLoops() (#55), qui manquait ici parce que le
+  // Le message par défaut posé en tête des vues à tableau (#55) manquait ici parce que le
   // retour anticipé précède toute écriture — et withMarket ne re-rend PAS en cas d'échec, donc le
   // message de la vue quittée y serait resté pour de bon, sous le toast « Marché indisponible ».
   if (!etat.MARKET) { $("empty").hidden = true; withMarket(refresh); return; }

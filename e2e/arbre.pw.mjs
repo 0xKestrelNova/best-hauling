@@ -145,3 +145,34 @@ test("Chargement : le marché arrivé, aucun rendu ne se déguise en panne rése
   // Aucun toast d'indisponibilité : il ne peut venir que du `.catch` de `withMarket`.
   await expect(page.locator("#toast.show")).toHaveCount(0);
 });
+
+// #128 : `key={i}` ancre l'état d'édition au RANG de la ligne, pas au trajet. Un re-rendu qui
+// reclasse le tableau — un filtre tapé, un tri — laisse donc l'éditeur ouvert à la même PLACE, sur
+// un autre trajet, et `clore()` lit les props COURANTES : la correction part sur la mauvaise
+// commodité.
+//
+// Le déclencheur ne doit surtout PAS déplacer le focus : l'input porte `onBlur={() => clore(true)}`,
+// donc cliquer un en-tête de tri ou le champ de recherche referme l'éditeur AVANT le reclassement —
+// et le test passerait sans rien prouver. On dispatche donc `input` en JS, sans toucher au focus.
+test("Trajets : une correction ouverte pendant un re-tri reste sur SA commodité (#128)", async ({ page }) => {
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  // Une ligne qui n'est pas la première : la tête de liste bouge moins au filtrage.
+  const cellule = page.locator("#rows tr").nth(4).locator('.editv[data-s="buy"][data-f="price"]').first();
+  const commodite = await cellule.getAttribute("data-c");
+  await cellule.click();
+  await expect(page.locator("#rows .editv input")).toHaveCount(1);
+
+  // Re-tri SANS blur : la valeur est posée et l'événement dispatché en JS.
+  await page.$eval("#search", (el) => {
+    el.value = "a";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page).toHaveURL(/search=a/, { timeout: 10000 });
+
+  // L'éditeur, s'il est encore ouvert, doit l'être sur LA MÊME commodité.
+  const ouvert = page.locator("#rows .editv:has(input)");
+  if (await ouvert.count()) {
+    await expect(ouvert.first(), "l'éditeur a changé de commodité sous les doigts").toHaveAttribute("data-c", commodite);
+  }
+});
