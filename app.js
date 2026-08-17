@@ -2,62 +2,56 @@
 
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import {
-  tripMinutes, ageDays, lineFreshUpdated, pairAge,
-  scoreBarWidth, bySort, addableUnits, scuBoxes, cargoBoxes,
-  kFromReading, kPlausible,
-  ovKey, groupOverridesByTerminal, safeKey, encodeState, decodeState,
-  routePasses,
-  routeMetrics, enRouteDeals, bestManifest, suggestionsFrom, netMarginRoi,
-  commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
-  manifestTotals, freeAddUnits, manifestLine, freeManifestLine, hydrateManifestLine, stationLabel, parseStationLabel, stationTree,
-  multiTrips, tripMetrics, legFromTrip,
-  legFromRoute, legFromManifest, stopSuggestions, bestLegBetween,
-  manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives,
-  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, refuseHere, refusActif, migrerRefus, sellableAt, sellAllAt,
-  offloadPlan, tourneesEcoulement, storeFromHold, takeFromStore, stockApres,
-  startJourney, startJourneyAt, journeyStations, journeyEnd,
-  journeyConnects, setJourneyPosition, journeyMargin,
-  removeJourneyStop as removeStopPure,
-  reindexerRangsJambe, detacherLotsDeJambe,
-  soldeDuPoint, poserChargement, retirerChargement, migrerChargements,
-  encodeJourney, decodeJourney,
-  migrerCorrections, exporterCorrections, exporterEntrepots,
+  ageDays, pairAge, scoreBarWidth, addableUnits, scuBoxes, cargoBoxes, kFromReading, kPlausible, ovKey, safeKey, routeMetrics, enRouteDeals, bestManifest, palierMarge, manifestTotals, freeManifestLine, hydrateManifestLine, stationLabel, stationTree, manifestJourneyState, offloadPlan, exporterCorrections, exporterEntrepots,
 } from "./logic.ts";
 // Le premier îlot React (ADR-008, #96). `peindre` remplace `innerHTML` sur le conteneur de la
 // Tournée, et RIEN d'autre ne change : app.js reste le seul écrivain de l'état, refresh() reste
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
-import { fmt, fmtVol, fmtFee, scuBoxesLabel, signe, TEXTE_CAPACITE_INCONNUE } from "./format.ts";
+import { fmt, fmtFee, scuBoxesLabel, signe } from "./format.ts";
 import { readFilters } from "./filtres.ts";
-import { effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import {
+  effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride,
+} from "./corrections.ts";
 import { corriger, notifySuperseded, updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { construireIndex, findCommodity, indexArriveeForcee, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName } from "./marche.ts";
-import { alKey, feeCargoText, feeCell, feeCtx, feeEndText, feeLoadText, feeResolver, globalK, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
+import {
+  construireIndex, findCommodity, indexArriveeForcee, indexOrigine, indexStationExacte, libellesOrigines, libellesStations, resolveStationLabel, stationCourante, stationMap, termByName,
+} from "./marche.ts";
+import { alKey, kFmt, lineProfitText, loadAutoloadK, saveAutoloadK } from "./frais.ts";
 import { applyState, loadState, saveState, shareURL } from "./persistance.ts";
-import { brancher, ensureFeeMarket, withMarket } from "./donnees.ts";
+import { brancher, withMarket } from "./donnees.ts";
 import { brancherRendu, rafraichir } from "./rendu.ts";
-import { chargerJambe, declarerABord, deposerIci, ecrireStockDuPoint, loadChargements, loadDepots, loadSoute, pointAchat, poserPosition, reprendreIci, retirerLot, saveChargements, saveDepots, saveSoute, vendreIci, venteImplicite, viderSoute } from "./soute-actions.js";
+import {
+  addLegLine, addLegSuggestion, addStopByTerminal, beginJourney, clearJourney, delLegLine, editLegQty, liveLegQty, manifestToJourney, removeJourneyStop, resetLeg, setJourneyStop, toggleLegEditor,
+} from "./voyage-gestes.js";
+import {
+  chargerJambe, declarerABord, deposerIci, loadChargements, loadDepots, loadSoute, poserPosition, reprendreIci, retirerLot, vendreIci, venteImplicite, viderSoute,
+} from "./soute-actions.js";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
-import { compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
-import { propsLignesSimples, propsTrajetsCommunes } from "./vues/trajets-props.tsx";
-import { evaluate } from "./vues/trajets-vue.tsx";
+import {
+  compositionValide, loadManifestEdit, nouvelleGenerationManifeste, oublierComposition, retenirComposition,
+} from "./manifeste-etat.ts";
+
+
 import { nouvelleGenerationVoyage, pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { monterRacine } from "./main.tsx";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
-import { figerJambe, jambeChargee, journeyEndIndex, legSuggestCtx, journeyCarriedCommodities, legEffectiveLines, legFeeCtx, legIntent, legKey, legManifest, legTerminals, loadJourneyEdits, loadJourneyPins, pinLegsForVolume, saveJourneyEdits, saveJourneyPins } from "./voyage-donnees.ts";
+import {
+  figerJambe, legSuggestCtx, journeyCarriedCommodities, legIntent, loadJourneyEdits, loadJourneyPins, pinLegsForVolume,
+} from "./voyage-donnees.ts";
 // (`vues/tournee.tsx` et `vues/plan.tsx` ne sont plus importés ici : leurs vues vivent dans l'arbre
 // depuis #143 et #145, et seuls leurs composants de DÉCISION les consomment désormais.)
 // La vue Commodités n'expose plus sa présentation à app.js — seulement ses trois ACTIONS, comme
 // `plan-vue.tsx` expose `planData`. Les écouteurs de `#commSortModes` / `#commBoardModes` restent
 // ici : leurs conteneurs sont du markup d'index.html (ADR-012 §2).
 import { refletBoardCommodites, setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
-import { vueTrajets } from "./vues/trajets.tsx";
-import { carteManifeste, indiceSouteInactive, indiceSoutePleine, indiceAucunChargement } from "./vues/manifeste.tsx";
-import { carteSoute, carteEntrepots } from "./vues/soute.tsx";
-import { carteVoyage, recapVoyage, inviteVoyage } from "./vues/voyage.tsx";
-import { carteDeclaration } from "./vues/declaration.tsx";
+
+
+
+
+
 import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 
 // Libellé compact des caisses SCU standard, ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ».
@@ -687,93 +681,26 @@ function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
 // « Je suis ici » : pose la position courante et recale les vues. Deux chemins y mènent — le fil
 // d'étapes textuel (⦿) et les escales de la carte — et c'est délibéré : la carte n'introduit pas
 // une commande, elle en offre une seconde entrée.
-function setJourneyStop(i) {
-  if (!etat.JOURNEY || !Number.isFinite(i)) return;
-  // AVANCER sous-entend qu'on a fait son affaire à l'escale qu'on quitte : ce qu'elle reprend part.
-  // Reculer, non — on ne revend pas en revenant sur ses pas.
-  if (i > etat.JOURNEY.current) venteImplicite(stationCourante());
-  etat.JOURNEY = setJourneyPosition(etat.JOURNEY, i);
-  syncViewsToJourney();
-  refresh();
-}
+
 
 // Pré-remplit les contrôles des vues d'après la POSITION COURANTE du parcours.
 // « Pré-rempli » : on pose les défauts, l'utilisateur reste libre de les changer.
 
-function clearJourney() {
-  etat.JOURNEY = null;
-  // Sans cette purge, les manifestes édités survivaient à l'effacement du voyage et ressortaient
-  // sur un parcours ULTÉRIEUR passant par les mêmes terminaux, badge ✎ compris.
-  etat.JOURNEY_EDITS = {}; saveJourneyEdits();
-  etat.JOURNEY_PINS = {}; saveJourneyPins();
-  // Troisième porteur du rang : l'étiquette posée sur les lots. Le fret, lui, RESTE à bord — le
-  // parcours est un plan, la soute est du fret payé (ADR-002). Sans ce détachement, un voyage
-  // ultérieur dont la jambe 0 relie les deux mêmes terminaux s'affichait « ⬢ à bord », et le clic
-  // déchargeait les lots de l'ancien voyage en restaurant leurs stocks.
-  etat.SOUTE = detacherLotsDeJambe(etat.SOUTE); saveSoute();
-  // Quatrième porteur du rang : le registre des chargements. Plus aucune jambe n'existe, donc plus
-  // rien à décharger — les déductions déjà posées sur les rayons, elles, restent : le fret est bien
-  // parti avec. Comme pour les lots qu'on vient de délier, elles ne sont simplement plus annulables.
-  etat.CHARGEMENTS = {}; saveChargements();
-  etat.journeyExpandedLeg = -1;
-  rafraichir();
-  // Comme tous les autres mutateurs du parcours : la carte Voyage n'est pas la seule à lire JOURNEY.
-  // Les Boucles hissent en tête celles qui partent de la fin du parcours (.from-here) et le board
-  // Commodités marque d'un ◆ ce qu'on transporte — sans ce rendu, les deux gardaient l'état d'AVANT
-  // l'effacement jusqu'au geste suivant. `refresh` finit par `saveState`, inutile de le doubler.
-  refresh();
-}
+
 // `journeyCarriedCommodities`, `figerJambe` et `pinLegsForVolume` sont passées dans
 // `voyage-donnees.ts` : elles ne rendent rien, et le gel doit être appelable depuis une vue de
 // l'arbre (ADR-012). Leurs commentaires les y attendaient déjà, orphelins.
 
 // Engage le manifeste d'« En route » comme nouvelle jambe du voyage (bouton de la carte Manifeste).
 // La garde d'état est REJOUÉE ici : le rendu peut dater d'avant un changement de parcours.
-function manifestToJourney() {
-  const m = chargementCourant();
-  if (!m || !m.lines.length || !etat.MARKET) return;
-  if (manifestJourneyState(etat.JOURNEY, m.origin, m.dest).etat !== "ajouter") return;
-  const intent = manifestIntent(m.lines);
-  pickJourney([legFromManifest(m)], () => {
-    const i = etat.JOURNEY.legs.length - 1;
-    const k = legKey(etat.JOURNEY.legs[i], i);
-    // Ce que legManifest recalculera pour cette jambe. Si le chargement affiché EST celui-là, on ne
-    // persiste rien : la jambe reste branchée sur le marché et sur les filtres, et ne porte pas le
-    // badge ✎ à tort. On impose l'état de la clé dans les DEUX sens, pour qu'une édition laissée
-    // par un voyage abandonné au même rang et au même couple de stations ne vienne pas contredire
-    // le chargement qu'on envoie.
-    const opt = bestManifest(etat.MARKET, m.originIdx, "", m.f, effVals, m.destIdx, feeResolver(m.f));
-    if (sameIntent(intent, manifestIntent(opt ? opt.lines : []))) delete etat.JOURNEY_EDITS[k];
-    else etat.JOURNEY_EDITS[k] = intent;
-    saveJourneyEdits();
-  });
-}
+
 
 // Contexte de manifeste d'une jambe, à la forme attendue par suggestionsFor/manifestRemaining
 // (mêmes suggestions de remplissage qu'« En route »). null si le terminal ou la soute manque.
 
 
 // Actions d'édition d'une jambe (i = index de jambe).
-function toggleLegEditor(i) {
-  etat.journeyExpandedLeg = etat.journeyExpandedLeg === i ? -1 : i;
-  rafraichir();
-  // renderJourney() réécrit tout le compagnon : l'en-tête qu'on vient d'activer n'existe plus et le
-  // focus retombe sur <body>. À la souris ça ne se voit pas ; au clavier on perdait sa place, la
-  // deuxième Entrée (replier) ne partait plus de nulle part et Tab reprenait au début du document.
-  $("journeyCard")?.querySelector(`.jleg-head[data-leg="${i}"]`)?.focus();
-}
-function editLegQty(i, li, val) {
-  // Le voyage peut avoir été effacé entre le focus et le blur (cliquer ✕ blure d'abord le champ) :
-  // sans cette garde, l'édition en vol était réécrite APRÈS la purge et ressuscitait toute seule.
-  if (!etat.JOURNEY || !etat.JOURNEY.legs[i]) return;
-  const intent = legIntent(etat.JOURNEY.legs[i], i, readFilters());
-  if (intent[li]) { const u = Math.floor(Number(val)); intent[li].units = Number.isFinite(u) && u > 0 ? u : 0; }
-  saveJourneyEdits();
-  // Ce handler part sur `change`, donc au BLUR — or le blur précède le mouseup d'un clic en cours.
-  // Re-rendre tout de suite détruirait le nœud visé et avalerait ce clic (impossible d'effacer le
-  // voyage ou de replier une jambe du premier coup). On laisse le tour d'événement se terminer.
-  setTimeout(rafraichir, 0);
-}
+
 // Saisie en direct : met à jour l'intention, puis repeint la carte AVEC LA GÉNÉRATION FIGÉE.
 //
 // L'ancienne version s'interdisait tout re-rendu — « un renderJourney() à chaque frappe ferait
@@ -782,135 +709,43 @@ function editLegQty(i, li, val) {
 // d'un rendu React, qui garde le nœud et n'écrit pas dans un champ non contrôlé. Le seul risque
 // serait que la valeur CALCULÉE reprenne la main sous les doigts : `frappe: true` l'empêche en ne
 // bougeant pas la génération (cf. `renderJourney`).
-function liveLegQty(i, li, inp) {
-  if (!etat.JOURNEY || !etat.JOURNEY.legs[i]) return; // le parcours a pu disparaître sous la saisie
-  const intent = legIntent(etat.JOURNEY.legs[i], i, readFilters());
-  if (!intent[li]) return;
-  const u = Math.floor(Number(inp.value));
-  intent[li].units = Number.isFinite(u) && u > 0 ? u : 0;
-  notifier(); // la frappe ne bouge PAS la génération : le champ garde son nœud et son curseur
-}
+
 
 // Ajoute une commodité suggérée à une jambe, remplie au max possible.
-function addLegSuggestion(i, name) {
-  const leg = etat.JOURNEY.legs[i];
-  const f = readFilters();
-  const ctx = legSuggestCtx(leg, legEffectiveLines(leg, i, f), f);
-  if (!ctx) return;
-  const it = suggestionsFor(ctx).find((x) => x.name === name);
-  if (!it) return;
-  const u = addableUnits(it, manifestRemaining(ctx));
-  if (u <= 0) return;
-  legIntent(leg, i, f).push({ name: it.name, units: u });
-  saveJourneyEdits(); rafraichir();
-}
-function delLegLine(i, name) {
-  const leg = etat.JOURNEY.legs[i];
-  etat.JOURNEY_EDITS[legKey(leg, i)] = legIntent(leg, i, readFilters()).filter((e) => e.name !== name);
-  saveJourneyEdits(); rafraichir();
-}
+
 // « ↺ optimal » lève les deux formes d'intention, l'ajustement manuel comme le gel.
-function resetLeg(i) {
-  const k = legKey(etat.JOURNEY.legs[i], i);
-  delete etat.JOURNEY_EDITS[k]; delete etat.JOURNEY_PINS[k];
-  saveJourneyEdits(); saveJourneyPins(); rafraichir();
-}
+
 // Ajout LIBRE d'une commodité à une jambe (même non vendable à l'arrivée -> ligne « carry-only »).
 // Même règle qu'« En route » : freeManifestLine (logic.mjs) en est la source unique.
-function addLegLine(i, name) {
-  const leg = etat.JOURNEY.legs[i];
-  const c = findCommodity(name);
-  const t = legTerminals(leg);
-  if (!c || !t || !etat.MARKET) return;
-  const f = readFilters();
-  // Le doublon se teste AVANT de matérialiser l'intention : sinon un ajout refusé basculait quand
-  // même la jambe en « éditée » (badge ✎, bouton « ↺ optimal »), et elle cessait silencieusement
-  // de suivre les prix UEX et les filtres alors que rien n'avait été ajouté.
-  if (legEffectiveLines(leg, i, f).some((l) => l.name === c.name)) return;
-  const ctx = legSuggestCtx(leg, legEffectiveLines(leg, i, f), f); // null si soute non bornée -> 1 SCU
-  const ligne = freeManifestLine(etat.MARKET, t.fromIdx, t.toIdx, c, ctx ? manifestRemaining(ctx).cargoLeft : NaN, effVals);
-  legIntent(leg, i, f).push({ name: c.name, units: ligne.units });
-  saveJourneyEdits(); rafraichir();
-}
+
 
 // Index du terminal de FIN de parcours (point d'extension), ou null.
 
 // Meilleure jambe (commodité de marge max) entre deux terminaux, ou null si aucun fret rentable.
 // `readFilters()` fait choisir la vente au profit RÉALISABLE et non au prix affiché : sans lui,
 // la jambe proposée peut viser un terminal déjà saturé, qui n'écoulera qu'une poignée de SCU.
-function bestLegTo(fromIdx, toIdx) {
-  if (fromIdx == null || toIdx == null) return null;
-  return bestLegBetween(etat.MARKET, fromIdx, toIdx, readFilters());
-}
+
 // Jambe « à vide » (aucune commodité) entre deux terminaux — pour ajouter un arrêt même sans fret rentable.
-function emptyLeg(fromIdx, toIdx) {
-  if (fromIdx == null || toIdx == null) return null;
-  const ft = etat.MARKET.terminals[fromIdx], tt = etat.MARKET.terminals[toIdx];
-  return { from: ft.name, fromSystem: ft.system, to: tt.name, toSystem: tt.system, commodity: "", buyPrice: 0, sellPrice: 0, margin: 0 };
-}
+
 // Résout un terminal depuis le texte : libellé exact « Nom — Système », sinon par nom seul.
 // Suggestions d'arrêts : meilleures destinations rentables depuis la fin du parcours (top 4).
 
 // Ajoute un arrêt (terminal) : nouvelle jambe optimale depuis la fin du parcours -> étend.
-function addStopByTerminal(label) {
-  const fromIdx = journeyEndIndex();
-  const toIdx = resolveStationLabel(label);
-  if (fromIdx == null || toIdx == null) return; // terminal inconnu / parcours vide
-  // Jambe optimale s'il y a du fret rentable, sinon jambe « à vide » (on l'ajoute quand même).
-  pickJourney([bestLegTo(fromIdx, toIdx) || emptyLeg(fromIdx, toIdx)]);
-}
+
 
 // Démarre un voyage « de zéro » depuis un terminal de départ (sans passer par un trajet ▶).
 // On pose juste le point de départ ; l'utilisateur construit ensuite avec « + Arrêt ».
-function beginJourney(label) {
-  const v = (label || "").trim();
-  if (!v) return;
-  if (!stationMap.size) { withMarket(() => beginJourney(v)); return; } // marché requis pour résoudre
-  const startIdx = resolveStationLabel(v);
-  if (startIdx == null) return; // terminal inconnu
-  const t = etat.MARKET.terminals[startIdx];
-  etat.JOURNEY = startJourneyAt({ name: t.name, system: t.system });
-  syncViewsToJourney();
-  rafraichir();
-  refresh();
-}
+
 
 // Réindexe tout ce qui est indexé par le RANG des jambes après une modification du parcours. Les
 // QUATRE porteurs — manifeste édité, 🔒, étiquette `leg` des lots de la soute, entrée du registre
 // des chargements — passent par le même appel pur : les décaler séparément les ferait diverger, et
 // c'est d'en avoir oublié un que venait le double chargement (la jambe renumérotée se croyait vide
 // alors que son fret était à bord).
-function reindexerApresRetrait(retrait) {
-  const r = reindexerRangsJambe({ edits: etat.JOURNEY_EDITS, pins: etat.JOURNEY_PINS, lots: etat.SOUTE, chargements: etat.CHARGEMENTS }, retrait);
-  etat.JOURNEY_EDITS = r.edits; etat.JOURNEY_PINS = r.pins; etat.SOUTE = r.lots; etat.CHARGEMENTS = r.chargements;
-  if (etat.journeyExpandedLeg >= retrait.removedFrom) etat.journeyExpandedLeg = -1; // le panneau déplié n'existe plus
-  saveJourneyEdits(); saveJourneyPins(); saveSoute(); saveChargements();
-}
+
 
 // Retire un arrêt (index de station) et RECONNECTE les voisins (recalcule la jambe A->C).
-function removeJourneyStop(stopIndex) {
-  if (!etat.JOURNEY) return;
-  const legs = etat.JOURNEY.legs;
-  let bridge = null;
-  if (stopIndex > 0 && stopIndex < legs.length) {
-    // Arrêt du milieu : on reconnecte stations[i-1] -> stations[i+1].
-    const prev = legs[stopIndex - 1], next = legs[stopIndex];
-    const fromIdx = stationMap.get(stationLabel(prev.from, prev.fromSystem));
-    const toIdx = stationMap.get(stationLabel(next.to, next.toSystem));
-    bridge = bestLegTo(fromIdx, toIdx) || // aucun fret rentable A->C : jambe « à vide », contiguïté préservée
-      { from: prev.from, fromSystem: prev.fromSystem, to: next.to, toSystem: next.toSystem, commodity: "", buyPrice: 0, sellPrice: 0, margin: 0 };
-  }
-  const r = removeStopPure(etat.JOURNEY, stopIndex, bridge);
-  if (!r) { clearJourney(); return; }
-  reindexerApresRetrait(r);
-  // `start` n'est présent que sur le parcours réduit à un seul arrêt : le reporter tel quel, sinon
-  // la station survivante n'a plus rien pour se décrire (journeyStations la lit là) et le voyage
-  // s'affiche vide alors qu'il reste un point de départ.
-  etat.JOURNEY = r.start ? { legs: [], current: 0, start: r.start } : { legs: r.legs, current: r.current };
-  syncViewsToJourney();
-  rafraichir();
-  refresh();
-}
+
 
 // `frappe` : on est EN TRAIN de taper dans un champ SCU de jambe. La génération ne bouge alors pas,
 // donc les champs non contrôlés gardent leur valeur et leur curseur pendant que profits, totaux et
