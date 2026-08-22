@@ -2881,7 +2881,21 @@ test("score : le tableau n'écrit jamais une largeur hors [0, 100] (#39)", async
 // le conteneur qui défile tout seul. Un test au niveau page passerait à tort, et c'est exactement
 // pour ça que rien ne voyait le défaut. La tolérance de 1 px couvre `.table-shell::after`, dont le
 // crochet décoratif déborde en permanence (style.css:613) — même convention qu'à la ligne 219.
-for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 }]) {
+// #86 ajoute 1100×900 à la boucle, et c'est LUI qui la rendait rouge : mesuré à +133 px de
+// débordement sur Trajets, rail déplié — le rail lui-même. Replié à la main il tombait à +2, ce qui
+// veut dire que l'utilisateur devait le replier pour que la page tienne, sans que rien le lui dise.
+//
+// La TOLÉRANCE monte à 2 px au seul 1100, et il faut dire pourquoi plutôt que de l'arrondir : le
+// rail réglé, il reste 2 px de débordement dont il n'est pas la cause. Mesuré à cette largeur —
+// `.table-shell` fait 970, la table fait 970, les dix colonnes somment à 970, et `table.scrollWidth`
+// vaut 972. C'est donc le CONTENU d'une cellule qui sort de sa colonne, pas la table qui sort de son
+// cadre : c'est #81 (« en fenêtre réduite les chiffres sortent de leur colonne »), et le corriger ici
+// serait empiéter sur une autre issue. Le jour où #81 tombe, ce 2 redevient 1.
+for (const { largeur, hauteur, tolerance } of [
+  { largeur: 1920, hauteur: 1080, tolerance: 1 },
+  { largeur: 1280, hauteur: 720, tolerance: 1 },
+  { largeur: 1100, hauteur: 900, tolerance: 2 },
+]) {
   test(`tableaux : aucune barre horizontale en ${largeur}×${hauteur} (#54)`, async ({ page }) => {
     await page.setViewportSize({ width: largeur, height: hauteur });
     const debord = (sel) => page.locator(sel).evaluate((e) => {
@@ -2890,18 +2904,18 @@ for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur:
     });
 
     await expect(page.locator("#rows tr").first()).toBeVisible();
-    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(1);
+    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(tolerance);
 
     await page.click("#viewLoops");
     await expect(page.locator("#loopRows tr").first()).toBeVisible();
-    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(1);
+    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(tolerance);
 
     // « En route » partage le rendu de Trajets ; il faut un terminal de départ pour qu'il peuple.
     await page.click("#viewEnroute");
     const depart = await page.locator("#originList option").first().getAttribute("value");
     await page.fill("#origin", depart);
     await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
-    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(1);
+    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(tolerance);
   });
 }
 
@@ -3093,6 +3107,156 @@ test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son t
   await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
 });
 
+// #53 : « ✓ chargé » est le geste le PLUS engageant de l'application — il crée les lots de la soute
+// au prix affiché, retranche le stock du terminal d'achat et fige les autres jambes qui achètent au
+// même point. C'était aussi l'élément le plus effacé de sa rangée : 9,5 px en `var(--muted)`, sur
+// 19 px de haut, entre deux libellés de 11,5 px. L'emphase allait à l'état DÉJÀ ACQUIS (« ⬢ à bord »,
+// vert plein) et pas à l'action à faire.
+//
+// Les quatre mesures ci-dessous sont celles de l'issue, dans son ordre. La dernière est la
+// contrainte à ne pas casser en grossissant : à 460 px, l'en-tête s'empilait sur deux lignes et le
+// centre de la zone cliquable tombait sur le bouton au lieu du dépliement (style.css).
+test("Voyage : « ✓ chargé » se lit comme l'action de la jambe (#53)", async ({ page }) => {
+  await jambeChargeable(page);
+  const bouton = page.locator("#journeyCard .jleg-load").first();
+  const route = page.locator("#journeyCard .jleg-route").first();
+
+  // 1. La cible tactile : même règle que ▶ (WCAG 2.2 SC 2.5.8), déjà tenue ailleurs dans ce fichier.
+  const b = await bouton.boundingBox();
+  expect(b.height, "hauteur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+  expect(b.width, "largeur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+
+  // 2. Il ne peut plus être le plus petit texte de sa rangée.
+  const px = (l) => l.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+  expect(await px(bouton), "corps du bouton vs nom de la jambe").toBeGreaterThanOrEqual(await px(route));
+
+  // 3. Il n'est plus dans la couleur que le dépôt réserve au secondaire, AVANT le clic.
+  await expect(bouton).toHaveText(/chargé/i); // on est bien à l'état non chargé
+  const couleur = await bouton.evaluate((e) => getComputedStyle(e).color);
+  expect(couleur, "couleur au repos").not.toBe("rgb(138, 147, 168)"); // var(--muted)
+
+  // 4. L'en-tête reste sur UNE ligne, à la largeur nominale de la carte comme à sa largeur repliée.
+  //
+  // La mesure porte sur le CHEVAUCHEMENT VERTICAL du nom et du bouton, pas sur la hauteur de
+  // l'en-tête. Celle-ci grandit légitimement quand le bouton grandit — une première version de ce
+  // test comparait à « deux fois la hauteur du nom » et échouait sur un en-tête parfaitement sur une
+  // ligne. Deux éléments qui se chevauchent en Y sont sur la même rangée ; c'est ça, « une ligne ».
+  for (const largeur of [1440, 900]) {
+    await page.setViewportSize({ width: largeur, height: 900 });
+    const r = await route.boundingBox();
+    const l = await bouton.boundingBox();
+    const chevauche = Math.min(r.y + r.height, l.y + l.height) - Math.max(r.y, l.y);
+    expect(chevauche, `nom et bouton sur la même rangée à ${largeur} px`).toBeGreaterThan(0);
+
+    // 5. LE CENTRE DE L'EN-TÊTE N'EST PAS SUR LE BOUTON, et c'est la contrainte que grossir le
+    //    bouton a failli emporter — elle n'était tenue par AUCUN test. `.jleg-head` est cliquable
+    //    pour déplier l'éditeur et CONTIENT ce bouton : quand le centre tombe dessus, cliquer le
+    //    milieu de la rangée charge la jambe au lieu de la déplier. Le geste le plus engageant de
+    //    l'application, déclenché par erreur. Playwright vise le centre, donc la CI l'a vu — mais
+    //    seulement par ricochet, sur six autres tests, et sans dire pourquoi.
+    const auCentre = await page.locator("#journeyCard .jleg-head").first().evaluate((h) => {
+      const b = h.getBoundingClientRect();
+      const el = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return el ? el.className : "";
+    });
+    expect(auCentre, `ce qu'on touche au centre de l'en-tête à ${largeur} px`).not.toContain("jleg-load");
+  }
+});
+
+// #86, second critère : le point de rupture ne doit PAS marcher sur la préférence de l'utilisateur.
+// C'est le piège de cette issue — une bascule automatique qui écrase un choix explicite est plus
+// agaçante que le défaut qu'elle corrige. Elle ne le peut pas ici, et c'est structurel : le repli
+// automatique est une media query, `rail.js` n'en sait rien et ne touche jamais à la largeur. Ce
+// test épingle cette séparation, qui se perdrait au premier « repli automatique en JavaScript ».
+test("Rail : le repli automatique ne mange pas la préférence manuelle (#86)", async ({ page }) => {
+  // Au large, le choix manuel commande.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  // `.rail` anime sa largeur sur 0,18 s : une mesure prise juste après le clic lit l'état d'AVANT.
+  // On attend que la valeur se pose, plutôt que de dormir un temps arbitraire.
+  const railVaut = (px) => expect.poll(
+    () => page.locator(".rail").evaluate((e) => Math.round(e.getBoundingClientRect().width)),
+    { timeout: 3000 }
+  ).toBe(px);
+  await railVaut(208);
+
+  await page.click("#railToggle");
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "false");
+
+  // On rétrécit : le rail est déjà replié, rien ne change.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68);
+
+  // Sous le point de rupture, le bouton est masqué — la fenêtre a déjà tranché, un contrôle qui ne
+  // fait rien n'a pas à s'afficher.
+  await expect(page.locator("#railToggle")).toBeHidden();
+
+  // On réélargit : la préférence REPLIÉE est toujours celle de l'utilisateur, elle reprend la main.
+  // C'est le sens qui compte : la media query n'a rien écrasé, elle s'est seulement superposée.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toBeVisible();
+
+  // Et dans l'autre sens : on déplie AU LARGE, on rétrécit, on réélargit — le choix revient intact.
+  await page.click("#railToggle");
+  await railVaut(208);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68); // la fenêtre commande ici
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(208); // et le choix reprend là
+
+  // Il survit au rechargement, comme avant #86.
+  await page.reload();
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await railVaut(208);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+// #81 : la mesure qui MANQUAIT. Celle de #54 porte sur `.table-shell` — le CADRE — et un chiffre
+// qui déborde de sa cellule sans élargir la table lui est invisible. C'est exactement ce qui s'est
+// produit : #54 a réduit le défaut sans le supprimer, et son critère « aucun nombre ne déborde de
+// sa colonne » n'a jamais été vérifié. Celle-ci porte sur la CELLULE. Les deux sont nécessaires.
+//
+// `td.num` est en `white-space: nowrap`, et c'est voulu : un « 6 315 398 » coupé en deux lignes est
+// illisible. Mais un nombre qui ne se coupe pas et dont la colonne rétrécit SORT de sa cellule et
+// passe sous la voisine. Ni `overflow: hidden` seul — on lirait « 1 759 » pour « 1 759 500 ».
+for (const { largeur, hauteur } of [
+  { largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 },
+  { largeur: 1100, hauteur: 900 }, { largeur: 960, hauteur: 900 },
+]) {
+  test(`chiffres : aucun ne sort de sa colonne en ${largeur}×${hauteur} (#81)`, async ({ page }) => {
+    await page.setViewportSize({ width: largeur, height: hauteur });
+
+    // Rend les cellules numériques qui débordent, avec de quoi les nommer dans le rapport : sans le
+    // libellé de la colonne et la valeur, un « +17 » ne dit pas où regarder.
+    const debordements = (sel) => page.locator(sel).evaluate((table) => {
+      const titres = [...table.querySelectorAll("thead th")].map((h) => h.textContent.trim());
+      const sortis = [];
+      for (const td of table.querySelectorAll("tbody td.num")) {
+        const trop = td.scrollWidth - td.clientWidth;
+        if (trop <= 0) continue;
+        const rang = [...td.parentElement.children].indexOf(td);
+        sortis.push(`${titres[rang] || `col ${rang + 1}`} +${trop} (${td.textContent.trim().slice(0, 18)})`);
+      }
+      // Une entrée par COLONNE, pas par ligne : 316 lignes rendraient le rapport illisible.
+      return [...new Set(sortis.map((x) => x.split(" +")[0]))];
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+    expect(await debordements("#routes"), "Trajets").toEqual([]);
+
+    await page.click("#viewLoops");
+    await expect(page.locator("#loopRows tr").first()).toBeVisible();
+    expect(await debordements("#loops"), "Boucles").toEqual([]);
+
+    await page.click("#viewEnroute");
+    const depart = await page.locator("#originList option").first().getAttribute("value");
+    await page.fill("#origin", depart);
+    await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
+    expect(await debordements("#enroute"), "En route").toEqual([]);
+  });
+}
 // #60 : les commodités d'une station sortaient dans l'ordre du tableau `commodities` de
 // market.json — c'est-à-dire l'ordre d'insertion d'une Map remplie en parcourant les prix UEX, qui
 // ne veut rien dire. Sur GrimHEX (3 achats, 89 ventes) il fallait balayer la grille à l'œil.
