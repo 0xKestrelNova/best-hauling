@@ -473,3 +473,51 @@ test("frais de station : « Tarif retenu » suit le coefficient global (#alk)", 
   const apres = await page.locator("#correctionsFees .fee-note").innerText();
   expect(apres).not.toBe(avant);
 });
+
+// « Tout oublier » — le SEUL geste du panneau de frais qu'aucun test n'exerçait, mesuré au moment de
+// démonter la coquille : `grep -rn resetAllK e2e/` ne rendait rien. Un geste qu'on s'apprête à
+// déménager sans filet est un geste qu'on déménagera mal.
+//
+// Deux choses à tenir, et la seconde est celle qui casse en silence :
+//   1. le `confirm()` passe AVANT la moindre écriture — annuler ne doit rien effacer ;
+//   2. il n'efface que le store des RELEVÉS. Les corrections de prix ont le leur, et le badge du
+//      rail les compte : si les deux stores se mélangeaient un jour, « Tout oublier » emporterait
+//      des corrections que l'utilisateur n'a pas désignées.
+test("relevés : « Tout oublier » demande d'abord, et n'emporte QUE les relevés (#resetAllK)", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alAmount")).toBeVisible();
+
+  // Un relevé, et une correction de PRIX sur la même station : les deux stores, côte à côte.
+  await page.fill("#alAmount", "1159");
+  await page.fill("#alScu", "32");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(1);
+
+  const valeur = page.locator("#correctionsStation .editv").first();
+  await valeur.click();
+  await page.locator("#correctionsStation input").first().fill("42");
+  await page.locator("#correctionsStation input").first().press("Enter");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText(/\(\d+\)/); // le badge compte
+
+  const badgeAvant = await page.locator("#viewCorrections .rl").innerText();
+
+  // ANNULER n'efface rien. Le `confirm()` bloque le fil : un rendu optimiste posé avant lui
+  // peindrait une liste vide qu'il faudrait ensuite défaire.
+  page.once("dialog", (d) => d.dismiss());
+  await page.click("#resetAllK");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(1);
+
+  // ACCEPTER efface les relevés — et EUX SEULS.
+  page.once("dialog", (d) => d.accept());
+  await page.click("#resetAllK");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
+  await expect(page.locator("#viewCorrections .rl")).toHaveText(badgeAvant);
+});
