@@ -35,7 +35,7 @@ ouvre la vue.
 | **↳ En route 🧭** | *Sous-entrée de Trajets.* Depuis un terminal de départ : le fret rentable + un **manifeste optimal** qui remplit la soute avec **plusieurs commodités** vers une même destination (avec suggestions pour combler l'espace libre) |
 | **Boucles ⇄** | Meilleures boucles A⇄B (une commodité à l'aller, une autre au retour) pour ne jamais repartir à vide |
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
-| **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
+| **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. La commodité choisie **survit à un filtre qui la masque** : le board affiche autre chose le temps de la recherche, et la retrouve dès que le filtre tombe. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 | **Tournée 📦** | **Vider la soute en un minimum d'arrêts**, l'argent n'arbitrant qu'à nombre d'arrêts égal — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'**inverse** de « où écouler », qui classe par ce que ça rapporte : les deux questions sont différentes, et celle-ci répond à « je ne veux plus porter ça » (le cas d'une sortie butin). La tournée est un **plancher** — un point de vente sur six seulement publie sa capacité — et se recalcule après chaque arrêt réel. La meilleure tournée **à un arrêt de plus** s'affiche à côté, avec son écart chiffré : l'app ne sait pas si tu as le temps ([ADR-007](docs/superpowers/specs/2026-08-15-tournee-ecoulement-adr.md)) |
 | **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
 | **Corrections ✎** | *Un réglage, pas une vue d'analyse — d'où la dernière place.* Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
@@ -61,10 +61,24 @@ signe et **en rouge**, jamais dans le vert des gains.
   est une estimation grossière.
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
+- **Vaisseau** : le champ ◈ s'ouvre sur ce qu'on peut **réellement piloter**, du plus gros au plus
+  petit. UEX publie 20 vaisseaux **concepts** — annoncés par CIG, pas encore volables — et le tri par
+  capacité les mettait en tête : `MISC Hull E` et ses 12 000 SCU ouvraient la liste, devant le plus
+  gros vaisseau existant qui en tient 4 608. Ils restent **trouvables en tapant leur nom**, et
+  portent alors un `⚠ concept`, dans la liste comme sur la carte : une soute annoncée est une
+  promesse, pas une capacité, et un classement de routes bâti dessus doit se savoir spéculatif.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
 - **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`8` vues) ; tout ce qui s'active
   au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
-  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
+  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux
+  — comme ils se taisent **sous une modale** : rien n'agit derrière le voile de l'aide.
+- **Première visite** : au tout premier chargement, une **aide modale** dit ce qu'est cet écran et à
+  quoi répond chacune des huit vues. Sa liste n'est pas écrite à la main — elle est **lue sur le
+  rail** (numéro, libellé, description), pour qu'une vue ajoutée ou renumérotée ne puisse pas la
+  rendre menteuse. Elle se referme à **Échap**, au clic hors du panneau ou par son bouton, et ne
+  revient plus : le drapeau vit dans `localStorage` sous **sa propre clé** (`best-hauling-aide-vue`)
+  et **ne part jamais dans le permalien** — un lien partagé ne doit pas décider à la place de son
+  destinataire s'il a déjà vu l'aide. Le **?** posé à côté du logo la rejoue à tout moment.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
 
 ### Portée des filtres par vue
@@ -119,8 +133,23 @@ npm run serve        # sert le dossier sur http://127.0.0.1:4173 (serveur maison
 Les `data/*.json` versionnés servent d'**amorce** pour le dev local. Pour les régénérer depuis UEX :
 
 ```bash
-npm run build        # = node scripts/build-data.mjs  (Node >= 20, fetch natif)
+npm run build:data   # = node scripts/build-data.mjs  (Node >= 20, fetch natif)
 ```
+
+Depuis le socle v2, il y a **deux** builds, et ils ne font pas la même chose. `build` seul les
+enchaîne, mais `.github/workflows/update-data.yml` appelle `node scripts/build-data.mjs` en clair :
+un workflow qui dépend d'un alias npm se casse en silence le jour où l'alias bouge.
+
+```bash
+npm run build:data   # régénère les données depuis UEX
+npm run build:site   # fabrique le site dans dist/ (Vite)
+npm run build        # les deux, dans cet ordre
+npm run dev          # serveur de développement Vite, avec rechargement à chaud
+```
+
+> **`dist/` n'est pas le site déployé.** La mise en ligne assemble encore `_site/` à partir des
+> fichiers sources (`update-data.yml`) : le socle v2 introduit la fabrication et la fait vérifier par
+> les tests, sans y basculer la production. Ce qui est en ligne aujourd'hui ne dépend pas de Vite.
 
 Lancer les tests :
 
@@ -161,17 +190,35 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
                             │ artefact Pages
 ┌─ Front (statique, navigateur) ────────────────────────────────┐
 │  index.html  (+ <meta> Content-Security-Policy)               │
-│    ├─ logic.mjs   ← fonctions PURES (calcul), testées         │
-│    ├─ app.js      ← module ES : rendu DOM, état, interactions │
+│    ├─ logic.ts    ← fonctions PURES (calcul), testées         │
+│    ├─ amorce.js   ← point d'entrée : branche, monte, écoute   │
+│    │    ├─ App.tsx   ← la racine React : les huit vues        │
+│    │    ├─ etat.ts   ← l'état partagé, rendu.ts ← le cycle    │
+│    │    └─ *-actions / *-gestes ← les gestes, par domaine     │
 │    └─ rail.js     ← bascule du menu (script classique)        │
 │  sw.js (service worker) + manifest.webmanifest → PWA offline  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-**Séparation clé** : toute la logique de calcul sans DOM vit dans [`logic.mjs`](logic.mjs)
+**Séparation clé** : toute la logique de calcul sans DOM vit dans [`logic.ts`](logic.ts)
 (temps de trajet, score, `computeUnits`, **filtres partagés** par vue, corrections, remplissage glouton,
 chaîne, **graphe de marché**, **résumés de commodités**, décodage d'état…), importée à la fois par
-`app.js` (navigateur) et par les tests. `app.js` ne fait que le rendu et le câblage.
+le navigateur et par les tests.
+
+Le rendu, lui, vit dans **une seule racine React** ([`App.tsx`](App.tsx)) : chaque vue s'abonne à
+[`etat.ts`](etat.ts) et se réévalue seule. `amorce.js` ne fait plus qu'**amorcer** — poser les
+crochets, monter la racine, brancher les gestes sur le markup d'`index.html`, charger, restaurer.
+Il s'appelait `app.js` et portait 2 869 lignes ; l'ADR-011 raconte pourquoi il devait disparaître.
+
+Depuis la v2, ce fichier est en **TypeScript**, et le vocabulaire du domaine vit à côté dans
+[`types.ts`](types.ts) — relevé sur les usages et les données réelles, pas inventé. Deux
+conséquences qui ne se devinent pas :
+
+- **Node exécute le TypeScript directement**, en effaçant les annotations (d'où `node >= 24` dans
+  `engines`). Le job de tests de la CI n'installe donc toujours **rien** : ni transpileur, ni cache.
+- **Effacer n'est pas vérifier.** `node --test` passerait au vert sur des annotations fausses.
+  C'est `npm run typecheck` (`tsc --noEmit`) qui le dit, et il a son propre job en CI pour que le
+  signal reste lisible.
 
 **Content-Security-Policy** : l'app injecte des données **communautaires** (noms de terminaux et de
 commodités venus d'UEX) dans `innerHTML`. L'échappement (`esc`) reste la défense qui compte, mais
@@ -243,14 +290,14 @@ n'as pas touché n'est **pas** persisté — la jambe reste branchée sur le mar
 
 ### La carte du parcours
 
-À côté du compagnon, une **troisième colonne** pose les arrêts **dans l'espace** : un disque par
+**Dans le Plan de vol**, la carte pose les arrêts **dans l'espace** : un disque par
 système traversé, le vaisseau sur l'escale courante, et un corridor violet `⚡` quand le parcours
 change de système. Les systèmes se lisent **toujours de gauche à droite dans le même ordre — Nyx,
 Pyro, Stanton** — quel que soit le sens du voyage : une carte qu'on doit relire à chaque trajet ne
 se lit pas d'un coup d'œil. Seuls les systèmes **traversés** ont un disque, sans case vide pour les
-autres ; un système qu'UEX publierait en plus se range après les trois connus. Elle ne reste à côté que si elle y garde une largeur lisible (≈ 460 px) —
-en dessous, elle repasse en **bandeau pleine largeur** sur sa propre ligne, ce qui vaut mieux qu'une
-colonne où les libellés d'escale tomberaient sous 5 px.
+autres ; un système qu'UEX publierait en plus se range après les trois connus. Elle vit **dans la vue de conclusion et nulle part ailleurs** (ADR-004) : elle
+répondait à « où suis-je », qui est une question de plan, depuis une colonne posée à côté des vues
+de recherche — où elle se redessinait à chaque frappe pour un écran que personne ne regardait.
 Un saut est **routé par les deux passerelles** — on ne change pas de système n'importe où : le
 trajet part de l'escale, rejoint la passerelle d'ici, traverse, puis repart de celle de là-bas.
 Chaque bout se décide **séparément** : partir d'une passerelle ne dispense pas de **ressortir par
@@ -341,8 +388,15 @@ la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il
 qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
 et le rayon était déduit une seconde fois depuis un chiffre déjà amputé.
 
-**Vendre, déposer, repartir.** Un bouton par commodité ouvre un champ prérempli au total :
-valider vend tout, réduire vend partiellement. Ce que le comptoir n'a pas pris est marqué
+**Vendre, déposer, repartir.** Un bouton par commodité ouvre **deux champs qui se répondent** :
+**restants** — le chiffre que l'écran du comptoir affiche, et où le curseur s'ouvre — et
+**partent**, qui fait la soustraction tout seul. Sur 2 200 SCU à bord, taper `2170` dans le
+premier écrit `30` dans le second : plus de calcul de tête à chaque escale. Le miroir marche dans
+les deux sens, les deux champs sont bornés à ce qui est à bord, et une valeur hors bornes n'est
+ramenée qu'**au départ du curseur** — la rétrécir à la frappe mangerait le chiffre en cours de
+saisie. Le mot reste **partent** et jamais « vendus » : `⬓ déposer` sort le fret par la même paire
+de champs, et il marche même là où le comptoir ne reprend rien. Valider sans rien toucher vend
+tout, comme avant. Ce que le comptoir n'a pas pris est marqué
 **refusé ici** — et c'est ce marqueur qui le protège : **avancer d'une étape vaut « j'ai fait mon
 affaire à l'escale que je quitte »** et solde ce qui s'y vendait encore. Sans lui, le résidu
 disparaîtrait au moment exact où il devient le sujet. Un geste explicite, lui, passe outre.
@@ -485,7 +539,7 @@ survivent pas à la confrontation avec UEX — les 15 points de vente de Quantai
 `scu_sell = 0`, et les 50 000 SCU annoncés à TDD Area 18 dépassent le 99ᵉ centile des capacités
 publiées (médiane 539 SCU). C'est pourquoi l'app ne tente **aucune** remontée progressive du stock :
 elle se contente de dire qu'au-delà de trois heures, ta valeur ne vaut plus rien. La durée vit dans
-`DUREE_VOL` (`logic.mjs`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
+`DUREE_VOL` (`logic.ts`) et se passe en paramètre — elle n'a pas encore de réglage à l'écran.
 
 Contrepartie assumée : sur trois heures un comptoir vidé a très probablement déjà tout récupéré, donc
 l'app reste trop pessimiste pendant une partie du délai. En échange, une correction survit à une
@@ -515,6 +569,11 @@ la station est donc d'un ordre de grandeur au-dessus de celle de la formule. Les
 prennent un **`k` global réglable** (défaut 1,2, milieu des deux mesures). S'y ajoute le nombre de
 caisses, qui dépend du plafond de conteneur du terminal (`max_container_size` d'UEX), **replié sur 32
 quand UEX renvoie 0** : ce repli sous-estime les frais plutôt que de les inventer.
+
+La vue **Corrections** affiche, pour la station cherchée, le tarif qu'elle retiendrait : « Tarif retenu :
+`k = …` », suivi de « (ton relevé) » ou « (k global) » selon d'où il vient, et du montant que ça donne
+pour 32 SCU. Ce panneau **suit le `k` global en direct** : le changer met le chiffre à jour sans quitter
+la vue.
 
 D'où le **`≈` sur tout montant** : l'app donne un ordre de grandeur fiable, pas un chiffre exact. Si tu
 relèves le tarif réel d'une station, tu peux **l'enregistrer** (montant observé pour une quantité donnée →
@@ -556,8 +615,15 @@ Les relevés bruts et le raisonnement complet sont dans
   strictement inchangés). Runner intégré `node --test`, **zéro dépendance**.
 - **E2E de fumée** ([`e2e/smoke.pw.mjs`](e2e/smoke.pw.mjs), Playwright) : non-régression des bugs vécus
   (carte vaisseau au reload, demande corrigée à 0, contrôles qui ne fuient plus, persistance des corrections,
-  navigation, cible tactile du ▶, dépliant de chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
+  navigation, cible tactile du ▶ et du 🧾 qui ouvre le chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
   « même système » contraint la Chaîne). Playwright est une dépendance **de dev uniquement** — le site livré reste sans dépendance.
+- **Socle de build** ([`e2e/socle.pw.mjs`](e2e/socle.pw.mjs)) : depuis la v2, la suite E2E sert
+  `dist/` — **ce que le build produit réellement**, et non les fichiers du dépôt. Servir les sources
+  laissait la suite verte sans jamais regarder la fabrication : elle aurait validé un `dist/` cassé.
+  Ces tests-là couvrent les pannes qui ne se voient qu'**en production** : un manifeste déplacé sous
+  `assets/` (l'app installée démarrerait sur `/assets/`), une icône hachée que le manifeste ne
+  retrouve plus, une liste de précache périmée (`caches.addAll` est atomique — une seule URL en 404
+  et le hors-ligne ne se dégrade pas, il disparaît), et la CSP de dev qui fuirait dans le build.
 - **CI** ([`ci.yml`](.github/workflows/ci.yml)) : unitaires + E2E sur chaque push/PR.
 
 ## Versions et déploiement

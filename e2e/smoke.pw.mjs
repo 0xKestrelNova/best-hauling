@@ -152,6 +152,53 @@ test("vue Corrections : rechercher une station affiche ses commodités éditable
   expect(await page.locator("#correctionsStation .editv").count()).toBeGreaterThan(0);
 });
 
+// Affiche une station, et n'en rend la main que quand le panneau est VRAIMENT le sien. Sans cette
+// attente, la cellule saisie est encore celle de la station précédente : le panneau se repeint
+// pendant le geste, et la correction part sur le mauvais comptoir — silencieusement.
+async function ouvrirStation(page, label) {
+  await page.fill("#station", label);
+  await expect(page.locator("#correctionsStation .stn-hero-name")).toHaveText(label.split(" — ")[0]);
+}
+
+// Corrige le PREMIER stock d'achat de la station affichée, et rend le nom de la commodité touchée.
+// La valeur est dérivée de celle qu'affiche la cellule : identique, l'édition ne s'enregistre pas
+// (c'est un comportement acquis — consulter n'écrit rien), et le test passerait sans rien poser.
+async function corrigerPremierStock(page, label) {
+  await ouvrirStation(page, label);
+  const cell = page.locator('#correctionsStation .editv[data-s="buy"][data-f="vol"]').first();
+  await expect(cell).toBeVisible({ timeout: 8000 });
+  const nom = await cell.getAttribute("data-c");
+  const avant = Number(await cell.getAttribute("data-v")) || 0;
+  await cell.click();
+  await cell.locator("input").fill(String(avant + 1234));
+  await cell.locator("input").press("Enter");
+  await expect(page.locator("#correctionsStation .editv.ov").first()).toBeVisible();
+  return nom;
+}
+
+// `#stnClear` n'avait AUCUN test, et c'est la quatrième porte vers le gel des jambes — les trois
+// autres sont couvertes. Il lit la station affichée, boucle sur le store, et fige les jambes avant
+// d'effacer. Rendu muet, il ne dit rien : pas de message, pas de log, et la suite reste verte.
+test("Corrections : « ✕ n corrections » n'efface QUE la station affichée", async ({ page }) => {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+
+  await corrigerPremierStock(page, "Levski — Nyx");
+  await corrigerPremierStock(page, "GrimHEX — Stanton");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (2)");
+
+  // Retour sur Levski : c'est SA correction que le bouton annonce, et elle seule qu'il efface.
+  await ouvrirStation(page, "Levski — Nyx");
+  await expect(page.locator("#stnClear")).toHaveText(/1 correction/);
+  await page.locator("#stnClear").click();
+
+  await expect(page.locator("#correctionsStation .editv.ov")).toHaveCount(0);
+  await expect(page.locator("#stnClear")).toHaveCount(0);        // plus rien à effacer ici
+  await expect(page.locator("#viewCorrections .rl")).toHaveText("Corrections (1)"); // l'autre est intacte
+  // Et la bande garde bien la vignette de GrimHEX : ce n'est pas « tout réinitialiser ».
+  await expect(page.locator('#correctionsIndex .stn-tile[data-terminal="GrimHEX"]')).toBeVisible();
+});
+
 test("vue Corrections : les commodités d'une station tiennent sur PLUSIEURS colonnes", async ({ page }) => {
   // En une seule colonne, GrimHEX (92 commodités) faisait 4 546 px : quatre écrans et demi à
   // parcourir pour corriger un chiffre, pendant que les colonnes du tableau mesuraient 444 px
@@ -952,6 +999,39 @@ test("Soute : « où écouler » classe les destinations et affiche la certitude
   await expect(page.locator("#holdCard .ec-dest")).toHaveCount(0);
 });
 
+test("« où écouler » : une apostrophe dans un nom n'est pas échappée deux fois (#118)", async ({ page }) => {
+  // `ecoulerHTML` échappait chaque nom dans `detail`, PUIS le détail entier à l'insertion : `E'tam`
+  // s'affichait `E&#39;tam`, et la ligne prenait deux hauteurs au lieu d'une.
+  //
+  // La commodité est choisie DANS LES DONNÉES, pas écrite en dur : le test doit porter sur le cas
+  // visé tant qu'un nom à apostrophe existe, et se taire franchement si l'instantané n'en offre
+  // plus — pas passer au vert en ayant mesuré autre chose.
+  await ouvrirDeclaration(page);
+  const aApostrophe = (await commodites(page)).filter((n) => /['\u2019]/.test(n));
+  test.skip(!aApostrophe.length, "aucune commodité à apostrophe dans cet instantané");
+  await page.locator("#holdAddNo").click();
+
+  let trouve = null;
+  for (const nom of aApostrophe.slice(0, 6)) {
+    await declarer(page, nom, 2200, 1000);
+    await positionner(page, "Megumi — Pyro");
+    if (!(await page.locator("#holdCard .ec-head").count())) await page.locator("#holdOffload").click();
+    await expect(page.locator("#holdCard .hold-ecouler")).toBeVisible();
+    if ((await page.locator("#holdCard .ec-dest").count()) > 0) { trouve = nom; break; }
+    await page.locator("#holdClear").click();
+  }
+  expect(trouve, "aucune commodité à apostrophe n'a de débouché depuis ce quai").not.toBeNull();
+
+  const details = await page.locator("#holdCard .ec-detail").allTextContents();
+  expect(details.length).toBeGreaterThan(0);
+  // Le nom apparaît TEL QUEL dans le détail…
+  expect(details.some((t) => t.includes(trouve))).toBe(true);
+  // …et aucune entité HTML ne s'y affiche en clair.
+  for (const t of details) {
+    expect(t, "une entité HTML s'affiche telle quelle — le détail est échappé deux fois").not.toMatch(/&(#\d+|amp|quot|lt|gt);/);
+  }
+});
+
 test("Soute : déposer à la station libère la place sans vendre", async ({ page }) => {
   await jambeChargeable(page);
   await page.locator("#journeyCard .jleg-load").first().click();
@@ -1057,6 +1137,77 @@ async function positionner(page, label) {
 // Les commodités proposées par l'autocomplétion, dans l'ordre du marché.
 const commodites = (page) =>
   page.locator("#commodityList option").evaluateAll((o) => o.map((x) => x.value));
+
+test("Soute : la vente partielle se saisit en « ce qui reste », et les deux champs se répondent (#49)", async ({ page }) => {
+  // Le scénario fondateur : 2 200 SCU à bord, l'écran du comptoir affiche « 2 170 restants ».
+  // L'app ne demandait que « ce qui part » — l'utilisateur soustrayait 30 de tête à chaque escale.
+  // La soute est DÉCLARÉE et non chargée depuis un manifeste : le total est alors un chiffre rond
+  // choisi ici, et le test dit ce qu'il mesure au lieu de dépendre de l'instantané UEX du jour.
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.locator("#holdAddNo").click();
+  await declarer(page, nom, 2200, 1000);
+  await positionner(page, "Megumi — Pyro");
+
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+  const restants = page.locator("#holdCard .hold-rest-qty");
+  const partent = page.locator("#holdCard .hold-sell-qty");
+
+  // Le curseur s'ouvre sur le RESTANT : le seul des deux chiffres que le jeu donne tout fait.
+  await expect(restants).toBeFocused();
+  await expect(restants).toHaveValue("0");
+  await expect(partent).toHaveValue("2200"); // « tout part » à l'ouverture, comme avant #49
+
+  // On recopie ce que l'écran du jeu affiche ; l'autre champ fait la soustraction.
+  await restants.fill("2170");
+  await expect(partent).toHaveValue("30");
+
+  // …et le miroir marche dans les DEUX sens.
+  await partent.fill("500");
+  await expect(restants).toHaveValue("1700");
+
+  // Le geste consomme bien « ce qui part » : `.hold-sell-qty` n'a pas changé de sens. On passe par
+  // ⬓ déposer, qui est rendu quel que soit ce que le comptoir reprend — donc indépendant des
+  // données du jour, à la différence de ✓ vendre.
+  await restants.fill("2170");
+  await page.locator("#holdCard .hold-store").click();
+  expect(holdScuDe(await lots(page))).toBe(2170);
+  const depots = JSON.parse(await page.evaluate(() => localStorage.getItem("best-hauling-depots") || "{}"));
+  expect(Object.values(depots).flat()[0].units).toBe(30);
+});
+
+test("Soute : les bornes du champ de vente sont tenues, et le mot ne promet pas une vente (#49)", async ({ page }) => {
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.locator("#holdAddNo").click();
+  await declarer(page, nom, 2200, 1000);
+  await positionner(page, "Megumi — Pyro");
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+
+  const restants = page.locator("#holdCard .hold-rest-qty");
+  const partent = page.locator("#holdCard .hold-sell-qty");
+
+  // Au-delà du total : le miroir passe à 0 tout de suite, mais le champ FRAPPÉ n'est ramené qu'au
+  // départ du curseur — le rétrécir à la frappe mangerait le chiffre en cours de saisie.
+  await restants.fill("9999");
+  await expect(partent).toHaveValue("0");
+  await expect(restants).toHaveValue("9999");
+  await restants.blur();
+  await expect(restants).toHaveValue("2200");
+
+  // Vidé, puis négatif : jamais de SCU négatif, jamais un couple incohérent.
+  await restants.fill("");
+  await expect(partent).toHaveValue("2200");
+  await partent.fill("-40");
+  await expect(restants).toHaveValue("2200");
+
+  // Les libellés ne disent pas « vendus » : ⬓ déposer est toujours offert, et ✓ vendre n'existe
+  // que si le comptoir reprend la commodité. Un mot qui promet une vente mentirait ici.
+  const mots = (await page.locator("#holdCard .hold-sell-lbl").allTextContents()).join(" ");
+  expect(mots).toContain("restants");
+  expect(mots).toContain("partent");
+  expect(mots).not.toMatch(/vendu/i);
+});
 
 test("Soute : déclarer du fret à bord sans voyage, sans jambe et sans manifeste (#55)", async ({ page }) => {
   // À vide, la carte Soute est masquée : sans point d'entrée ailleurs, la fonctionnalité était
@@ -1351,6 +1502,29 @@ async function manifesteDepuis(page, label) {
 const memeStation = (nom) => new RegExp(nom.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 // Parcours encodé dans le lien partageable (paramètre `j` du hash), ou null.
 const lienVoyage = (page) => page.evaluate(() => new URLSearchParams(location.hash.slice(1)).get("j"));
+
+test("Manifeste : après un message d'invite, la carte REVIENT (#120)", async ({ page }) => {
+  // `#manifest` est possédé par React depuis #96. Les trois messages d'invite y écrivaient encore
+  // en `innerHTML`, ce qui détache les nœuds de React sans que React le sache : la racine mémorisée
+  // dans pont.js appliquait ensuite ses différences sur des nœuds hors du document. Le message
+  // restait à l'écran pour de bon, et rien ne levait.
+  //
+  // Aucun test ne faisait l'aller-RETOUR : c'est le seul chemin où ça se voit.
+  await manifesteDepuis(page, "Megumi — Pyro");
+  const lignes = await page.locator("#manifest .mline").count();
+  expect(lignes).toBeGreaterThan(0);
+
+  await page.uncheck("#useCargo");
+  await expect(page.locator("#manifest .manifest-hint")).toContainText("Active la");
+  await expect(page.locator("#manifest .mline")).toHaveCount(0);
+
+  await page.check("#useCargo");
+  await expect(
+    page.locator("#manifest .mline").first(),
+    "la carte n'est pas revenue — un innerHTML a détaché l'arbre React de #manifest",
+  ).toBeVisible({ timeout: 8000 });
+  await expect(page.locator("#manifest .manifest-hint")).toHaveCount(0);
+});
 
 test("Manifeste -> voyage : sans voyage, le bouton en démarre un", async ({ page }) => {
   await manifesteDepuis(page, "Megumi — Pyro");
@@ -1684,6 +1858,25 @@ async function ouvrirUneJambeEditable(page, essais = 10, convient = null) {
   throw new Error("aucune des premières lignes ne mène à une jambe qui convienne");
 }
 
+test("Dépassement du stock : le marqueur SURVIT à un rafraîchissement (#122)", async ({ page }) => {
+  // `over-stock` n'était posée que par le gestionnaire de saisie, jamais au rendu : la première
+  // réécriture de la carte — un filtre changé, l'arrivée du marché, un prix corrigé ailleurs —
+  // l'effaçait en laissant la quantité. Le dépassement cessait d'être signalé, ce qui est
+  // exactement ce que le marqueur existe pour éviter.
+  await ouvrirUneJambeEditable(page);
+  const champ = page.locator("#journeyCard .jman-qty").first();
+  await champ.fill("99999");
+  await expect(champ, "le marqueur n'apparaît même pas à la frappe").toHaveClass(/over-stock/);
+
+  // Un rendu venu d'AILLEURS : on ne touche pas au champ, on change un filtre.
+  await page.fill("#cargo", "95");
+  await expect(champ).toHaveValue("99999");
+  await expect(
+    champ,
+    "le marqueur a disparu au rafraîchissement — la quantité absurde n'est plus signalée",
+  ).toHaveClass(/over-stock/);
+});
+
 test("Compagnon de voyage : éditer le manifeste d'une jambe (SCU) persiste hors lien", async ({ page }) => {
   await ouvrirUneJambeEditable(page);
   await page.locator("#journeyCard .jman-qty").first().fill("7");
@@ -1851,6 +2044,77 @@ test("le mode Butin survit au rechargement (permalien)", async ({ page }) => {
   await expect(page.locator('#commBoardModes button[data-board="loot"]')).toHaveClass(/active/);
   await expect(page.locator('#commSortModes button[data-sort="margin"]')).toHaveText("Revente");
   expect(await page.locator("#commGrid .comm-tile.sell-only").count()).toBeGreaterThan(0);
+});
+
+// Le bouton de tri ACTIF n'avait aucun test, alors que celui du board en a deux. Ce n'est pas un
+// oubli anodin : cette mutation-là vit dans `renderCommodities` et non dans `syncCommBoardUI`,
+// donc on la rate exactement en ne reprenant que la seconde. « Marge » resterait allumé après un
+// clic sur « Catégorie », et la suite entière serait verte.
+test("board : le bouton de tri actif suit le mode choisi, et le tri change vraiment l'ordre", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+  await expect(page.locator('#commSortModes button[data-sort="margin"]')).toHaveClass(/active/);
+
+  const codes = () => page.locator("#commGrid .comm-tile .tile-code").allTextContents();
+  const parMarge = await codes();
+
+  await page.click('#commSortModes button[data-sort="kind"]');
+  await expect(page.locator('#commSortModes button[data-sort="kind"]')).toHaveClass(/active/);
+  await expect(page.locator('#commSortModes button[data-sort="margin"]')).not.toHaveClass(/active/);
+  expect(await codes()).not.toEqual(parMarge);
+
+  // « Code A→Z » n'était touché par aucun test non plus, et c'est le seul tri alphabétique.
+  await page.click('#commSortModes button[data-sort="code"]');
+  await expect(page.locator('#commSortModes button[data-sort="code"]')).toHaveClass(/active/);
+  await expect(page.locator('#commSortModes button[data-sort="kind"]')).not.toHaveClass(/active/);
+  const parCode = await codes();
+  expect(parCode).not.toEqual(parMarge);
+  expect([...parCode]).toEqual([...parCode].sort((a, b) => a.localeCompare(b, "fr")));
+});
+
+// La sélection était ÉCRITE pendant le rendu : `renderCommodities` remplaçait `etat.commSelected`
+// par la première ligne visible dès que la commodité choisie sortait du filtre. Elle était donc
+// perdue pour de bon — effacer le filtre ne la ramenait pas. C'est aussi l'un des trois chemins
+// qu'`etat.ts` cite pour refuser un magasin qui notifierait à l'écriture.
+test("board : la commodité choisie revient quand on efface le filtre qui la masquait", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+
+  // On choisit une tuile qui n'est PAS la première : sinon la revalidation la « retrouverait »
+  // par accident, et le test ne prouverait rien.
+  const tuile = page.locator("#commGrid .comm-tile").nth(3);
+  const nom = await tuile.getAttribute("data-name");
+  await tuile.click();
+  await expect(page.locator(`#commGrid .comm-tile[data-name="${nom}"]`)).toHaveClass(/selected/);
+  await expect(page.locator("#commDetail .comm-detail-title")).toContainText(nom);
+
+  // Un filtre qui l'exclut : le détail montre forcément autre chose.
+  await page.fill("#search", "zzzz");
+  await expect(page.locator("#commGrid .comm-tile")).toHaveCount(0);
+
+  await page.fill("#search", "");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible();
+  await expect(page.locator("#commDetail .comm-detail-title")).toContainText(nom);
+  await expect(page.locator(`#commGrid .comm-tile[data-name="${nom}"]`)).toHaveClass(/selected/);
+});
+
+// `#commHint` n'apparaissait dans AUCUN test. Son texte est écrit DEUX FOIS — en dur dans
+// index.html pour le premier affichage, et en JSX pour les rendus suivants — et l'écart entre les
+// deux, comme le doublon si l'un des deux cesse d'effacer l'autre, est purement visuel.
+test("board : l'aide suit le mode, et ne s'affiche jamais en double", async ({ page }) => {
+  await page.click("#viewCommodities");
+  await expect(page.locator("#commGrid .comm-tile").first()).toBeVisible({ timeout: 20000 });
+
+  await expect(page.locator("#commHint")).toContainText("board de marché");
+  await expect(page.locator("#commHint")).not.toContainText("tout ce qui se vend");
+  expect(await page.locator("#commHint").evaluate((e) => e.childElementCount)).toBeLessThan(8);
+  const longueurMarche = (await page.locator("#commHint").innerText()).length;
+
+  await page.click('#commBoardModes button[data-board="loot"]');
+  await expect(page.locator("#commHint")).toContainText("tout ce qui se vend");
+  await expect(page.locator("#commHint")).not.toContainText("board de marché");
+  // Le doublon se verrait ici : deux aides superposées font un texte deux fois plus long.
+  expect((await page.locator("#commHint").innerText()).length).toBeLessThan(longueurMarche * 2);
 });
 
 // ---------- Régressions du mode Butin (PR #37) ----------
@@ -2034,6 +2298,41 @@ test.describe("chargement du marché", () => {
     // Le mode finit par se remplir de VRAIS chargements combinés (plusieurs icônes par ligne).
     await expect(page.locator("#rows .multi-icons").first()).toBeVisible({ timeout: 15000 });
   });
+});
+
+// ---------- Le message du tableau des trajets n'appartient qu'aux Trajets (#147) ----------
+
+test("une vue sans tableau des trajets ne dit pas « Aucune route ne correspond aux filtres » (#147)", async ({ page }) => {
+  // `switchView` masque bien #empty en entrant dans la Tournée (app.js:1818) — puis appelle
+  // refresh(), qui n'a pas de branche pour `tour` et tombe donc dans `else render()`. Ce dernier
+  // repose `$("empty").hidden = rows.length > 0` : le message revient, et il parle d'un tableau que
+  // la Tournée n'affiche pas. #empty est un <p> FRÈRE de #routes (index.html:420) : masquer la
+  // table ne le masque pas.
+  //
+  // On vérifie d'abord que le message existe VRAIMENT dans les Trajets, sinon le test passerait
+  // sans rien prouver — c'est le piège de #26, laissé écrit à côté.
+  await page.fill("#search", "zzzz");
+  await expect(page.locator("#rows tr")).toHaveCount(0);
+  await expect(page.locator("#empty")).toBeVisible();
+
+  await page.click("#viewTour");
+  await expect(page.locator("#tour")).toBeVisible();
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Et il ne revient pas non plus à la frappe suivante : c'est `refresh()` qui le repose, donc
+  // n'importe quel geste depuis la Tournée le ferait réapparaître.
+  await page.fill("#search", "zzzzz");
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Le Plan de vol masque #controls, on y arrive donc avec le filtre déjà posé.
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+  await expect(page.locator("#empty")).toBeHidden();
+
+  // Retour aux Trajets : le message est toujours celui du tableau, il n'a pas été perdu.
+  await page.click("#viewRoutes");
+  await expect(page.locator("#empty")).toBeVisible();
+  await expect(page.locator("#empty")).toHaveText("Aucune route ne correspond aux filtres.");
 });
 
 // ---------- Service worker : le cache doit réellement se remplir (#66) ----------
@@ -2653,7 +2952,21 @@ test("score : le tableau n'écrit jamais une largeur hors [0, 100] (#39)", async
 // le conteneur qui défile tout seul. Un test au niveau page passerait à tort, et c'est exactement
 // pour ça que rien ne voyait le défaut. La tolérance de 1 px couvre `.table-shell::after`, dont le
 // crochet décoratif déborde en permanence (style.css:613) — même convention qu'à la ligne 219.
-for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 }]) {
+// #86 ajoute 1100×900 à la boucle, et c'est LUI qui la rendait rouge : mesuré à +133 px de
+// débordement sur Trajets, rail déplié — le rail lui-même. Replié à la main il tombait à +2, ce qui
+// veut dire que l'utilisateur devait le replier pour que la page tienne, sans que rien le lui dise.
+//
+// La TOLÉRANCE monte à 2 px au seul 1100, et il faut dire pourquoi plutôt que de l'arrondir : le
+// rail réglé, il reste 2 px de débordement dont il n'est pas la cause. Mesuré à cette largeur —
+// `.table-shell` fait 970, la table fait 970, les dix colonnes somment à 970, et `table.scrollWidth`
+// vaut 972. C'est donc le CONTENU d'une cellule qui sort de sa colonne, pas la table qui sort de son
+// cadre : c'est #81 (« en fenêtre réduite les chiffres sortent de leur colonne »), et le corriger ici
+// serait empiéter sur une autre issue. Le jour où #81 tombe, ce 2 redevient 1.
+for (const { largeur, hauteur, tolerance } of [
+  { largeur: 1920, hauteur: 1080, tolerance: 1 },
+  { largeur: 1280, hauteur: 720, tolerance: 1 },
+  { largeur: 1100, hauteur: 900, tolerance: 2 },
+]) {
   test(`tableaux : aucune barre horizontale en ${largeur}×${hauteur} (#54)`, async ({ page }) => {
     await page.setViewportSize({ width: largeur, height: hauteur });
     const debord = (sel) => page.locator(sel).evaluate((e) => {
@@ -2662,18 +2975,18 @@ for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur:
     });
 
     await expect(page.locator("#rows tr").first()).toBeVisible();
-    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(1);
+    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(tolerance);
 
     await page.click("#viewLoops");
     await expect(page.locator("#loopRows tr").first()).toBeVisible();
-    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(1);
+    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(tolerance);
 
     // « En route » partage le rendu de Trajets ; il faut un terminal de départ pour qu'il peuple.
     await page.click("#viewEnroute");
     const depart = await page.locator("#originList option").first().getAttribute("value");
     await page.fill("#origin", depart);
     await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
-    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(1);
+    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(tolerance);
   });
 }
 
@@ -2834,4 +3147,334 @@ test("Soute : une déclaration en cours de saisie survit à un geste fait ailleu
   await page.click("#viewRoutes");
   await expect(page.locator("#holdAddName")).toHaveValue("Titanium");
   await expect(page.locator("#holdAddScu")).toHaveValue("42");
+});
+
+// « ⧉ Copier » de la carte de chargement — le dernier bouton de copie sans aucun test, mesuré au
+// moment de démonter la coquille : `grep -rn copyManifest e2e/` ne rendait rien, alors que ses trois
+// frères (`#planCopy`, `#copyDepots`, `#exportCorrections`) en avaient. Un geste qu'on s'apprête à
+// déménager sans filet est un geste qu'on déménagera mal.
+//
+// Ce que le texte doit porter, et qui n'est vérifiable QUE là : le couple de terminaux en tête (une
+// liste de commodités sans sa route ne se relit pas), une ligne par commodité avec ses SCU, et le
+// total. C'est un plan qu'on lit sur un second écran en pilotant — pas un export de données.
+test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son total (#copyManifest)", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await manifesteDepuis(page, "Megumi — Pyro");
+
+  // `.mname` porte AUSSI le ✕ de retrait de la ligne : on ne garde que le nom.
+  const premiere = (await page.locator("#manifest .mname").first().innerText()).replace(/\s*✕\s*$/, "").trim();
+  await page.click("#copyManifest");
+  await expect(page.locator("#copyManifest")).toHaveText(/Copié/);
+
+  const texte = await page.evaluate(() => navigator.clipboard.readText());
+  expect(texte).toContain("Manifeste");
+  expect(texte).toContain("Megumi");                    // le départ, en tête
+  expect(texte).toContain(premiere);                    // la première commodité chargée
+  expect(texte).toMatch(/\d+ SCU/);                     // des quantités, pas seulement des noms
+  expect(texte).toMatch(/Total : .*SCU.*profit/);       // et la ligne qui conclut
+
+  // Le libellé REVIENT : « ✓ Copié » est un retour visuel, pas un état. Un bouton resté sur
+  // « Copié » ferait croire à une seconde copie qui n'a pas eu lieu.
+  await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
+});
+
+// #53 : « ✓ chargé » est le geste le PLUS engageant de l'application — il crée les lots de la soute
+// au prix affiché, retranche le stock du terminal d'achat et fige les autres jambes qui achètent au
+// même point. C'était aussi l'élément le plus effacé de sa rangée : 9,5 px en `var(--muted)`, sur
+// 19 px de haut, entre deux libellés de 11,5 px. L'emphase allait à l'état DÉJÀ ACQUIS (« ⬢ à bord »,
+// vert plein) et pas à l'action à faire.
+//
+// Les quatre mesures ci-dessous sont celles de l'issue, dans son ordre. La dernière est la
+// contrainte à ne pas casser en grossissant : à 460 px, l'en-tête s'empilait sur deux lignes et le
+// centre de la zone cliquable tombait sur le bouton au lieu du dépliement (style.css).
+test("Voyage : « ✓ chargé » se lit comme l'action de la jambe (#53)", async ({ page }) => {
+  await jambeChargeable(page);
+  const bouton = page.locator("#journeyCard .jleg-load").first();
+  const route = page.locator("#journeyCard .jleg-route").first();
+
+  // 1. La cible tactile : même règle que ▶ (WCAG 2.2 SC 2.5.8), déjà tenue ailleurs dans ce fichier.
+  const b = await bouton.boundingBox();
+  expect(b.height, "hauteur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+  expect(b.width, "largeur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+
+  // 2. Il ne peut plus être le plus petit texte de sa rangée.
+  const px = (l) => l.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+  expect(await px(bouton), "corps du bouton vs nom de la jambe").toBeGreaterThanOrEqual(await px(route));
+
+  // 3. Il n'est plus dans la couleur que le dépôt réserve au secondaire, AVANT le clic.
+  await expect(bouton).toHaveText(/chargé/i); // on est bien à l'état non chargé
+  const couleur = await bouton.evaluate((e) => getComputedStyle(e).color);
+  expect(couleur, "couleur au repos").not.toBe("rgb(138, 147, 168)"); // var(--muted)
+
+  // 4. L'en-tête reste sur UNE ligne, à la largeur nominale de la carte comme à sa largeur repliée.
+  //
+  // La mesure porte sur le CHEVAUCHEMENT VERTICAL du nom et du bouton, pas sur la hauteur de
+  // l'en-tête. Celle-ci grandit légitimement quand le bouton grandit — une première version de ce
+  // test comparait à « deux fois la hauteur du nom » et échouait sur un en-tête parfaitement sur une
+  // ligne. Deux éléments qui se chevauchent en Y sont sur la même rangée ; c'est ça, « une ligne ».
+  for (const largeur of [1440, 900]) {
+    await page.setViewportSize({ width: largeur, height: 900 });
+    const r = await route.boundingBox();
+    const l = await bouton.boundingBox();
+    const chevauche = Math.min(r.y + r.height, l.y + l.height) - Math.max(r.y, l.y);
+    expect(chevauche, `nom et bouton sur la même rangée à ${largeur} px`).toBeGreaterThan(0);
+
+    // 5. LE CENTRE DE L'EN-TÊTE N'EST PAS SUR LE BOUTON, et c'est la contrainte que grossir le
+    //    bouton a failli emporter — elle n'était tenue par AUCUN test. `.jleg-head` est cliquable
+    //    pour déplier l'éditeur et CONTIENT ce bouton : quand le centre tombe dessus, cliquer le
+    //    milieu de la rangée charge la jambe au lieu de la déplier. Le geste le plus engageant de
+    //    l'application, déclenché par erreur. Playwright vise le centre, donc la CI l'a vu — mais
+    //    seulement par ricochet, sur six autres tests, et sans dire pourquoi.
+    const auCentre = await page.locator("#journeyCard .jleg-head").first().evaluate((h) => {
+      const b = h.getBoundingClientRect();
+      const el = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return el ? el.className : "";
+    });
+    expect(auCentre, `ce qu'on touche au centre de l'en-tête à ${largeur} px`).not.toContain("jleg-load");
+  }
+});
+
+// #86, second critère : le point de rupture ne doit PAS marcher sur la préférence de l'utilisateur.
+// C'est le piège de cette issue — une bascule automatique qui écrase un choix explicite est plus
+// agaçante que le défaut qu'elle corrige. Elle ne le peut pas ici, et c'est structurel : le repli
+// automatique est une media query, `rail.js` n'en sait rien et ne touche jamais à la largeur. Ce
+// test épingle cette séparation, qui se perdrait au premier « repli automatique en JavaScript ».
+test("Rail : le repli automatique ne mange pas la préférence manuelle (#86)", async ({ page }) => {
+  // Au large, le choix manuel commande.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  // `.rail` anime sa largeur sur 0,18 s : une mesure prise juste après le clic lit l'état d'AVANT.
+  // On attend que la valeur se pose, plutôt que de dormir un temps arbitraire.
+  const railVaut = (px) => expect.poll(
+    () => page.locator(".rail").evaluate((e) => Math.round(e.getBoundingClientRect().width)),
+    { timeout: 3000 }
+  ).toBe(px);
+  await railVaut(208);
+
+  await page.click("#railToggle");
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "false");
+
+  // On rétrécit : le rail est déjà replié, rien ne change.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68);
+
+  // Sous le point de rupture, le bouton est masqué — la fenêtre a déjà tranché, un contrôle qui ne
+  // fait rien n'a pas à s'afficher.
+  await expect(page.locator("#railToggle")).toBeHidden();
+
+  // On réélargit : la préférence REPLIÉE est toujours celle de l'utilisateur, elle reprend la main.
+  // C'est le sens qui compte : la media query n'a rien écrasé, elle s'est seulement superposée.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toBeVisible();
+
+  // Et dans l'autre sens : on déplie AU LARGE, on rétrécit, on réélargit — le choix revient intact.
+  await page.click("#railToggle");
+  await railVaut(208);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68); // la fenêtre commande ici
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(208); // et le choix reprend là
+
+  // Il survit au rechargement, comme avant #86.
+  await page.reload();
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await railVaut(208);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+// #81 : la mesure qui MANQUAIT. Celle de #54 porte sur `.table-shell` — le CADRE — et un chiffre
+// qui déborde de sa cellule sans élargir la table lui est invisible. C'est exactement ce qui s'est
+// produit : #54 a réduit le défaut sans le supprimer, et son critère « aucun nombre ne déborde de
+// sa colonne » n'a jamais été vérifié. Celle-ci porte sur la CELLULE. Les deux sont nécessaires.
+//
+// `td.num` est en `white-space: nowrap`, et c'est voulu : un « 6 315 398 » coupé en deux lignes est
+// illisible. Mais un nombre qui ne se coupe pas et dont la colonne rétrécit SORT de sa cellule et
+// passe sous la voisine. Ni `overflow: hidden` seul — on lirait « 1 759 » pour « 1 759 500 ».
+for (const { largeur, hauteur } of [
+  { largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 },
+  { largeur: 1100, hauteur: 900 }, { largeur: 960, hauteur: 900 },
+]) {
+  test(`chiffres : aucun ne sort de sa colonne en ${largeur}×${hauteur} (#81)`, async ({ page }) => {
+    await page.setViewportSize({ width: largeur, height: hauteur });
+
+    // Rend les cellules numériques qui débordent, avec de quoi les nommer dans le rapport : sans le
+    // libellé de la colonne et la valeur, un « +17 » ne dit pas où regarder.
+    const debordements = (sel) => page.locator(sel).evaluate((table) => {
+      const titres = [...table.querySelectorAll("thead th")].map((h) => h.textContent.trim());
+      const sortis = [];
+      for (const td of table.querySelectorAll("tbody td.num")) {
+        const trop = td.scrollWidth - td.clientWidth;
+        if (trop <= 0) continue;
+        const rang = [...td.parentElement.children].indexOf(td);
+        sortis.push(`${titres[rang] || `col ${rang + 1}`} +${trop} (${td.textContent.trim().slice(0, 18)})`);
+      }
+      // Une entrée par COLONNE, pas par ligne : 316 lignes rendraient le rapport illisible.
+      return [...new Set(sortis.map((x) => x.split(" +")[0]))];
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+    expect(await debordements("#routes"), "Trajets").toEqual([]);
+
+    await page.click("#viewLoops");
+    await expect(page.locator("#loopRows tr").first()).toBeVisible();
+    expect(await debordements("#loops"), "Boucles").toEqual([]);
+
+    await page.click("#viewEnroute");
+    const depart = await page.locator("#originList option").first().getAttribute("value");
+    await page.fill("#origin", depart);
+    await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
+    expect(await debordements("#enroute"), "En route").toEqual([]);
+  });
+}
+// #60 : les commodités d'une station sortaient dans l'ordre du tableau `commodities` de
+// market.json — c'est-à-dire l'ordre d'insertion d'une Map remplie en parcourant les prix UEX, qui
+// ne veut rien dire. Sur GrimHEX (3 achats, 89 ventes) il fallait balayer la grille à l'œil.
+//
+// L'incohérence sautait d'autant plus aux yeux que la BANDE de stations, elle, est rangée :
+// `groupOverridesByTerminal` départage par `localeCompare(terminal, "fr")`. On choisissait sa
+// station dans une liste ordonnée pour tomber dans un contenu qui ne l'était pas.
+//
+// Le tri est vérifié PAR SECTION : « On y achète » et « On y écoule » sont deux listes, et un tri
+// posé sur le parcours global les mêlerait. `localeCompare(…, "fr")` et non `<` : « Étain » se
+// range après « Estuarine », pas à la fin de l'alphabet.
+test("Corrections : les commodités d'une station sortent par ordre alphabétique (#60)", async ({ page }) => {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+
+  // La station la plus fournie du jeu de données : c'est là que le défaut se voit.
+  const labels = await page.locator("#stationList option").evaluateAll((os) => os.map((o) => o.value));
+  const grimhex = labels.find((l) => /GrimHEX/i.test(l)) || labels[0];
+  await page.fill("#station", grimhex);
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible();
+
+  for (const section of ["achat", "vente"]) {
+    // Le DERNIER `<span>` porte le nom ; le premier est l’icône de catégorie, et `.scomm-name` les
+    // contient tous deux. Trier le libellé décoré trierait par emoji — pas ce que l’œil cherche.
+    const noms = await page.locator(`#correctionsStation .scomm.${section} .scomm-name > span:last-child`).allInnerTexts();
+    if (noms.length < 2) continue; // une section à zéro ou une entrée ne prouve rien
+    // Le marqueur « ⛔ ILLÉGAL » est un frère du texte, dans le même span : il ne compte pas.
+    const propres = noms.map((n) => n.replace(/⛔.*$/, "").replace(/\s+/g, " ").trim());
+    const attendu = [...propres].sort((a, b) => a.localeCompare(b, "fr"));
+    expect(propres, `section ${section} (${propres.length} tuiles)`).toEqual(attendu);
+  }
+});
+
+// #52 : en multi-commodité, la première colonne alignait trois objets dont les tailles disaient le
+// CONTRAIRE de leur importance — ▶ à 30 px (action principale), le bouton du manifeste à 24, et les
+// pastilles de catégorie à 30. Le seul autre bouton de la cellule était donc plus petit que des
+// pastilles qui ne sont même pas cliquables.
+//
+// Pire : sa boîte 📦 n'était pas à lui. `KIND_ICON.other` vaut « 📦 » et sert de repli à toute
+// catégorie sans icône dédiée — six commodités de l'amorce l'affichent en pastille, à 6 px du bouton
+// et en plus grand que lui. Sur ces lignes-là, on ne savait plus lequel des deux 📦 était cliquable.
+test("Trajets multi : le bouton du manifeste n'est ni le plus petit ni un sosie (#52)", async ({ page }) => {
+  await page.check("#useCargo");
+  await page.check("#multiCommodity");
+  await expect(page.locator("#rows .route-toggle").first()).toBeVisible({ timeout: 8000 });
+
+  const cellule = page.locator("#rows tr .commodity-cell").first();
+  const manifeste = cellule.locator(".route-toggle");
+  const jouer = cellule.locator(".journey-pick");
+  const pastille = cellule.locator(".multi-icons .cicon").first();
+
+  // 1. Même taille que ▶, et au moins la cible tactile de WCAG 2.2 SC 2.5.8. Sa subordination se dit
+  //    par la COULEUR — contour contre fond plein — jamais par la taille.
+  const bm = await manifeste.boundingBox();
+  const bj = await jouer.boundingBox();
+  expect(bm.width, "largeur du bouton manifeste").toBe(bj.width);
+  expect(bm.height, "hauteur du bouton manifeste").toBe(bj.height);
+  expect(bm.height).toBeGreaterThanOrEqual(24);
+
+  // 2. Les pastilles cessent d'être les plus gros objets de la ligne.
+  const bp = await pastille.boundingBox();
+  expect(bp.width, "pastille vs bouton").toBeLessThanOrEqual(bm.width);
+
+  // 3. Elles passent SOUS les deux boutons, alignées sur le bord gauche du bouton manifeste : le
+  //    décrochement dit ce qu'aucun texte ne dit — ces commodités sont le contenu de ce manifeste.
+  expect(Math.abs(bp.x - bm.x), "indentation des pastilles").toBeLessThanOrEqual(1);
+  expect(bp.y, "les pastilles sont sous les boutons").toBeGreaterThan(bm.y + bm.height - 1);
+
+  // 4. Plus aucun glyphe partagé entre le bouton et les pastilles de la MÊME cellule.
+  const glyphes = await cellule.locator(".multi-icons .cicon").allInnerTexts();
+  const sien = (await manifeste.innerText()).trim();
+  expect(glyphes.map((g) => g.trim()), "le bouton ne porte pas un glyphe de pastille").not.toContain(sien);
+});
+
+// #50 : le bouton de suggestion annonçait une marge AU SCU sur un stock qu'on n'a pas. Mesuré sur
+// l'instantané : 37 origines sur 93 mettaient la mauvaise destination en tête, et depuis PSS Alpha
+// le bouton de gauche valait 56 832 aUEC quand celui rangé derrière en valait 311 010 — 254 178
+// laissés au sol par un classement qui regardait le prix au lieu du total.
+//
+// Le vrai contrat n'est pas « un montant s'affiche » mais « CE montant est celui de la jambe ». Une
+// suggestion qui promet un chiffre que la jambe créée contredit est pire que pas de chiffre du tout.
+test("Voyage : le montant d'une suggestion est celui que la jambe rapporte vraiment (#50)", async ({ page }) => {
+  await page.check("#useCargo");
+  await voyageAvecSuggestion(page);
+
+  const bouton = page.locator("#journeyCard .jstop-suggest").first();
+  const annonce = (await bouton.innerText()).trim();
+  // Un montant compact et SIGNÉ, pas une marge au SCU : « +311K », jamais « +9 472/SCU ».
+  expect(annonce, "le bouton annonce un montant compact").toMatch(/\+\s*[\d,.]+[KM]?\s*$/);
+  expect(annonce, "le bouton n'annonce plus une marge au SCU").not.toContain("/SCU");
+
+  // L'infobulle porte le montant en clair ET la marge au SCU, dans cet ordre.
+  const bulle = await bouton.getAttribute("title");
+  expect(bulle, "l'infobulle dit ce que l'arrêt rapporte").toMatch(/aUEC pour un chargement complet/);
+  expect(bulle, "l'infobulle garde la marge au SCU").toMatch(/\/SCU/);
+
+  // LE CONTRAT : on ajoute l'arrêt, et le profit de la jambe créée doit valoir ce qui était promis.
+  // Les deux passent par le même formateur compact, donc la comparaison est exacte.
+  const promis = annonce.match(/\+\s*([\d,.]+[KM]?)\s*$/)[1];
+  await bouton.click();
+  await expect(page.locator("#journeyCard .jleg")).toHaveCount(2, { timeout: 8000 });
+  const profitJambe = await page.locator("#journeyCard .jleg").last().locator(".jleg-profit").innerText();
+  const compact = await page.evaluate(
+    ([texte]) => {
+      const n = Number(texte.replace(/[^\d-]/g, ""));
+      const a = Math.abs(n);
+      if (a >= 1e6) return Math.round(n / 1e5) / 10 + "M";
+      if (a >= 1e3) { const k = Math.round(n / 100) / 10; return Math.abs(k) >= 1000 ? Math.round(n / 1e5) / 10 + "M" : k + "K"; }
+      return String(Math.round(n));
+    },
+    [profitJambe],
+  );
+  expect(compact, `la jambe rapporte ${profitJambe}, le bouton promettait +${promis}`).toBe(promis);
+});
+
+// #44 : UEX publie `is_concept` — un vaisseau ANNONCÉ, jamais volable. 20 des 128 vaisseaux à soute
+// en sont, et le tri par capacité les mettait en tête : 7 des 12 premières lignes n'existaient pas
+// en jeu, MISC Hull E et ses 12 000 SCU en ouverture. Un classement de routes chiffré sur 12 000 SCU
+// imaginaires était donc à un clic, et à zéro avertissement.
+//
+// Le compte n'est PAS figé en dur : `data/ships.json` est régénéré par `chore(data)`, et une
+// assertion à 108 périmerait au premier rebuild. On lit le fichier servi et on compare.
+test("Vaisseau : le sélecteur ouvre sur ce qui est pilotable, et dit quand ça ne l'est pas (#44)", async ({ page }) => {
+  const servis = await page.evaluate(() => fetch("data/ships.json").then((r) => r.json()));
+  const pilotables = servis.filter((s) => !s.concept);
+  expect(pilotables.length, "l'instantané distingue bien les concepts").toBeLessThan(servis.length);
+
+  // AU FOCUS : que du pilotable, et le plus gros en tête.
+  await page.click("#ship");
+  await expect(page.locator("#shipList li").first()).toBeVisible();
+  await expect(page.locator("#shipList li")).toHaveCount(pilotables.length);
+  await expect(page.locator("#shipList .ship-opt-concept")).toHaveCount(0);
+  const premier = await page.locator("#shipList li span").first().innerText();
+  const attendu = [...pilotables].sort((a, b) => b.scu - a.scu)[0].name;
+  expect(premier.trim(), "le premier de la liste est le plus gros PILOTABLE").toBe(attendu);
+
+  // EN TAPANT : un concept redevient trouvable pour qui le cherche exprès, marqueur compris.
+  const concept = servis.find((s) => s.concept);
+  await page.fill("#ship", concept.name.split(" ").slice(-2).join(" "));
+  const ligne = page.locator("#shipList li").filter({ hasText: concept.name }).first();
+  await expect(ligne).toBeVisible();
+  await expect(ligne.locator(".ship-opt-concept")).toHaveText(/concept/i);
+
+  // ET SUR LA CARTE : c'est là que le mensonge durait, puisqu'un choix restauré n'affiche plus la
+  // liste. Le marqueur doit y être aussi.
+  await ligne.click();
+  await expect(page.locator("#shipCard")).toBeVisible();
+  await expect(page.locator("#shipCardScu .ship-opt-concept")).toHaveText(/concept/i);
+  await expect(page.locator("#shipCardScu .ship-opt-concept")).toHaveAttribute("title", /pas encore volable/i);
 });

@@ -113,3 +113,45 @@ test("la même charge venue de market.json (vue En route) reste inerte", async (
   expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   expect(erreurs).toEqual([]);
 });
+
+test("un NOM de terminal hostile reste inerte dans « Je suis à » (carte de déclaration)", async ({ page }) => {
+  // Quatrième surface d'interpolation, et la seule qui recopie un nom de terminal dans un ATTRIBUT
+  // `value=` (app.js:1502) : la charge y referme l'attribut au lieu d'ouvrir une balise. Elle n'a
+  // jamais été couverte — « hold » n'apparaissait pas une seule fois dans ce fichier.
+  const erreurs = [];
+  page.on("pageerror", (e) => erreurs.push(String(e)));
+  await page.route("**/data/market.json", async (route) => {
+    const res = await route.fetch();
+    const market = await res.json();
+    for (const t of market.terminals) t.name += CHARGE;
+    await route.fulfill({ response: res, json: market });
+  });
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+
+  // Ouvrir le formulaire fait naître « Je suis à », et charge le marché empoisonné au passage.
+  await page.locator("#holdAddOpen").click();
+  await expect(page.locator("#holdWhere")).toBeVisible({ timeout: 20_000 });
+
+  // Poser la position par le champ de départ d'« En route » : c'est le même champ derrière, et
+  // c'est lui que la carte relit pour réémettre son `value=`.
+  await page.click("#viewEnroute");
+  await expect(page.locator("#originList option").first()).toBeAttached({ timeout: 8000 });
+  const empoisonne = await page.locator("#originList option").first().getAttribute("value");
+  expect(empoisonne, "la charge n'a pas atteint la datalist").toContain("onfocus");
+  await page.fill("#origin", empoisonne);
+  await page.locator("#origin").blur();
+
+  // Non vacuisant : la valeur hostile est bien arrivée jusqu'au champ, en TEXTE et non en balisage.
+  await expect(page.locator("#holdWhere")).toHaveValue(empoisonne, { timeout: 10_000 });
+
+  const attrs = await page.locator("#holdDeclare").evaluate((el) =>
+    [...el.querySelectorAll("*")].flatMap((n) => n.getAttributeNames())
+  );
+  for (const interdit of ["onfocus", "autofocus", "onmouseover", "data-x"]) {
+    expect(attrs, `attribut injecté « ${interdit} » dans #holdDeclare`).not.toContain(interdit);
+  }
+  await page.mouse.move(10, 10);
+  expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+  expect(erreurs).toEqual([]);
+});

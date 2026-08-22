@@ -55,6 +55,12 @@
             <span class="brand-sub">Flight&nbsp;Ops</span>
           </span>
         </button>
+        <!-- Le rejeu de l'aide (#62), à la place que le commentaire ci-dessus lui réservait : FRÈRE
+             de #brandHome, jamais son enfant. Son écouteur est une délégation posée sur .brand
+             (aide-gestes.ts) — ce markup n'appartient pas à l'arbre React.
+             Masqué quand le rail est rétracté : il n'y reste que 68 px, dont 40 pour le losange. -->
+        <button id="aideRejouer" class="brand-aide" type="button"
+                aria-label="Revoir l'aide de démarrage" title="Revoir l'aide de démarrage">?</button>
       </div>
 
       <button class="rail-toggle" id="railToggle" title="Rétracter / déplier le menu" aria-label="Rétracter le menu" aria-expanded="true">«</button>
@@ -134,7 +140,7 @@
 
       <main>
         <!-- L'`id` n'est pas décoratif : cette section était la SEULE section de contrôles que
-             switchView ne basculait pas, donc permanente par construction. Le Plan de vol la masque
+             la bascule de vue ne la touchait pas, donc permanente par construction. Le Plan de vol la masque
              (ADR-004 §6) — on n'y change rien au voyage, et une barre de filtres y laisserait croire
              qu'agir dessus modifie ce qu'on regarde. Masquer n'est pas désactiver : les valeurs
              survivent au passage et au retour. -->
@@ -175,7 +181,7 @@
             <label><input id="legalOnly" type="checkbox" /> Commodités légales uniquement</label>
             <label><input id="capStock" type="checkbox" /> Limiter au stock &amp; à la demande (UEX)</label>
             <!-- Le choix « combinés seuls / avec les simples » est un réglage DE cette coche : il vit
-                 sur sa ligne, et n'apparaît que quand elle est active (cf. syncToggles). -->
+                 sur sa ligne, et n'apparaît que quand elle est active (cf. `synchroniserReglages`, filtres.ts). -->
             <div class="check-row">
               <label id="multiCommodityLabel" title="Vue « Trajets » : remplit la soute avec PLUSIEURS commodités d'un même point A vers un même point B (nécessite la soute)."><input id="multiCommodity" type="checkbox" /> Multi commodité <span class="hint-tag">Trajets</span></label>
               <span class="field sub-field" id="multiModeField" hidden>
@@ -189,7 +195,7 @@
             <!-- Le coefficient est un réglage DE cette coche : il vit sur sa ligne plutôt qu'en
                  champ autonome, sinon son apparition réorganisait tout le panneau (les champs
                  suivants passaient à la ligne). Masqué quand l'interrupteur est inactif (cf.
-                 syncToggles). Id volontairement court : la clé d'état EST l'id, il finit dans l'URL. -->
+                 `synchroniserReglages`). Id volontairement court : la clé d'état EST l'id, il finit dans l'URL. -->
             <div class="check-row">
               <label id="autoloadLabel" title="Retranche les frais de chargement/déchargement automatique aux terminaux : les colonnes profit passent en NET et le classement suit ce net. C'est une estimation (±3 %), signalée par « ≈ »."><input id="autoload" type="checkbox" /> Frais d'autoload <span class="hint-tag">Net</span></label>
               <span class="field sub-field" id="alkField" hidden>
@@ -352,7 +358,11 @@
               <button type="button" data-sort="kind">Catégorie</button>
             </div>
           </div>
-          <p class="enroute-hint" id="commHint">Le <b>board de marché</b> : chaque tuile = une commodité (code UEX) et sa <b>marge max</b>, colorée selon son intérêt. Clique une tuile — ou cherche via le champ <b>Commodité</b> — pour voir <b>tous ses points d'achat / vente</b> (stock, demande, prix) et surtout <b>où l'écouler</b> quand une station est saturée.</p>
+          <!-- VIDE, et c'est délibéré : l'aide est rendue par `vues/commodites-vue.tsx` à travers
+               un portail, et `createPortal` AJOUTE ses enfants là où `createRoot` effaçait. Y
+               laisser le texte en dur afficherait DEUX aides superposées dès le premier rendu.
+               Elle était de toute façon dupliquée mot pour mot dans `commodites.tsx`. -->
+          <p class="enroute-hint" id="commHint"></p>
         </section>
 
         <div id="commodities" class="commodities-wrap" hidden>
@@ -431,7 +441,12 @@
     </div>
   </div>
 
-  <script type="module" src="app.js"></script>
+  <!-- La racine React unique (ADR-011). Elle n'affiche rien en propre : ses vues sont rendues
+       dans les conteneurs nommés ci-dessus, par portail, le temps que ce markup devienne des
+       composants à son tour. -->
+  <div id="racine"></div>
+
+  <script type="module" src="amorce.ts"></script>
   <!-- Sorti de la page pour que `script-src 'self'` ait un sens (cf. la <meta> du <head>).
        Script CLASSIQUE et non module : il doit continuer de s'exécuter AVANT app.js (différé),
        sans quoi le rail s'afficherait déplié le temps d'un rendu. Toute retouche ici se répercute

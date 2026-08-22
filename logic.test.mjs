@@ -13,11 +13,11 @@ import {
   routeMetrics, loopMetrics, netMarginRoi, dealFrom, enRouteDeals, bestManifest, buildChainAdjacency,
   pairEligible, suggestionsFrom,
   manifestsFrom, multiTrips, tripMetrics, legFromTrip,
-  commoditySummaries, commodityPoints, compactValue, valueTiers, resolveCommodity, ambiguousCodes,
+  commoditySummaries, commodityPoints, compactValue, palierMarge, valueTiers, resolveCommodity, ambiguousCodes,
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
-  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
+  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, repartirVente, sellFromHold, storeFromHold, takeFromStore,
   refusActif, migrerRefus, DUREE_VOL,
   refuseHere, sellableAt, sellAllAt, offloadPlan, tourneeEcoulement, tourneesEcoulement, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -28,7 +28,7 @@ import {
   stationTree, groupOverridesByTerminal,
   isoUTC, secDepuisISO, FORMAT_EXPORT, migrerCorrections,
   exporterCorrections, relireCorrections, exporterEntrepots,
-} from "./logic.mjs";
+} from "./logic.ts";
 
 // ---------- Temps de trajet ----------
 test("tripMinutes : manutention + distance + saut inter-système", () => {
@@ -112,11 +112,16 @@ test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
 // remettrait à émettre du CSS invalide. Vérifié en remettant app.js à sa version d'avant : les deux
 // e2e du score passaient encore. Ceinture ET bretelles : la feuille de style rattrape, l'appel
 // empêche. On teste donc l'appel lui-même, faute de pouvoir l'observer.
-test("fiabiliteCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
-  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const cellule = app.match(/function fiabiliteCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
-  assert.ok(cellule, "ancre : fiabiliteCell existe toujours sous ce nom");
-  assert.match(cellule[0], /width:\$\{scoreBarWidth\(/,
+//
+// IL LISAIT `app.js`, ET C'ÉTAIT SON DÉFAUT. La cellule y était devenue du code MORT — plus aucun
+// appelant depuis que le rendu est passé à React — et seul CE test la maintenait en vie. Il gardait
+// donc un jumeau que personne n'affichait, pendant que le vrai rendu pouvait dériver librement.
+// Rebranché sur `CelluleFiabilite`, il garde enfin ce qui s'affiche.
+test("CelluleFiabilite passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
+  const src = readFileSync(new URL("./vues/communs.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const cellule = src.match(/export function CelluleFiabilite\([\s\S]*?\n\}/);
+  assert.ok(cellule, "ancre : CelluleFiabilite existe toujours sous ce nom");
+  assert.match(cellule[0], /width: scoreBarWidth\(/,
     "la largeur de .scorebar i doit passer par scoreBarWidth, jamais par le score brut");
 });
 
@@ -1266,6 +1271,38 @@ test("compactValue : notation compacte K/M", () => {
   assert.equal(compactValue(540), "540");
   assert.equal(compactValue(0), "0");
   assert.equal(compactValue(null), "—");
+  // Le cas de bord de #50, et il était FAUX en production : 999 999 rendait « 1000K », soit quatre
+  // chiffres devant un préfixe qui existe pour n'en laisser que trois. Un montant qui atteint le
+  // million doit le DIRE — c'est la seule frontière que ce formateur trace.
+  assert.equal(compactValue(999999), "1M");
+  assert.equal(compactValue(999499), "999.5K");
+  assert.equal(compactValue(-999999), "-1M");
+});
+
+// ---------- Heatmap relative (mode Marché) ----------
+test("palierMarge colore RELATIVEMENT au maximum de la liste, pas en aUEC absolus", () => {
+  // Les quatre frontières de la spec : 0,66 / 0,40 / 0,18, et le reste.
+  assert.equal(palierMarge(1000, 1000), "t-hot");   // r = 1
+  assert.equal(palierMarge(660, 1000), "t-hot");    // r = 0,66 pile
+  assert.equal(palierMarge(659, 1000), "t-warm");
+  assert.equal(palierMarge(400, 1000), "t-warm");   // r = 0,40 pile
+  assert.equal(palierMarge(399, 1000), "t-mid");
+  assert.equal(palierMarge(180, 1000), "t-mid");    // r = 0,18 pile
+  assert.equal(palierMarge(179, 1000), "t-low");
+  assert.equal(palierMarge(1, 1000), "t-low");
+
+  // La MÊME marge change de couleur si le board change : c'est le point.
+  assert.equal(palierMarge(500, 1000), "t-warm");
+  assert.equal(palierMarge(500, 500), "t-hot");
+});
+
+test("palierMarge : sans marge, hors barème — et jamais une division par zéro", () => {
+  assert.equal(palierMarge(null, 1000), "t-none");
+  assert.equal(palierMarge(undefined, 1000), "t-none");
+  assert.equal(palierMarge(0, 1000), "t-none");
+  assert.equal(palierMarge(-50, 1000), "t-none");   // une marge négative n'est pas « la plus basse »
+  // Un board dont RIEN n'a de marge : le rapport vaut 0, donc le palier le plus bas — pas NaN.
+  assert.equal(palierMarge(100, 0), "t-low");
 });
 
 // ---------- Heatmap par rang (mode Butin) ----------
@@ -2082,6 +2119,45 @@ test("sellFromHold : vendre plus que ce qu'on a ne crée rien, et ne passe pas e
   assert.equal(r.vendu, 50);
   assert.deepEqual(r.hold, []);
   assert.equal(sellFromHold([], "Gold", 10, 1400).vendu, 0); // soute vide
+});
+
+test("repartirVente : le scénario fondateur d'#49 — l'écran du jeu dit 2 170, donc 30 partent", () => {
+  assert.deepEqual(repartirVente(2200, 2170, "reste"), { part: 30, reste: 2170 });
+  assert.deepEqual(repartirVente(2200, 30, "part"), { part: 30, reste: 2170 });
+});
+
+test("repartirVente : hors bornes, vide et NaN sont ramenés — jamais de négatif, jamais un SCU coupé", () => {
+  assert.deepEqual(repartirVente(2200, "", "reste"), { part: 2200, reste: 0 });    // champ vidé : « rien ne reste »
+  assert.deepEqual(repartirVente(2200, "abc", "part"), { part: 0, reste: 2200 });  // type=number rend "" sur une lettre
+  assert.deepEqual(repartirVente(2200, -40, "part"), { part: 0, reste: 2200 });
+  assert.deepEqual(repartirVente(2200, 9999, "part"), { part: 2200, reste: 0 });
+  assert.deepEqual(repartirVente(2200, 30.9, "part"), { part: 30, reste: 2170 });  // troncature : jamais 31
+  assert.deepEqual(repartirVente(0, 10, "part"), { part: 0, reste: 0 });           // soute vide : rien à répartir
+});
+
+test("repartirVente : un total douteux ne fabrique jamais de fret", () => {
+  // `data-total` absent du conteneur -> Number(undefined) -> NaN. La fonction ne doit pas inventer.
+  assert.deepEqual(repartirVente(NaN, 30, "part"), { part: 0, reste: 0 });
+  assert.deepEqual(repartirVente(-2200, 30, "reste"), { part: 0, reste: 0 });
+  assert.deepEqual(repartirVente(2200.9, 2200.9, "reste"), { part: 0, reste: 2200 });
+});
+
+test("repartirVente : `part + reste === total` est un INVARIANT, quelle que soit l'entrée", () => {
+  // C'est CET invariant qui autorise le miroir de l'interface à écrire dans le champ voisin sans
+  // jamais afficher un couple qui ne veuille rien dire.
+  const saisies = ["", "   ", "abc", "2170", -5, 0.4, 12.7, 1e9, NaN, Infinity, null, undefined];
+  for (const total of [0, 1, 96, 2200]) {
+    for (const saisi of saisies) {
+      for (const champ of ["part", "reste"]) {
+        const r = repartirVente(total, saisi, champ);
+        const ou = `total=${total} saisi=${String(saisi)} champ=${champ}`;
+        assert.equal(r.part + r.reste, total, ou);
+        assert.ok(Number.isInteger(r.part) && Number.isInteger(r.reste), ou);
+        assert.ok(r.part >= 0 && r.reste >= 0, ou);
+        assert.ok(r.part <= total && r.reste <= total, ou);
+      }
+    }
+  }
 });
 
 test("freeCargo : la place libre tient compte de ce qui est à bord", () => {
@@ -3283,6 +3359,45 @@ test("stopSuggestions : ne propose JAMAIS un trajet que la vue refuse d'afficher
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ noOutpost: true }))), ["Relais"]);
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ sameOnly: true }))), ["Poste"]);
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ q: "ferraille" }))), ["Relais"]);
+});
+
+// #50 : LE MARCHÉ DE L'ARBITRAGE. Deux destinations, et celle qui a la plus forte marge au SCU est
+// celle qui rapporte le MOINS — parce qu'elle n'a que 3 SCU en rayon. C'est exactement le défaut
+// mesuré sur les vraies données : 37 origines sur 93 mettent la mauvaise destination en tête, et à
+// PSS Alpha le bouton de gauche vaut 56 832 aUEC quand celui rangé derrière en vaut 311 010.
+const MARCHE_NET = {
+  terminals: [
+    { name: "Dépôt", system: "Stanton", planet: "P", outpost: false },
+    { name: "Rare", system: "Stanton", planet: "P", outpost: false },   // marge énorme, stock famélique
+    { name: "Volume", system: "Stanton", planet: "P", outpost: false }, // marge modeste, stock plein
+  ],
+  commodities: [
+    { name: "Gemme", code: "GEM", kind: "metal", illegal: false, buys: [[0, 1000, 3, 9e9, 3]], sells: [[1, 6000, 9e9, 9e9, 3]] },
+    { name: "Sable", code: "SAB", kind: "metal", illegal: false, buys: [[0, 100, 9e9, 9e9, 3]], sells: [[2, 500, 9e9, 9e9, 3]] },
+  ],
+};
+
+test("stopSuggestions : le classement suit ce que l'arrêt RAPPORTE, pas la marge au SCU (#50)", () => {
+  // « Rare » : 5 000 de marge au SCU, mais 3 SCU en rayon -> 15 000 net.
+  // « Volume » :  400 de marge au SCU, sur les 96 SCU de la soute -> 38 400 net.
+  // L'ancien classement mettait « Rare » en tête : 15 000 annoncés comme meilleurs que 38 400.
+  const s = stopSuggestions(MARCHE_NET, 0, filtres(), 4, idResolve);
+  assert.deepEqual(terminaux(s), ["Volume", "Rare"]);
+  assert.equal(s[0].net, 38400);
+  assert.equal(s[1].net, 15000);
+  // La marge au SCU RESTE portée : elle départage à net égal, et l'infobulle la cite encore.
+  assert.equal(s[0].margin, 400);
+  assert.equal(s[1].margin, 5000);
+});
+
+test("stopSuggestions : sans soute bornée, le net est `null` et le classement retombe sur la marge (#50)", () => {
+  // `manifestsFrom` rend [] dès que `useCargo` est faux : sans capacité, aucun net n'est calculable.
+  // 107 origines réelles sont dans ce cas. Le champ doit valoir `null` — jamais un 0 silencieux, qui
+  // se lirait « cet arrêt ne rapporte rien » alors qu'on n'en sait rien.
+  const s = stopSuggestions(MARCHE_NET, 0, filtres({ useCargo: false }), 4, idResolve);
+  assert.deepEqual(terminaux(s), ["Rare", "Volume"]); // 5 000/SCU devant 400/SCU
+  assert.equal(s[0].net, null);
+  assert.equal(s[1].net, null);
 });
 
 test("stopSuggestions : le menu « système d'achat » ne bride PAS les suggestions", () => {

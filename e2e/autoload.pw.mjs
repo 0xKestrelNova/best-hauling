@@ -412,3 +412,112 @@ test("relevé de station : un zéro de trop se fait confirmer avant d'être rete
   await page.click("#alSave");
   await expect(page.locator(".corr-item.autoload")).toContainText("413,415");
 });
+
+// Le piège silencieux de la vue Corrections, et il est INVISIBLE dans le reste de la suite : les
+// huit tests qui touchent cette vue remplissent tous `#station` par `fill` juste avant d'agir, ce
+// qui rejoue l'écouteur du champ. Aucun ne restaure une station par PERMALIEN puis clique une
+// action de station — or `applyState` repose la valeur du champ sans la résoudre.
+test("relevé de station : une station restaurée par permalien reste actionnable", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alAmount")).toBeVisible();
+
+  // Le lien porte la station ET la vue. On repart de lui, dans un onglet qui n'a rien tapé.
+  const lien = await page.evaluate(() => location.hash);
+  expect(lien).toContain("station=");
+  await page.goto("/index.html" + lien);
+  await expect(page.locator("#correctionsControls")).toBeVisible();
+  await expect(page.locator("#station")).toHaveValue(label);
+
+  // SANS retoucher au champ : c'est tout le test. Le panneau de frais doit être là, et
+  // « Enregistrer » doit savoir de quelle station il parle.
+  await expect(page.locator("#alAmount")).toBeVisible({ timeout: 15000 });
+  await page.fill("#alAmount", "1159");
+  await page.fill("#alScu", "32");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toContainText(label.split(" — ")[0]);
+  await expect(page.locator(".corr-item.autoload")).toContainText("1,41");
+});
+
+// Le panneau de frais annonce « Tarif retenu : k = … », lu par `kFor` — qui retombe sur le
+// coefficient GLOBAL (`#alk`) tant qu'aucun relevé n'existe pour cette station. Or le garde qui
+// décide de réécrire le panneau ne regarde que la station et le store des relevés : changer `#alk`
+// en restant sur la vue Corrections laissait donc un chiffre PÉRIMÉ à l'écran, sous un intitulé qui
+// dit exactement d'où il vient. Le danger est asymétrique : le panneau n'est visible que la case
+// `#autoload` cochée, donc personne ne le voit se tromper.
+test("frais de station : « Tarif retenu » suit le coefficient global (#alk)", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await expect(page.locator("#alkField")).toBeVisible();
+
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("(k global)");
+
+  const avant = await page.locator("#correctionsFees .fee-note").innerText();
+  expect(avant).toContain("1,2"); // le défaut d'index.html
+
+  // On double le coefficient. Le panneau annonce toujours « k global » : il doit donc suivre.
+  await page.fill("#alk", "2.4");
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("2,4", { timeout: 10000 });
+  // Et le montant illustré suit aussi : c'est lui que l'utilisateur compare à sa facture.
+  const apres = await page.locator("#correctionsFees .fee-note").innerText();
+  expect(apres).not.toBe(avant);
+});
+
+// « Tout oublier » — le SEUL geste du panneau de frais qu'aucun test n'exerçait, mesuré au moment de
+// démonter la coquille : `grep -rn resetAllK e2e/` ne rendait rien. Un geste qu'on s'apprête à
+// déménager sans filet est un geste qu'on déménagera mal.
+//
+// Deux choses à tenir, et la seconde est celle qui casse en silence :
+//   1. le `confirm()` passe AVANT la moindre écriture — annuler ne doit rien effacer ;
+//   2. il n'efface que le store des RELEVÉS. Les corrections de prix ont le leur, et le badge du
+//      rail les compte : si les deux stores se mélangeaient un jour, « Tout oublier » emporterait
+//      des corrections que l'utilisateur n'a pas désignées.
+test("relevés : « Tout oublier » demande d'abord, et n'emporte QUE les relevés (#resetAllK)", async ({ page }) => {
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alAmount")).toBeVisible();
+
+  // Un relevé, et une correction de PRIX sur la même station : les deux stores, côte à côte.
+  await page.fill("#alAmount", "1159");
+  await page.fill("#alScu", "32");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(1);
+
+  const valeur = page.locator("#correctionsStation .editv").first();
+  await valeur.click();
+  await page.locator("#correctionsStation input").first().fill("42");
+  await page.locator("#correctionsStation input").first().press("Enter");
+  await expect(page.locator("#viewCorrections .rl")).toHaveText(/\(\d+\)/); // le badge compte
+
+  const badgeAvant = await page.locator("#viewCorrections .rl").innerText();
+
+  // ANNULER n'efface rien. Le `confirm()` bloque le fil : un rendu optimiste posé avant lui
+  // peindrait une liste vide qu'il faudrait ensuite défaire.
+  page.once("dialog", (d) => d.dismiss());
+  await page.click("#resetAllK");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(1);
+
+  // ACCEPTER efface les relevés — et EUX SEULS.
+  page.once("dialog", (d) => d.accept());
+  await page.click("#resetAllK");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
+  await expect(page.locator("#viewCorrections .rl")).toHaveText(badgeAvant);
+});

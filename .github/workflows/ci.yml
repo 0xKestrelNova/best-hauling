@@ -20,9 +20,34 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: 20
+          # 24 et non 20 depuis que logic est en TypeScript : Node efface les annotations de type à
+          # l'exécution, SANS FLAG à partir de la 23 (la 22 l'exige encore). C'est ce qui permet à ce
+          # job de garder sa propriété — il n'installe toujours RIEN, pas de transpileur, pas de
+          # cache npm — et à `node --test` d'importer logic.ts tel quel.
+          # Attention : l'effacement de types ne VÉRIFIE rien, il retire. C'est le job `types`
+          # ci-dessous qui dit si les annotations sont vraies.
+          node-version: 24
       - name: Tests unitaires (fonctions pures)
         run: node --test
+
+  # Vérification des types, dans son propre job : `node --test` passerait au vert sur des
+  # annotations FAUSSES, puisqu'il les efface sans les lire. Séparé de `unit` pour que le signal
+  # reste lisible — « les types ne collent pas » n'est pas « un test échoue » — et parce que ce job,
+  # lui, doit installer TypeScript.
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+      - name: Vérification des types
+        run: npm run typecheck
 
   e2e:
     runs-on: ubuntu-latest
@@ -35,9 +60,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: 20
+          node-version: 24
           # Cache du registre npm (~/.npm), clé sur package-lock.json. Le job `unit` n'installe
-          # rien — il lance `node --test` sur des modules sans dépendance — donc il n'en a pas besoin.
+          # toujours rien — il lance `node --test` sur des modules sans dépendance, TypeScript
+          # compris depuis que Node efface les types lui-même — donc il n'en a pas besoin. Le job
+          # `types`, lui, installe, et porte donc son propre cache.
           cache: npm
       # Le navigateur pèse plus lourd que les dépendances : sans cache, chaque run le retélécharge
       # et le job passait ~3 min. La clé porte le lockfile, donc un bump de Playwright invalide le

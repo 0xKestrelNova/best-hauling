@@ -53,6 +53,31 @@ annote, on ne refait pas.
 **176 tests e2e** — 174 verts, 2 ignorés, **1,2 min** en local — et **108 sélecteurs `#id`
 distincts**. « Fini » est déjà écrit, exécutable, et indépendant de l'implémentation.
 
+> **Amendement du 2026-08-15 (PR socle).** Ces chiffres étaient déjà périmés à la rédaction : le
+> jalon `v1.1.0` a livré `rail.pw.mjs` entre-temps. **184 collectés** (`playwright test --list` →
+> « Total: 184 tests in 6 files »), 182 verts, 2 ignorés. Le socle en ajoute 6 → **190**.
+>
+> Les **108 sélecteurs `#id`** sont exacts, mais deux d'entre eux sont des fragments d'URL et non
+> des sélecteurs : **106 réels**, dont **31 ne sont PAS dans `index.html`** — ils sont émis à
+> l'exécution par `app.js`.
+>
+> **La moitié classes du contrat était sous-estimée** (mesuré le 2026-08-15, PR des jetons) :
+> **147 sélecteurs de classe** et **16 attributs `data-*`**, non « ~109 et 9 ». Un développeur qui
+> migre une vue en se fiant à l'ancien chiffre croit avoir couvert le contrat en en ignorant 38.
+>
+> Trois pièges de cette moitié-là, qu'aucun compteur ne montre :
+>
+> - **29 classes ne sont écrites que par interpolation** (`.k-*` ×21, `.s-blue|green|orange|red`,
+>   `.sys-stanton|pyro|nyx`) : invisibles à toute analyse statique de contenu, donc **élaguées** si
+>   elles passent un jour dans une couche Tailwind. Ce sont exactement celles qui portent la couleur
+>   par système et par famille de commodité. Elles restent en CSS ordinaire, jamais en couche
+>   élaguable.
+> - **4 classes n'existent dans aucune règle** (`.acquired`, `.chain-leg-scu`, `.jm-sys`, `.schema`)
+>   et ressemblent à du code mort : ce sont des crochets de STRUCTURE. `.schema` est même un
+>   contrat **négatif** hérité de #30 — il se casserait en *réintroduisant* du style.
+> - **67 % des classes de `style.css` ne sont nommées par aucun test.** Le contrat e2e n'est pas la
+>   frontière de ce qu'il faut préserver : c'est un échantillon d'un tiers.
+
 > **Les `id` et les classes ne changent pas.** C'est ce qui transforme la suite e2e en **harnais de
 > migration** et en contrat anti-régression. Renommer les sélecteurs parce que la nouvelle pile
 > invite à le faire détruirait la seule raison objective de croire que cette refonte peut aboutir —
@@ -82,6 +107,28 @@ il se paie à chaque vue ajoutée et à chaque saisie effacée, pas une fois.
 > le caractère du site ne se perd pas par décision mais **par accumulation de défauts shadcn** —
 > chaque composant posé « provisoirement » en gris neutre, et personne pour dire quand ça a basculé.
 
+> **Amendement du 2026-08-15 (PR des jetons).** « 19 variables » était un décompte trompeur, et
+> l'étape telle qu'elle est décrite ici aurait donné l'illusion d'être faite. Mesuré :
+> **245 couleurs écrites en dur hors de `:root`**, pour 127 valeurs distinctes — dont **77 % ne
+> sont que des voiles de teintes déjà jetonnées**. Une des 19 était morte (`--panel-2`, zéro usage).
+>
+> Le fait qui change la méthode : **l'identité de ce site n'est pas « l'ambre `#ffb020` », c'est
+> « l'ambre à dix-huit opacités »** (`--acc-2` en compte 16, `--good` et `--bad` 10). Un jeton
+> hexadécimal ne peut produire aucune de ces déclinaisons. Chaque teinte porte donc **deux formes** :
+> le hex — qui est une **API publique**, `app.js` l'écrivant dans des attributs SVG `fill=` — et ses
+> **canaux** (`--acc-rgb: 255 176 32`), qui autorisent `rgb(var(--acc-rgb) / .14)`.
+>
+> Deux familles absentes du décompte d'origine ont été jetonnées avec : les **encres sur fond
+> accentué** (recopiées 9 fois, et ce sont des noirs *teintés de leur fond*), et le **palier de
+> titre** au-dessus de `--text` — 34 usages de `#fff`, qui portent tous les noms propres du HUD.
+> shadcn ne propose que `foreground` et `muted-foreground` : sans ce jeton, trois paliers s'écrasent
+> en deux, et c'est très exactement ce qui fait qu'une interface « ressemble à du shadcn ».
+>
+> Enfin, le §2 énonçait une intention sans mécanisme. Il en a un : `scripts/jetons.test.mjs`
+> (la source), `e2e/jetons.pw.mjs` (ce que le navigateur calcule, SVG compris) et
+> `scripts/coquille.test.mjs` (le budget de la coquille précachée). Sans eux, le site pouvait virer
+> au gris avec 190 tests au vert — les quatre seules assertions de couleur étant *relationnelles*.
+
 C'est la contrepartie exacte de l'adoption large : shadcn donne le comportement, le thème garde
 l'identité.
 
@@ -104,6 +151,21 @@ Le prix accepté : les correctifs v1 qui tombent pendant la migration sont à re
 
 **176/176 e2e sur le build Vite, sélecteurs inchangés.** Rien d'autre ne vaut « fini ». Les
 2 ignorés restent ignorés pour la même raison qu'aujourd'hui, ou l'ADR est amendé pour dire pourquoi.
+
+> **Amendement du 2026-08-15 (PR socle).** Le critère se reformule en **« tous les tests collectés
+> passent, aucun échec »**, avec le compte du jour comme repère (190 depuis le socle) — et non en
+> un rapport figé.
+>
+> Deux raisons, et la seconde est la vraie. D'abord `176` était périmé : un critère chiffré en dur
+> se déclare atteint **en perdant des tests**. Ensuite, « les 2 ignorés restent ignorés » n'était
+> pas vérifiable : ces deux-là (`smoke.pw.mjs:1719` et `:1759`) sont ignorés à cause des **DONNÉES**
+> — l'instantané `data/` committé n'offre aucune commodité rentable à suggérer sur ces chemins.
+> **Neuf autres tests** portent le même `test.skip` conditionnel et peuvent basculer d'un côté ou de
+> l'autre à la prochaine régénération, **sans qu'une ligne de code bouge**. Adosser le critère de
+> fusion de la refonte à un chiffre que le cron peut changer la nuit était une erreur.
+>
+> Le corollaire du §4 tient sans changement : la migration se fait vue par vue, chacune rendant vert
+> son sous-ensemble `-g` avant la suivante.
 
 Corollaire : la migration se fait **vue par vue à l'intérieur de la branche**, chacune rendant vert
 son sous-ensemble `-g` avant qu'on passe à la suivante. Une branche longue n'est tenable que si elle
