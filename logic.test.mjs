@@ -112,11 +112,16 @@ test("scoreBarWidth : la largeur de la barre reste dans [0, 100]", () => {
 // remettrait à émettre du CSS invalide. Vérifié en remettant app.js à sa version d'avant : les deux
 // e2e du score passaient encore. Ceinture ET bretelles : la feuille de style rattrape, l'appel
 // empêche. On teste donc l'appel lui-même, faute de pouvoir l'observer.
-test("fiabiliteCell passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
-  const app = readFileSync(new URL("./app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const cellule = app.match(/function fiabiliteCell\([^)]*\)\s*\{[\s\S]*?\n\}/);
-  assert.ok(cellule, "ancre : fiabiliteCell existe toujours sous ce nom");
-  assert.match(cellule[0], /width:\$\{scoreBarWidth\(/,
+//
+// IL LISAIT `app.js`, ET C'ÉTAIT SON DÉFAUT. La cellule y était devenue du code MORT — plus aucun
+// appelant depuis que le rendu est passé à React — et seul CE test la maintenait en vie. Il gardait
+// donc un jumeau que personne n'affichait, pendant que le vrai rendu pouvait dériver librement.
+// Rebranché sur `CelluleFiabilite`, il garde enfin ce qui s'affiche.
+test("CelluleFiabilite passe la largeur par scoreBarWidth — un chiffre brut y reviendrait en silence", () => {
+  const src = readFileSync(new URL("./vues/communs.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const cellule = src.match(/export function CelluleFiabilite\([\s\S]*?\n\}/);
+  assert.ok(cellule, "ancre : CelluleFiabilite existe toujours sous ce nom");
+  assert.match(cellule[0], /width: scoreBarWidth\(/,
     "la largeur de .scorebar i doit passer par scoreBarWidth, jamais par le score brut");
 });
 

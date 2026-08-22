@@ -177,7 +177,10 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 ┌─ Front (statique, navigateur) ────────────────────────────────┐
 │  index.html  (+ <meta> Content-Security-Policy)               │
 │    ├─ logic.ts    ← fonctions PURES (calcul), testées         │
-│    ├─ app.js      ← module ES : rendu DOM, état, interactions │
+│    ├─ amorce.js   ← point d'entrée : branche, monte, écoute   │
+│    │    ├─ App.tsx   ← la racine React : les huit vues        │
+│    │    ├─ etat.ts   ← l'état partagé, rendu.ts ← le cycle    │
+│    │    └─ *-actions / *-gestes ← les gestes, par domaine     │
 │    └─ rail.js     ← bascule du menu (script classique)        │
 │  sw.js (service worker) + manifest.webmanifest → PWA offline  │
 └───────────────────────────────────────────────────────────────┘
@@ -186,7 +189,12 @@ En cas d'échec, une **issue est ouverte automatiquement** (et refermée au reto
 **Séparation clé** : toute la logique de calcul sans DOM vit dans [`logic.ts`](logic.ts)
 (temps de trajet, score, `computeUnits`, **filtres partagés** par vue, corrections, remplissage glouton,
 chaîne, **graphe de marché**, **résumés de commodités**, décodage d'état…), importée à la fois par
-`app.js` (navigateur) et par les tests. `app.js` ne fait que le rendu et le câblage.
+le navigateur et par les tests.
+
+Le rendu, lui, vit dans **une seule racine React** ([`App.tsx`](App.tsx)) : chaque vue s'abonne à
+[`etat.ts`](etat.ts) et se réévalue seule. `amorce.js` ne fait plus qu'**amorcer** — poser les
+crochets, monter la racine, brancher les gestes sur le markup d'`index.html`, charger, restaurer.
+Il s'appelait `app.js` et portait 2 869 lignes ; l'ADR-011 raconte pourquoi il devait disparaître.
 
 Depuis la v2, ce fichier est en **TypeScript**, et le vocabulaire du domaine vit à côté dans
 [`types.ts`](types.ts) — relevé sur les usages et les données réelles, pas inventé. Deux

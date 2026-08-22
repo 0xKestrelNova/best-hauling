@@ -134,7 +134,7 @@
 
       <main>
         <!-- L'`id` n'est pas décoratif : cette section était la SEULE section de contrôles que
-             switchView ne basculait pas, donc permanente par construction. Le Plan de vol la masque
+             la bascule de vue ne la touchait pas, donc permanente par construction. Le Plan de vol la masque
              (ADR-004 §6) — on n'y change rien au voyage, et une barre de filtres y laisserait croire
              qu'agir dessus modifie ce qu'on regarde. Masquer n'est pas désactiver : les valeurs
              survivent au passage et au retour. -->
@@ -175,7 +175,7 @@
             <label><input id="legalOnly" type="checkbox" /> Commodités légales uniquement</label>
             <label><input id="capStock" type="checkbox" /> Limiter au stock &amp; à la demande (UEX)</label>
             <!-- Le choix « combinés seuls / avec les simples » est un réglage DE cette coche : il vit
-                 sur sa ligne, et n'apparaît que quand elle est active (cf. syncToggles). -->
+                 sur sa ligne, et n'apparaît que quand elle est active (cf. `synchroniserReglages`, filtres.ts). -->
             <div class="check-row">
               <label id="multiCommodityLabel" title="Vue « Trajets » : remplit la soute avec PLUSIEURS commodités d'un même point A vers un même point B (nécessite la soute)."><input id="multiCommodity" type="checkbox" /> Multi commodité <span class="hint-tag">Trajets</span></label>
               <span class="field sub-field" id="multiModeField" hidden>
@@ -189,7 +189,7 @@
             <!-- Le coefficient est un réglage DE cette coche : il vit sur sa ligne plutôt qu'en
                  champ autonome, sinon son apparition réorganisait tout le panneau (les champs
                  suivants passaient à la ligne). Masqué quand l'interrupteur est inactif (cf.
-                 syncToggles). Id volontairement court : la clé d'état EST l'id, il finit dans l'URL. -->
+                 `synchroniserReglages`). Id volontairement court : la clé d'état EST l'id, il finit dans l'URL. -->
             <div class="check-row">
               <label id="autoloadLabel" title="Retranche les frais de chargement/déchargement automatique aux terminaux : les colonnes profit passent en NET et le classement suit ce net. C'est une estimation (±3 %), signalée par « ≈ »."><input id="autoload" type="checkbox" /> Frais d'autoload <span class="hint-tag">Net</span></label>
               <span class="field sub-field" id="alkField" hidden>
@@ -440,7 +440,7 @@
        composants à son tour. -->
   <div id="racine"></div>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="amorce.js"></script>
   <!-- Sorti de la page pour que `script-src 'self'` ait un sens (cf. la <meta> du <head>).
        Script CLASSIQUE et non module : il doit continuer de s'exécuter AVANT app.js (différé),
        sans quoi le rail s'afficherait déplié le temps d'un rendu. Toute retouche ici se répercute

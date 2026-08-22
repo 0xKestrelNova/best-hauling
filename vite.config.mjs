@@ -30,8 +30,7 @@ import { join, relative, sep } from "node:path";
 // que rien ne le dise avant la production.
 //
 // Ils restent À LA RACINE plutôt que dans un `public/`, et c'est une décision, pas une facilité :
-// le déploiement actuel assemble le site en copiant les fichiers SOURCES
-// (`cp index.html app.js rail.js … _site/` dans .github/workflows/update-data.yml). Les déplacer
+// le déploiement a longtemps assemblé le site en copiant les fichiers SOURCES à la racine. Les déplacer
 // ferait échouer cette copie — donc casserait la mise en ligne — alors que le socle doit être
 // invisible pour la production tant que le déploiement n'a pas basculé. `publicDir` est désactivé
 // pour la même raison, et le build les copie lui-même.
@@ -82,7 +81,7 @@ function fichiersDe(racine, dossier = racine) {
 }
 
 // Le manifeste de précache (ADR-008 §7). Sans lui, le premier `vite build` casserait le mode
-// hors-ligne EN SILENCE : sw.js nomme app.js, logic.mjs et style.css, que le build vient de
+// hors-ligne EN SILENCE : sw.js nomme `amorce.js`, `rail.js` et `style.css`, que le build vient de
 // renommer. Et `caches.addAll` est ATOMIQUE — une seule URL en 404 fait rejeter l'ensemble. Le
 // hors-ligne ne se dégraderait pas, il disparaîtrait, sans erreur visible et en production seule.
 //

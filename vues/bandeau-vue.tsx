@@ -36,10 +36,9 @@ import { fmtFee } from "../format.ts";
 import { findCommodity, stationCourante } from "../marche.ts";
 import { manifestRemaining, suggestionsFor } from "../manifeste-donnees.ts";
 import {
-  jambeChargee, journeyCarriedCommodities, journeyStopSuggestions, legEffectiveLines, legFeeCtx,
-  legKey, legSuggestCtx,
+  generationVoyage, jambeChargee, journeyCarriedCommodities, journeyStopSuggestions,
+  legEffectiveLines, legFeeCtx, legKey, legSuggestCtx,
 } from "../voyage-donnees.ts";
-import { generationVoyage } from "../voyage-actions.ts";
 import { carteDeclaration } from "./declaration.tsx";
 import { carteEntrepots, carteSoute } from "./soute.tsx";
 import { carteVoyage, inviteVoyage, recapVoyage } from "./voyage.tsx";

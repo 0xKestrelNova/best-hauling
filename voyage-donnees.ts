@@ -183,3 +183,18 @@ export function journeyStopSuggestions() {
   const fromIdx = journeyEndIndex();
   return fromIdx == null ? [] : stopSuggestions(etat.MARKET!, fromIdx, readFilters());
 }
+
+// ── LA GÉNÉRATION DU COMPAGNON ────────────────────────────────────────────────────────────────
+// Même mécanique que la carte de chargement (`manifeste-etat.ts`) : elle remonte les champs SCU
+// d'une jambe à chaque RECALCUL, et ne bouge pas pendant qu'on tape. Sans elle, la valeur calculée
+// reprendrait la main sous les doigts ; avec elle bougeant à la frappe, le champ perdrait son
+// curseur à chaque caractère.
+//
+// Elle est ICI et non dans `voyage-actions.ts` : un compteur n'est pas une action, et c'est le
+// CYCLE de rendu qui l'incrémente. `rendu.ts` peut donc l'atteindre sans importer le module
+// d'actions — qui, lui, importe `rendu.ts`.
+let generation = 0;
+
+/** Appelée par le cycle de rendu complet, jamais par la frappe dans un champ SCU de jambe. */
+export const nouvelleGenerationVoyage = (): void => { generation++; };
+export const generationVoyage = (): number => generation;

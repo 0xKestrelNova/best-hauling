@@ -55,3 +55,14 @@ export const scuBoxesLabel = (n: number, maxBox?: number | null): string =>
 // la décomposition se fait donc ligne par ligne (`cargoBoxes`) et jamais sur le total des SCU.
 export const cargoBoxesLabel = (lines: LigneManifeste[], maxBox?: number | null): string =>
   boxesLabel(cargoBoxes(lines, maxBox));
+
+// ── L'ÉCHAPPEMENT HTML ─────────────────────────────────────────────────────────────────────────
+// Il est ici pour la même raison que `fmt` : c'est la dernière étape avant l'affichage, celle qu'on
+// ne veut écrite qu'une fois. Les données UEX sont COMMUNAUTAIRES — noms de terminaux, surnoms,
+// codes — donc non fiables par construction, et deux endroits les insèrent encore en chaîne dans du
+// `innerHTML` : le sélecteur de station (`selecteur.js`) et les `<datalist>` d'`app.js`.
+//
+// Les vues React n'en ont pas besoin : JSX échappe déjà tout texte interpolé. Ce module ne grandira
+// donc pas de ce côté — au contraire, `esc` disparaîtra avec le dernier `innerHTML` du dépôt.
+export const esc = (s: unknown): string =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));

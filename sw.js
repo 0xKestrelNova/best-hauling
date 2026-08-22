@@ -11,7 +11,7 @@ const CACHE = "best-hauling-v1.1.0";
 // `logic.mjs` n'y figure plus depuis qu'il est devenu `logic.ts` (ADR-008 §5) — un fichier
 // TypeScript n'est pas servi au navigateur, il est bundlé dans l'entrée. Le laisser aurait fait
 // rejeter `addAll` EN BLOC, qui est atomique, et supprimé tout le hors-ligne au lieu de le dégrader.
-const SHELL = ["./", "./index.html", "./app.js", "./rail.js", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
+const SHELL = ["./", "./index.html", "./amorce.js", "./rail.js", "./style.css", "./fonts/fonts.css", "./icon.svg", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

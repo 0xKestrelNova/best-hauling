@@ -169,18 +169,19 @@ n'est pas une réécriture : ce qui est déjà idiomatique se garde.
 
 ## Points d'action
 
-1. [ ] **#131, le déploiement** — avant tout : c'est lui qui sépare la v2 de la production.
-2. [ ] **`etat.ts`** — les globales en module d'état, `refresh()` en notification, abonnement
+1. [x] **#131, le déploiement** — avant tout : c'est lui qui sépare la v2 de la production.
+2. [x] **`etat.ts`** — les globales en module d'état, `refresh()` en notification, abonnement
        `useSyncExternalStore`. `app.js` importe et continue de tourner : **la branche reste verte**,
        et c'est là qu'on mesure les re-rendus contre `smoke.pw.mjs:2182` (≤ 2 lots de rendu de
        `#rows` pour 8 frappes). Si ce compteur explose, on s'arrête et on rouvre cet ADR.
-3. [ ] **Une racine unique** — `index.html` se réduit à `<head>` + `<div id="root">`, ses 114
+3. [x] **Une racine unique** — `index.html` se réduit à `<head>` + `<div id="root">`, ses 114
        balises deviennent des composants, les 41 `peindre()` fusionnent en un arbre. `pont.js` et
        `rail.js` disparaissent. **Rouge permis.**
-4. [ ] **Le câblage** — les 56 écouteurs deviennent des props JSX ; persistance et chargement des
+4. [~] **Le câblage** — les 56 écouteurs deviennent des props JSX ; persistance et chargement des
        données deviennent des modules TypeScript qui lisent l'**état**, plus le DOM.
-5. [ ] **`app.js` supprimé**, `index.html` charge `main.tsx`, ancres textuelles repointées.
-       **Retour au vert exigé ici.**
+5. [x] **`app.js` supprimé**, `index.html` charge le nouveau point d'entrée, ancres textuelles
+       repointées. **Retour au vert exigé ici** — et obtenu : 490/490 unitaires, 242/244 e2e
+       (2 ignorés conditionnels aux données), `tsc` muet.
 6. [ ] **La moitié « mise en page » de `style.css`** passe en utilitaires dans les composants. Le
        thème et les 15 règles interpolées **restent en CSS, hors couche élaguable**.
 7. [ ] `strictNullChecks`, puis `noImplicitAny`, chacun dans sa PR.
@@ -214,3 +215,37 @@ Le droit d'être rouge n'est pas un droit d'être aveugle. Pendant les étapes 3
   la branche de travail, jamais dans la branche d'intégration, jamais sur `main` ;
 - si le vert n'est pas retrouvé au bout de **deux étapes**, on s'arrête et on rouvre cet ADR plutôt
   que de continuer à l'aveugle.
+
+## Amendement du 2026-08-22 — la fin de l'étape 5, et deux prédictions fausses
+
+Le point 5 est clos. Ce qui s'est passé ne ressemble pas tout à fait à ce qui était écrit, et les
+écarts valent mieux que le plan.
+
+**`index.html` ne charge PAS `main.tsx`.** Il charge `amorce.js`. Le point 5 supposait qu'une fois
+les vues dans l'arbre, il ne resterait rien entre la page et React — or il reste une SÉQUENCE, et
+elle a un ordre dont quatre morceaux sont des contrats (les crochets avant la racine, le registre
+des chargements après la soute, la lecture de l'état avant le premier `await`, les `<option>` de
+système avant la restauration). Aucun de ces quatre n'est exprimable dans un composant sans le
+déguiser, et trois d'entre eux cassent en SILENCE — un `<select>` qui n'a pas l'option retombe sur
+`""` sans rien dire. Un module d'amorçage nommé, avec ces quatre ordres écrits en tête, dit la
+vérité ; `main.tsx` l'aurait cachée.
+
+**Le point 4 restera partiel, et c'est la bonne réponse.** « Les 56 écouteurs deviennent des props
+JSX » était faux au moment où on l'a écrit. L'ADR-012 §2 en donne la raison : une délégation posée
+sur un parent que React ne possède pas traverse le portail intacte, et la convertir en `onClick`
+DOUBLE l'action — invisible partout sauf sur les gestes non idempotents (`pinLegsForVolume`,
+`addLegLine`). Les quarante écouteurs restants sont posés sur du markup d'`index.html` ; ils
+deviendront du JSX quand ce markup deviendra des composants (point 6), pas avant, et pas séparément.
+
+**Ce qui est effectivement sorti d'`app.js` à l'étape 5**, chacun vers la maison qui lui allait et
+non vers un fourre-tout : le cycle de rendu (`rendu.ts`, qui cesse d'être un crochet), la navigation
+(`navigation.js`), le tri (`tri.js`), la synchro des réglages (`filtres.ts`, à côté de
+`readFilters`), les relevés d'autoload (`frais-actions.ts`, miroir de `corrections-actions.ts`), les
+formulaires de soute (`soute-actions.js`, avec leurs deux `flushSync`) et les deux autocomplétions
+(`selecteur.js`). Il reste 497 lignes d'amorçage, contre 2 869 au départ.
+
+**Deux ancres textuelles y ont gagné.** `logic.test.mjs` gardait `fiabiliteCell`, du code mort dont
+il était le seul appelant : il lit maintenant `CelluleFiabilite`, le rendu qui s'affiche vraiment.
+`scripts/jetons.test.mjs` lisait `app.js` pour les jetons cités depuis le JavaScript et aurait levé
+`ENOENT` : il lit `vues/carte.tsx`. Une ancre textuelle sur un fichier qu'on démonte est une dette,
+pas une garantie — la déplacer sans la relire l'aurait reconduite.
