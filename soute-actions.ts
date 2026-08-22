@@ -216,11 +216,14 @@ export function ouvrirDeclaration() {
 /** Referme le formulaire de déclaration. Aucune saisie n'est conservée : annuler, c'est annuler. */
 export function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
 
-/** Ouvre le champ de vente d'un lot et SÉLECTIONNE sa quantité, prête à être remplacée. */
+/** Ouvre les deux champs de vente d'un lot et SÉLECTIONNE le RESTANT, prêt à être remplacé. */
 export function ouvrirVente(nom) {
   etat.venteEnCours = nom;
   flushSync(notifier);
-  document.getElementById("holdCard")?.querySelector<HTMLInputElement>(".hold-sell-qty")?.select();
+  // `.hold-rest-qty` et non `.hold-sell-qty` (#49) : des deux chiffres, un seul est donné tout
+  // fait à l'utilisateur — le RESTANT qu'affiche l'écran du comptoir. Il ouvre à 0, donc « tout
+  // part » comme avant, et une frappe le remplace. Le champ voisin suit par le miroir.
+  document.getElementById("holdCard")?.querySelector<HTMLInputElement>(".hold-rest-qty")?.select();
 }
 
 /** Referme le champ de vente. */

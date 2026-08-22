@@ -374,8 +374,15 @@ la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il
 qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
 et le rayon était déduit une seconde fois depuis un chiffre déjà amputé.
 
-**Vendre, déposer, repartir.** Un bouton par commodité ouvre un champ prérempli au total :
-valider vend tout, réduire vend partiellement. Ce que le comptoir n'a pas pris est marqué
+**Vendre, déposer, repartir.** Un bouton par commodité ouvre **deux champs qui se répondent** :
+**restants** — le chiffre que l'écran du comptoir affiche, et où le curseur s'ouvre — et
+**partent**, qui fait la soustraction tout seul. Sur 2 200 SCU à bord, taper `2170` dans le
+premier écrit `30` dans le second : plus de calcul de tête à chaque escale. Le miroir marche dans
+les deux sens, les deux champs sont bornés à ce qui est à bord, et une valeur hors bornes n'est
+ramenée qu'**au départ du curseur** — la rétrécir à la frappe mangerait le chiffre en cours de
+saisie. Le mot reste **partent** et jamais « vendus » : `⬓ déposer` sort le fret par la même paire
+de champs, et il marche même là où le comptoir ne reprend rien. Valider sans rien toucher vend
+tout, comme avant. Ce que le comptoir n'a pas pris est marqué
 **refusé ici** — et c'est ce marqueur qui le protège : **avancer d'une étape vaut « j'ai fait mon
 affaire à l'escale que je quitte »** et solde ce qui s'y vendait encore. Sans lui, le résidu
 disparaîtrait au moment exact où il devient le sujet. Un geste explicite, lui, passe outre.

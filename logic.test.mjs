@@ -17,7 +17,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
-  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, sellFromHold, storeFromHold, takeFromStore,
+  loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, repartirVente, sellFromHold, storeFromHold, takeFromStore,
   refusActif, migrerRefus, DUREE_VOL,
   refuseHere, sellableAt, sellAllAt, offloadPlan, tourneeEcoulement, tourneesEcoulement, stockApres,
   startJourney, startJourneyAt, journeyStations, journeyEnd,
@@ -2119,6 +2119,45 @@ test("sellFromHold : vendre plus que ce qu'on a ne crée rien, et ne passe pas e
   assert.equal(r.vendu, 50);
   assert.deepEqual(r.hold, []);
   assert.equal(sellFromHold([], "Gold", 10, 1400).vendu, 0); // soute vide
+});
+
+test("repartirVente : le scénario fondateur d'#49 — l'écran du jeu dit 2 170, donc 30 partent", () => {
+  assert.deepEqual(repartirVente(2200, 2170, "reste"), { part: 30, reste: 2170 });
+  assert.deepEqual(repartirVente(2200, 30, "part"), { part: 30, reste: 2170 });
+});
+
+test("repartirVente : hors bornes, vide et NaN sont ramenés — jamais de négatif, jamais un SCU coupé", () => {
+  assert.deepEqual(repartirVente(2200, "", "reste"), { part: 2200, reste: 0 });    // champ vidé : « rien ne reste »
+  assert.deepEqual(repartirVente(2200, "abc", "part"), { part: 0, reste: 2200 });  // type=number rend "" sur une lettre
+  assert.deepEqual(repartirVente(2200, -40, "part"), { part: 0, reste: 2200 });
+  assert.deepEqual(repartirVente(2200, 9999, "part"), { part: 2200, reste: 0 });
+  assert.deepEqual(repartirVente(2200, 30.9, "part"), { part: 30, reste: 2170 });  // troncature : jamais 31
+  assert.deepEqual(repartirVente(0, 10, "part"), { part: 0, reste: 0 });           // soute vide : rien à répartir
+});
+
+test("repartirVente : un total douteux ne fabrique jamais de fret", () => {
+  // `data-total` absent du conteneur -> Number(undefined) -> NaN. La fonction ne doit pas inventer.
+  assert.deepEqual(repartirVente(NaN, 30, "part"), { part: 0, reste: 0 });
+  assert.deepEqual(repartirVente(-2200, 30, "reste"), { part: 0, reste: 0 });
+  assert.deepEqual(repartirVente(2200.9, 2200.9, "reste"), { part: 0, reste: 2200 });
+});
+
+test("repartirVente : `part + reste === total` est un INVARIANT, quelle que soit l'entrée", () => {
+  // C'est CET invariant qui autorise le miroir de l'interface à écrire dans le champ voisin sans
+  // jamais afficher un couple qui ne veuille rien dire.
+  const saisies = ["", "   ", "abc", "2170", -5, 0.4, 12.7, 1e9, NaN, Infinity, null, undefined];
+  for (const total of [0, 1, 96, 2200]) {
+    for (const saisi of saisies) {
+      for (const champ of ["part", "reste"]) {
+        const r = repartirVente(total, saisi, champ);
+        const ou = `total=${total} saisi=${String(saisi)} champ=${champ}`;
+        assert.equal(r.part + r.reste, total, ou);
+        assert.ok(Number.isInteger(r.part) && Number.isInteger(r.reste), ou);
+        assert.ok(r.part >= 0 && r.reste >= 0, ou);
+        assert.ok(r.part <= total && r.reste <= total, ou);
+      }
+    }
+  }
 });
 
 test("freeCargo : la place libre tient compte de ce qui est à bord", () => {

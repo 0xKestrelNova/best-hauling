@@ -172,8 +172,56 @@ function LigneSoute({ p, g }: { p: ProprietesSoute; g: GroupeSoute }) {
           clic et pouvait encaisser ailleurs qu'à l'endroit dont l'utilisateur venait de lire le
           chiffre. */}
       {p.venteEnCours === g.name ? (
-        <span className="hold-sell open" data-idx={p.ici}>
-          <input className="hold-sell-qty" type="number" min="0" max={g.units} defaultValue={g.units} aria-label={`SCU de ${g.name}`} />
+        <span className="hold-sell open" data-idx={p.ici} data-total={g.units}>
+          {/* #49 — DEUX champs pour UN chiffre. Au comptoir, l'écran du jeu affiche ce qui RESTE
+              (« 2 170 ») ; l'app ne demandait que ce qui PART (« 30 »). La soustraction de tête à
+              chaque escale ÉTAIT le défaut. Les deux champs se répondent désormais : le miroir est
+              posé en délégation `input` sur `#holdCard` (soute-gestes.ts), et `data-total` est ce
+              qui le lui permet — même raisonnement que `data-idx` juste à côté, la délégation lit
+              le total SUR LE CONTENEUR QUE CE RENDU A PRODUIT, jamais un état relu au clic.
+
+              « restants » d'ABORD : c'est là que `ouvrirVente` pose le curseur, et c'est le seul
+              des deux chiffres que le jeu donne tout fait. « partent » ensuite, collé aux boutons
+              qui agissent justement dessus.
+
+              LE MOT EST NEUTRE, et ce n'est pas de la prudence : `⬓ déposer` est TOUJOURS rendu,
+              `✓ vendre` seulement si le comptoir reprend la commodité (`pt`). Un champ intitulé
+              « vendus » mentirait à chaque comptoir qui n'en veut pas — c'est-à-dire au cas même
+              où l'on dépose — et mentirait encore quand ✓ existe, puisque ⬓ reste offert à côté.
+
+              `<label>` ENVELOPPANT, sans `htmlFor` ni `id` : `.hold-line` et `.hold-sell` sont en
+              `flex-wrap`, une paire libre s'y couperait du chiffre qu'elle nomme ; et deux ids
+              fixes dans une carte rendue par commodité demanderaient une unicité qu'on n'a pas à
+              promettre dans le DOM. L'`aria-label` reprend la commodité, que le mot visible seul
+              ne porte pas — et il la CONTIENT, comme l'exige WCAG 2.5.3.
+
+              `.hold-sell-qty` RESTE sur ce qui part, et `.hold-rest-qty` ne la porte PAS : les
+              trois branches de `soute-gestes.ts` la lisent ainsi, et les quatre tests e2e qui la
+              remplissent exigent qu'elle résolve un seul élément sous le mode strict. */}
+          <label className="hold-sell-pair">
+            <input
+              className="hold-rest-qty"
+              type="number"
+              min="0"
+              max={g.units}
+              defaultValue={0}
+              aria-label={`${g.name} — SCU restants à bord`}
+              title="Ce qui RESTE à bord en repartant — le chiffre qu'affiche l'écran du comptoir. L'autre champ suit tout seul."
+            />
+            <span className="hold-sell-lbl">restants</span>
+          </label>
+          <label className="hold-sell-pair">
+            <input
+              className="hold-sell-qty"
+              type="number"
+              min="0"
+              max={g.units}
+              defaultValue={g.units}
+              aria-label={`${g.name} — SCU qui partent`}
+              title="Ce qui PART : vendu par ✓, ou déposé par ⬓. L'autre champ suit tout seul."
+            />
+            <span className="hold-sell-lbl">partent</span>
+          </label>
           {pt ? (
             <button className="hold-sell-ok" data-name={g.name} title={`Vendre ici à ${fmt(pt.price ?? 0)} aUEC/SCU`}>✓ vendre</button>
           ) : null}
