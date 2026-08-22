@@ -7,9 +7,12 @@
 import { construireIndex, libellesOrigines, libellesStations } from "./marche.ts";
 import { etat } from "./etat.ts";
 import { esc } from "./format.ts";
-import { monterSelecteurStation } from "./selecteur.js";
+import { monterSelecteurStation } from "./selecteur.ts";
 
-const $ = (id) => document.getElementById(id);
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 // L'état est PRIVÉ et son lecteur est une fonction : exporter la liaison `let` marcherait — les
 // liaisons ES sont vives — mais un importateur qui la recopie dans une `const` la figerait à

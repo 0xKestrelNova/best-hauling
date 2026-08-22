@@ -1021,3 +1021,41 @@ export type DisqueSysteme = {
   corps: CorpsCarte[];
   auMax?: number;
 };
+
+/**
+ * L'estampille que le pipeline écrit dans `data/meta.json` : d'où viennent les données, de quand,
+ * et combien il y en a. Lue UNE fois à l'amorçage, jamais relue — c'est ce qui lui vaut de ne pas
+ * entrer dans `etat.ts`.
+ *
+ * `app_version` et `commit` sont FACULTATIFS et c'est délibéré : l'amorce versionnée dans `data/`
+ * ne les porte pas tant qu'un build n'est pas passé, et le rail préfère alors ne rien afficher
+ * plutôt qu'un « v— ».
+ */
+export type Meta = {
+  generated_at: number;
+  source: string;
+  source_url: string;
+  commodities: number;
+  terminals: number;
+  routes: number;
+  loops?: number;
+  systems: string[];
+  data_signature: string;
+  app_version?: string;
+  commit?: string;
+};
+
+/**
+ * Un nœud de NOTRE arbre, tel que les délégations le manipulent.
+ *
+ * `Element.closest()` rend `Element | null` dans `lib.dom`, ce qui est exact en général et faux
+ * ici : tout ce que cette application rend est du HTML, et chaque délégation lit ensuite un
+ * `dataset`. Sans ce type, les 39 `closest(...).dataset` du dépôt demanderaient 39 casts.
+ *
+ * L'interface se referme sur elle-même — `closest` rend un `Noeud` — pour que la chaîne
+ * `e.target.closest(a).closest(b)` reste typée. C'est un rétrécissement LÉGITIME : `Noeud | null`
+ * est assignable à `Element | null`, donc rien n'est promis qui ne soit vrai.
+ */
+export interface Noeud extends HTMLElement {
+  closest(selecteurs: string): Noeud | null;
+}

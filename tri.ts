@@ -44,7 +44,7 @@ function enTeteTriable(th, appliquer) {
  * au milieu d'une restauration — précisément ce que ce verrou existe pour empêcher.
  */
 export function poserIndicateursDeTri() {
-  document.querySelectorAll("#routes th, #loops th").forEach((h) => {
+  document.querySelectorAll<HTMLElement>("#routes th, #loops th").forEach((h) => {
     h.classList.remove("sorted-asc", "sorted-desc");
     if (h.dataset.sort || h.dataset.sortLoop) h.setAttribute("aria-sort", "none");
   });
@@ -54,7 +54,7 @@ export function poserIndicateursDeTri() {
 
 const marquer = (selecteur, cle, sens) => {
   if (!safeKey(cle)) return;
-  const th = document.querySelector(selecteur);
+  const th = document.querySelector<HTMLElement>(selecteur);
   if (!th) return;
   th.classList.add(sens === -1 ? "sorted-desc" : "sorted-asc");
   th.setAttribute("aria-sort", sens === -1 ? "descending" : "ascending");
@@ -71,7 +71,7 @@ export function brancherTri() {
   if (branche) return;
   branche = true;
 
-  document.querySelectorAll("th[data-sort]").forEach((th) => {
+  document.querySelectorAll<HTMLElement>("th[data-sort]").forEach((th) => {
     enTeteTriable(th, () => {
       const cle = th.dataset.sort;
       if (etat.sortKey === cle) etat.sortDir *= -1;
@@ -81,7 +81,7 @@ export function brancherTri() {
     });
   });
 
-  document.querySelectorAll("th[data-sort-loop]").forEach((th) => {
+  document.querySelectorAll<HTMLElement>("th[data-sort-loop]").forEach((th) => {
     enTeteTriable(th, () => {
       const cle = th.dataset.sortLoop;
       if (etat.loopSortKey === cle) etat.loopSortDir *= -1;

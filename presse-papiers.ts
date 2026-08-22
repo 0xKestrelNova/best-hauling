@@ -19,6 +19,16 @@ import { saveState, shareURL } from "./persistance.ts";
 import { manifesteCourant } from "./manifeste-donnees.ts";
 import { planData, planHypotheses } from "./vues/plan-vue.tsx";
 
+import type { Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
 const nowSec = () => Math.floor(Date.now() / 1000);
 const bouton = (id) => document.getElementById(id);
 const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
@@ -110,7 +120,7 @@ export async function copyShareLink() {
  */
 export function brancherPressePapiers() {
   document.getElementById("planHead").addEventListener("click", (e) => {
-    if (e.target.closest("#planCopy")) copierPlan();
+    if (cible(e).closest("#planCopy")) copierPlan();
   });
   document.getElementById("share").addEventListener("click", copyShareLink);
 }

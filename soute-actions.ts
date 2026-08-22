@@ -37,7 +37,7 @@ import {
 } from "./voyage-donnees.ts";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
-const champ = (id) => document.getElementById(id)?.value ?? "";
+const champ = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
 
 // Les trois clés de stockage, et le formateur de montant signé des messages.
 const HOLD_KEY = "best-hauling-hold";
@@ -220,7 +220,7 @@ export function fermerDeclaration() { etat.declarationOuverte = false; notifier(
 export function ouvrirVente(nom) {
   etat.venteEnCours = nom;
   flushSync(notifier);
-  document.getElementById("holdCard")?.querySelector(".hold-sell-qty")?.select();
+  document.getElementById("holdCard")?.querySelector<HTMLInputElement>(".hold-sell-qty")?.select();
 }
 
 /** Referme le champ de vente. */
@@ -247,8 +247,8 @@ export function declarerABord() {
     (prix > 0 ? `${fmt(prix)} aUEC/SCU payés` : "butin, coût nul"));
 }
 
-export function poserPosition(v) {
-  const c = document.getElementById("origin");
+export function poserPosition(v: string) {
+  const c = document.getElementById("origin") as HTMLInputElement | null;
   if (c) c.value = v;
   rafraichir();
 }

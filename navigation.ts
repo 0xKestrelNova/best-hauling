@@ -22,7 +22,20 @@
 import { etat } from "./etat.ts";
 import { rafraichir } from "./rendu.ts";
 
-const $ = (id) => document.getElementById(id);
+import type { Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 /**
  * Les sections que chaque vue démasque. Une vue absente de la table n'en démasque aucune — ce qui
@@ -53,7 +66,7 @@ export function basculerVue(v) {
 
   // Le rail : un `.active` et un seul. La boucle sur `data-view` le garantit par construction —
   // huit `classList.toggle` écrits à la main en oublieraient un à la neuvième vue.
-  document.querySelectorAll(".rail-nav .vbtn").forEach((b) => {
+  document.querySelectorAll<HTMLElement>(".rail-nav .vbtn").forEach((b) => {
     b.classList.toggle("active", b.dataset.view === v);
   });
 
@@ -85,7 +98,7 @@ export function basculerVue(v) {
 export function brancherNavigation() {
   const rail = document.querySelector(".rail-nav");
   if (rail) rail.addEventListener("click", (e) => {
-    const b = e.target.closest(".vbtn[data-view]");
+    const b = cible(e).closest(".vbtn[data-view]");
     if (b) basculerVue(b.dataset.view);
   });
   $("brandHome")?.addEventListener("click", () => basculerVue("routes"));
@@ -106,7 +119,7 @@ export function brancherNavigation() {
     // se désynchroniser de l'autre — c'était deux tables jumelles à tenir à la main.
     const rang = "12345678".indexOf(e.key);
     if (rang < 0) return;
-    const b = document.querySelectorAll(".rail-nav .vbtn")[rang];
+    const b = document.querySelectorAll<HTMLElement>(".rail-nav .vbtn")[rang];
     if (b) basculerVue(b.dataset.view);
   });
 }

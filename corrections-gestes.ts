@@ -19,12 +19,25 @@ import { stationLabel } from "./logic.ts";
 import { debounce, rafraichir } from "./rendu.ts";
 import { effacerStation, effacerToutesLesCorrections, revenirAUEX } from "./corrections-actions.ts";
 import { enregistrerReleve, oublierReleve, oublierTousLesReleves } from "./frais-actions.ts";
-import { copierCorrections } from "./presse-papiers.js";
+import { copierCorrections } from "./presse-papiers.ts";
 import { termByName } from "./marche.ts";
 import { saveState } from "./persistance.ts";
-import { memoriserStation, stationChangee } from "./selecteur.js";
+import { memoriserStation, stationChangee } from "./selecteur.ts";
 
-const $ = (id) => document.getElementById(id);
+import type { ChampCorrection, CoteMarche, Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 /** Branche le champ de station et la délégation de la vue. Appelé une fois, à l'amorçage. */
 export function brancherGestesCorrections() {
@@ -38,38 +51,41 @@ export function brancherGestesCorrections() {
   $("station").addEventListener("input", debounce(() => { if (stationChangee()) rafraichir(); }));
 
   $("corrections").addEventListener("click", (e) => {
-    const relDel = e.target.closest(".al-del"); // EN PREMIER : voir l'en-tête
+    const relDel = cible(e).closest(".al-del"); // EN PREMIER : voir l'en-tête
     if (relDel) { oublierReleve(relDel.dataset.key); return; }
 
     // Vignette de la bande : recharge sa station. Écrit le LIBELLÉ CANONIQUE, comme le sélecteur —
     // la résolution est exacte, et c'est ce libellé-là que le permalien transporte.
-    const tuile = e.target.closest(".stn-tile");
+    const tuile = cible(e).closest(".stn-tile") as HTMLButtonElement | null;
     if (tuile && !tuile.disabled) {
       const t = termByName.get(tuile.dataset.terminal);
       if (t) { $("station").value = stationLabel(t.name, t.system); memoriserStation(); rafraichir(); saveState(); }
       return;
     }
 
-    const undo = e.target.closest(".scomm-undo");
+    const undo = cible(e).closest(".scomm-undo");
     if (undo) {
-      const { c, t: terminal, s: cote, f: champ } = undo.dataset;
+      // Les quatre `data-*` sont posés ENSEMBLE par `vues/corrections.tsx` : ils existent ou la
+      // branche n'est pas atteinte. Le cast dit ce contrat, il ne le contourne pas.
+      const { c, t: terminal, s: cote, f: champ } = undo.dataset as
+        { c: string; t: string; s: CoteMarche; f: ChampCorrection };
       revenirAUEX(c, terminal, cote, champ);
       return;
     }
 
-    if (e.target.closest("#stnClear")) { effacerStation(); return; }
-    if (e.target.closest("#alSave")) { enregistrerReleve(); return; }
-    if (e.target.closest("#resetAllK")) { oublierTousLesReleves(); return; }
-    if (e.target.closest("#exportCorrections")) { copierCorrections(); return; } // AVANT #resetAll
-    if (e.target.closest("#resetAll")) effacerToutesLesCorrections();
+    if (cible(e).closest("#stnClear")) { effacerStation(); return; }
+    if (cible(e).closest("#alSave")) { enregistrerReleve(); return; }
+    if (cible(e).closest("#resetAllK")) { oublierTousLesReleves(); return; }
+    if (cible(e).closest("#exportCorrections")) { copierCorrections(); return; } // AVANT #resetAll
+    if (cible(e).closest("#resetAll")) effacerToutesLesCorrections();
   });
 
-  // Validation du relevé d'autoload à la touche Entrée. Testé par `e.target.id` et non par
+  // Validation du relevé d'autoload à la touche Entrée. Testé par `champ(e).id` et non par
   // `closest()` : les deux `<input>` sont rendus NON CONTRÔLÉS (`defaultValue`) par
   // `vues/frais-station.tsx`, dont la `key` porte le relevé lui-même. Les passer à `value=` les
   // gèlerait — c'est écrit en toutes lettres dans l'en-tête de ce composant.
   $("corrections").addEventListener("keydown", (e) => {
-    if ((e.target.id === "alAmount" || e.target.id === "alScu") && e.key === "Enter") {
+    if ((champ(e).id === "alAmount" || champ(e).id === "alScu") && e.key === "Enter") {
       e.preventDefault();
       enregistrerReleve();
     }

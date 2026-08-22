@@ -34,28 +34,29 @@
 
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import { etat } from "./etat.ts";
+import type { Boucle, Meta, Route } from "./types.ts";
 import { loadOverrides } from "./corrections.ts";
 import { updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
 import { loadAutoloadK } from "./frais.ts";
 import { applyState, loadState } from "./persistance.ts";
 import { brancher } from "./donnees.ts";
-import { basculerVue, brancherNavigation } from "./navigation.js";
+import { basculerVue, brancherNavigation } from "./navigation.ts";
 import { synchroniserReglages } from "./filtres.ts";
-import { brancherTri, poserIndicateursDeTri } from "./tri.js";
-import { brancherControles } from "./controles.js";
-import { brancherGestesCorrections } from "./corrections-gestes.js";
-import { brancherGestesSoute } from "./soute-gestes.js";
-import { peuplerListes } from "./listes.js";
+import { brancherTri, poserIndicateursDeTri } from "./tri.ts";
+import { brancherControles } from "./controles.ts";
+import { brancherGestesCorrections } from "./corrections-gestes.ts";
+import { brancherGestesSoute } from "./soute-gestes.ts";
+import { peuplerListes } from "./listes.ts";
 import { rafraichir } from "./rendu.ts";
-import { loadChargements, loadDepots, loadSoute } from "./soute-actions.js";
+import { loadChargements, loadDepots, loadSoute } from "./soute-actions.ts";
 import { loadManifestEdit } from "./manifeste-etat.ts";
-import { brancherGestesManifeste } from "./manifeste-gestes.js";
-import { brancherPressePapiers } from "./presse-papiers.js";
-import { brancherGestesVoyage } from "./voyage-gestes.js";
+import { brancherGestesManifeste } from "./manifeste-gestes.ts";
+import { brancherPressePapiers } from "./presse-papiers.ts";
+import { brancherGestesVoyage } from "./voyage-gestes.ts";
 
 
-import { chargerVaisseaux, montrerCarteVaisseau } from "./selecteur.js";
+import { chargerVaisseaux, montrerCarteVaisseau } from "./selecteur.ts";
 import { monterRacine } from "./main.tsx";
 import { loadJourneyEdits, loadJourneyPins } from "./voyage-donnees.ts";
 // Une seule chose de la vue Commodités arrive ici : le REFLET de son segmenté, que le rappel de
@@ -112,17 +113,20 @@ async function init() {
   const saved = loadState();
 
   try {
+    // Les trois `json()` rendent `any` : le type est POSÉ ICI, à la frontière, une fois. C'est le
+    // seul endroit du dépôt où des données extérieures entrent, et c'est donc le seul où un `as`
+    // dit quelque chose plutôt que de masquer.
     const [routes, loops, meta] = await Promise.all([
       fetch("data/routes.json").then((r) => r.json()),
       fetch("data/loops.json").then((r) => r.json()).catch(() => []),
       fetch("data/meta.json").then((r) => r.json()).catch(() => null),
       chargerVaisseaux(),
-    ]);
+    ]) as [Route[], Boucle[], Meta | null, void];
     etat.ROUTES = routes;
     etat.LOOPS = loops;
 
     // Remplit les filtres système (achat + vente) : #system et la destination « En route ».
-    const systems = [...new Set(routes.flatMap((r) => [r.buy.system, r.sell.system]))].sort();
+    const systems: string[] = [...new Set(routes.flatMap((r) => [r.buy.system, r.sell.system]))].sort();
     const sel = $("system"), dest = $("destSystem");
     systems.forEach((s) => {
       sel.appendChild(new Option(s, s));

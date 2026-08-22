@@ -28,10 +28,23 @@
 // `<input type="checkbox">` ; ne pas uniformiser en passant par ici.
 import { debounce, rafraichir, rafraichirDifferee } from "./rendu.ts";
 import { synchroniserReglages } from "./filtres.ts";
-import { oublierCompositionSiRouteChangee } from "./manifeste-gestes.js";
+import { oublierCompositionSiRouteChangee } from "./manifeste-gestes.ts";
 import { setCommBoard, setCommSort } from "./vues/commodites-vue.tsx";
 
-const $ = (id) => document.getElementById(id);
+import type { Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 /** Branche les cinq barres de réglages. Appelé une fois, à l'amorçage. */
 export function brancherControles() {
@@ -73,11 +86,11 @@ export function brancherControles() {
   // `#commGrid` : sa tuile est un vrai `<button>` React qui porte son propre `onClick`, et la
   // délégation qui vivait là doublait l'action — seul un compteur de propagations l'avait vu.
   $("commSortModes").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-sort]");
+    const b = cible(e).closest("button[data-sort]");
     if (b) setCommSort(b.dataset.sort);
   });
   $("commBoardModes").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-board]");
+    const b = cible(e).closest("button[data-board]");
     if (b) setCommBoard(b.dataset.board);
   });
 }
