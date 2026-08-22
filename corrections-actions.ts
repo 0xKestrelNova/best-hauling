@@ -21,7 +21,7 @@
 
 import { DUREE_VOL } from "./logic.ts";
 import type { ChampCorrection, CoteMarche } from "./types.ts";
-import { ovCount, relevePerimees, setOverride } from "./corrections.ts";
+import { ovCount, relevePerimees, resetOverrides, setOverride } from "./corrections.ts";
 import { pinLegsForVolume } from "./voyage-donnees.ts";
 import { showToast } from "./messages.ts";
 import { rafraichir } from "./rendu.ts";
@@ -96,6 +96,20 @@ export function corriger(
 ): void {
   if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
   setOverride(commodite, terminal, cote, champ, valeur === "" ? null : valeur, Number(releve) || 0);
+  updateOvBadge();
+  rafraichir();
+}
+
+/**
+ * « Tout réinitialiser » : efface toutes les corrections locales, après confirmation.
+ *
+ * Le `confirm()` passe AVANT la moindre écriture d'état. Il bloque le fil ; un `notifier()`
+ * optimiste posé avant lui peindrait un écran que l'annulation devrait ensuite défaire.
+ */
+export function effacerToutesLesCorrections(): void {
+  if (!ovCount()) return;
+  if (!confirm("Effacer toutes tes corrections locales de prix et de stock ?")) return;
+  resetOverrides();
   updateOvBadge();
   rafraichir();
 }

@@ -22,7 +22,9 @@ import {
   retirerChargement, sellAllAt, sellFromHold, sellableAt, soldeDuPoint, stationLabel,
   stockApres, storeFromHold, takeFromStore,
 } from "./logic.ts";
+import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
+import { withMarket } from "./donnees.ts";
 import { readFilters } from "./filtres.ts";
 import { effVals, setOverride } from "./corrections.ts";
 import { updateOvBadge } from "./corrections-actions.ts";
@@ -131,8 +133,7 @@ export function chargerJambe(i) {
     }
   }
   saveSoute(); saveChargements();
-  rafraichir();
-  rafraichir();
+  rafraichir(); // (un seul : le doublon hérité de l'extraction rejouait `saveState` pour rien)
 }
 
 export function vendreIci(nom, units, idxFige) {
@@ -190,6 +191,43 @@ export function reprendreIci(station, nom, units) {
   rafraichir();
   showToast(`◈ ${fmt(repris)} SCU de ${nom} repris à ${parseStationLabel(station).name} — de retour en soute`);
 }
+
+// ── Les DEUX formulaires de la soute : déclarer, et vendre ─────────────────────────────────────
+// Ils partagent un contrat que rien d'autre du dépôt ne partage : le champ qu'ils font naître
+// n'existe PAS avant le rendu. `flushSync` force donc la passe React à finir avant que le
+// gestionnaire ne rende la main, faute de quoi le `?.` qui suit court-circuite en silence — le
+// formulaire s'ouvre sans curseur, le champ de vente sans sélection. Personne ne voit une erreur ;
+// on voit juste un formulaire où il faut cliquer une fois de plus.
+//
+// `flushSync(notifier)` et NON `flushSync(rafraichir)` : un cycle complet synchrone rejouerait
+// `saveState()` et les deux générations, donc remonterait les champs SCU voisins sous les doigts.
+// Ouvrir un formulaire n'est pas un recalcul.
+
+/** Ouvre le formulaire « j'ai ça à bord » et pose le curseur dans son premier champ. */
+export function ouvrirDeclaration() {
+  // La vue par défaut ne lit que routes.json : sans le graphe, ni autocomplétion ni résolution du
+  // nom saisi. On l'attend plutôt que d'ouvrir un formulaire inerte.
+  if (!etat.MARKET) { withMarket(ouvrirDeclaration); return; }
+  etat.declarationOuverte = true;
+  flushSync(notifier);
+  document.getElementById("holdAddName")?.focus();
+}
+
+/** Referme le formulaire de déclaration. Aucune saisie n'est conservée : annuler, c'est annuler. */
+export function fermerDeclaration() { etat.declarationOuverte = false; notifier(); }
+
+/** Ouvre le champ de vente d'un lot et SÉLECTIONNE sa quantité, prête à être remplacée. */
+export function ouvrirVente(nom) {
+  etat.venteEnCours = nom;
+  flushSync(notifier);
+  document.getElementById("holdCard")?.querySelector(".hold-sell-qty")?.select();
+}
+
+/** Referme le champ de vente. */
+export function fermerVente() { etat.venteEnCours = null; notifier(); }
+
+/** Ouvre ou referme le panneau « où écouler » — le calcul ne se fait que s'il est ouvert. */
+export function basculerEcoulement() { etat.ecoulerOuvert = !etat.ecoulerOuvert; notifier(); }
 
 export function declarerABord() {
   const c = etat.MARKET && findCommodity(champ("holdAddName"));

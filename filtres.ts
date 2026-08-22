@@ -49,3 +49,37 @@ export function readFilters(): Filtres & FiltresVolume {
     autoload: coche("autoload"),
   };
 }
+
+/**
+ * Grise et masque les sous-réglages qui n'ont plus de sens, d'après les trois interrupteurs.
+ *
+ * Elle est la sœur de `readFilters()` : mêmes quatorze contrôles, même doctrine — le DOM est la
+ * vérité de ces réglages, et rien ici n'entre dans l'état partagé. C'est pour ça qu'elle vit dans
+ * ce module et pas ailleurs.
+ *
+ * ELLE DOIT RESTER PUREMENT DOM. Elle est appelée depuis le rappel de restauration, à l'intérieur
+ * du verrou de `persistance.ts` : lui ajouter une persistance ou un cycle resauverait au milieu
+ * d'une restauration.
+ */
+export function synchroniserReglages(): void {
+  const sansSoute = !coche("useCargo");
+  const sansBudget = !coche("useBudget");
+  desactiver("cargo", sansSoute);
+  desactiver("ship", sansSoute);
+  desactiver("budget", sansBudget);
+  // Multi-commodité : remplir la soute n'a pas de sens sans soute bornée -> coche grisée.
+  desactiver("multiCommodity", sansSoute);
+  document.getElementById("multiCommodityLabel")?.classList.toggle("disabled", sansSoute);
+  // Frais d'autoload : le coefficient global n'a de sens que l'interrupteur actif -> champ masqué
+  // sinon (il reste dans l'état, donc dans le lien). La coche, elle, n'est PAS grisée sans soute :
+  // le budget ou le plafond de stock bornent aussi le volume, et un volume borné suffit à facturer.
+  masquer("alkField", !coche("autoload"));
+  // Portée de la liste multi : ne se règle que si la liste multi existe.
+  masquer("multiModeField", !coche("multiCommodity"));
+}
+
+const desactiver = (id: string, oui: boolean): void => { const el = $(id); if (el) el.disabled = oui; };
+const masquer = (id: string, oui: boolean): void => {
+  const el = document.getElementById(id);
+  if (el) el.hidden = oui;
+};

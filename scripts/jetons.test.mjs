@@ -125,15 +125,26 @@ test("jetons : les encres sur fond accentué existent, et sont teintées de leur
 });
 
 test("jetons : aucun jeton mort dans :root", () => {
-  // --panel-2 était déclaré et utilisé ZÉRO fois, dans style.css comme dans app.js. Un jeton que
-  // personne ne lit est une fausse piste pour qui reprend le thème.
+  // --panel-2 était déclaré et utilisé ZÉRO fois, dans style.css comme dans le JavaScript. Un jeton
+  // que personne ne lit est une fausse piste pour qui reprend le thème.
+  //
+  // La seconde source lue était `app.js`, qui n'écrit plus un seul `var(--…)` (mesuré : 0). C'est
+  // `vues/carte.tsx` qui les écrit désormais, et elle est SEULE à le faire dans tout le code du
+  // dépôt : quatre jetons dans des attributs SVG `fill=`/`stroke=`, parce qu'un attribut de
+  // présentation SVG n'est pas atteignable par une règle CSS de la même façon.
+  //
+  // Cette seconde lecture est INERTE aujourd'hui, et c'est mesuré : les quatre jetons qu'elle
+  // couvre (`--stanton`, `--pyro`, `--nyx`, `--acc`) ont tous un usage dans style.css, donc aucun
+  // ne survit uniquement par elle. On la garde quand même — le jour où un jeton n'existera QUE pour
+  // la carte, il passerait sinon pour mort, on le retirerait de `:root`, et les planètes perdraient
+  // leur teinte sans qu'un seul test de rendu ne bronche.
   const css = lire("style.css");
-  const app = lire("app.js");
+  const carte = lire("vues/carte.tsx");
   const r = racine();
   const declares = [...r.matchAll(/^\s*(--[a-z0-9-]+):/gm)].map((m) => m[1]);
   const morts = declares.filter((n) => {
     const usages = (css.match(new RegExp("var\\(" + n + "[,)]", "g")) || []).length;
-    return usages === 0 && !app.includes(n);
+    return usages === 0 && !carte.includes(n);
   });
   assert.deepEqual(morts, [], `jeton(s) déclaré(s) et jamais lu(s) : ${morts.join(", ")}`);
 });
