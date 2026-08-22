@@ -24,15 +24,28 @@ import { feeResolver } from "./frais.ts";
 import { findCommodity, resolveStationLabel, stationCourante, stationMap } from "./marche.ts";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { rafraichir } from "./rendu.ts";
-import { chargerJambe, saveChargements, saveSoute, venteImplicite } from "./soute-actions.js";
+import { chargerJambe, saveChargements, saveSoute, venteImplicite } from "./soute-actions.ts";
 import {
   journeyEndIndex, legEffectiveLines, legIntent, legKey, legSuggestCtx, legTerminals,
   saveJourneyEdits, saveJourneyPins,
 } from "./voyage-donnees.ts";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
-import { listesPretes, peuplerListes } from "./listes.js";
+import { listesPretes, peuplerListes } from "./listes.ts";
 
-const $ = (id) => document.getElementById(id);
+import type { Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 // Le chargement courant de la carte « En route », dérivé à la demande (cf. manifeste-donnees.ts).
 const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
@@ -99,7 +112,7 @@ export function toggleLegEditor(i) {
   // Le compagnon réécrit : l'en-tête qu'on vient d'activer n'existe plus et le
   // focus retombe sur <body>. À la souris ça ne se voit pas ; au clavier on perdait sa place, la
   // deuxième Entrée (replier) ne partait plus de nulle part et Tab reprenait au début du document.
-  document.getElementById("journeyCard")?.querySelector(`.jleg-head[data-leg="${i}"]`)?.focus();
+  document.getElementById("journeyCard")?.querySelector<HTMLElement>(`.jleg-head[data-leg="${i}"]`)?.focus();
 }
 
 export function editLegQty(i, li, val) {
@@ -241,59 +254,59 @@ export function removeJourneyStop(stopIndex) {
  */
 export function brancherGestesVoyage() {
   document.addEventListener("click", (e) => {
-    if (e.target.closest("#journeyClear")) { clearJourney(); return; }
+    if (cible(e).closest("#journeyClear")) { clearJourney(); return; }
     // Démarrer un voyage « de zéro » : bouton « Commencer » depuis l'invite.
-    if (e.target.closest("#journeyStartBtn")) { beginJourney($("journeyStart").value); return; }
+    if (cible(e).closest("#journeyStartBtn")) { beginJourney($("journeyStart").value); return; }
     // Ajout d'arrêt : bouton « + Arrêt » ou une suggestion.
-    if (e.target.closest("#journeyAddBtn")) { addStopByTerminal($("journeyAddStop").value); return; }
-    const sug = e.target.closest(".jstop-suggest");
+    if (cible(e).closest("#journeyAddBtn")) { addStopByTerminal($("journeyAddStop").value); return; }
+    const sug = cible(e).closest(".jstop-suggest");
     if (sug) { addStopByTerminal(sug.dataset.label); return; }
     // Retirer un arrêt (✕ sur une étape) -> reconnexion des voisins.
-    const del = e.target.closest(".jstep-del");
+    const del = cible(e).closest(".jstep-del");
     if (del) { removeJourneyStop(Number(del.dataset.i)); return; }
     // Édition du manifeste d'une jambe : déplier / retirer / ajouter / réinitialiser.
     // `.jman-suggest .suggest-add` et NON `.suggest-add` nu : la carte de chargement pose le second
     // et a sa propre délégation. Les deux ne se croisent que par cette qualification.
-    const legSug = e.target.closest(".jman-suggest .suggest-add");
+    const legSug = cible(e).closest(".jman-suggest .suggest-add");
     if (legSug) { addLegSuggestion(Number(legSug.dataset.leg), legSug.dataset.name); return; }
-    const legDel = e.target.closest(".jman-del");
+    const legDel = cible(e).closest(".jman-del");
     if (legDel) { delLegLine(Number(legDel.dataset.leg), legDel.dataset.name); return; }
-    const load = e.target.closest(".jleg-load");
+    const load = cible(e).closest(".jleg-load");
     if (load) { chargerJambe(Number(load.dataset.leg)); return; } // AVANT .jleg-head : le bouton y vit
-    if (e.target.closest(".jman-reset")) { resetLeg(Number(e.target.closest(".jman-reset").dataset.leg)); return; }
-    const addBtn = e.target.closest(".jman-add-btn");
-    if (addBtn) { addLegLine(Number(addBtn.dataset.leg), addBtn.closest(".jman-add").querySelector(".jman-add-input").value); return; }
-    const head = e.target.closest(".jleg-head");
+    if (cible(e).closest(".jman-reset")) { resetLeg(Number(cible(e).closest(".jman-reset").dataset.leg)); return; }
+    const addBtn = cible(e).closest(".jman-add-btn");
+    if (addBtn) { addLegLine(Number(addBtn.dataset.leg), addBtn.closest(".jman-add")!.querySelector<HTMLInputElement>(".jman-add-input")!.value); return; }
+    const head = cible(e).closest(".jleg-head");
     if (head) { toggleLegEditor(Number(head.dataset.leg)); return; }
     // Parcours interactif : clic sur une étape (⦿) = « je suis ici » -> recale les vues.
-    const step = e.target.closest(".jstep");
+    const step = cible(e).closest(".jstep");
     if (step) setJourneyStop(Number(step.dataset.i));
   });
 
   // L'en-tête d'une jambe est annoncé `role="button"` : Entrée/Espace doivent l'activer comme le
-  // clic. On teste `e.target` LUI-MÊME et non `closest()` — modèle `.editv` plutôt que `.jm-arret` :
+  // clic. On teste `cible(e)` LUI-MÊME et non `closest()` — modèle `.editv` plutôt que `.jm-arret` :
   // le bouton « ✓ chargé » vit DANS l'en-tête, et un `closest()` déplierait l'éditeur EN PLUS de
   // charger la soute à chaque Entrée sur ce bouton.
   $("journeyCard").addEventListener("keydown", (e) => {
-    if (!e.target.classList || !e.target.classList.contains("jleg-head")) return;
+    if (!cible(e).classList || !cible(e).classList.contains("jleg-head")) return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault(); // Espace ne doit pas défiler la page
-    toggleLegEditor(Number(e.target.dataset.leg));
+    toggleLegEditor(Number(cible(e).dataset.leg));
   });
 
   // Ajout d'arrêt / de commodité à la touche Entrée.
   document.addEventListener("keydown", (e) => {
-    if (e.target.id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(e.target.value); }
-    else if (e.target.id === "journeyAddStop" && e.key === "Enter") { e.preventDefault(); addStopByTerminal(e.target.value); }
-    else if (e.target.classList && e.target.classList.contains("jman-add-input") && e.key === "Enter") {
+    if (champ(e).id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(champ(e).value); }
+    else if (champ(e).id === "journeyAddStop" && e.key === "Enter") { e.preventDefault(); addStopByTerminal(champ(e).value); }
+    else if (cible(e).classList && cible(e).classList.contains("jman-add-input") && e.key === "Enter") {
       e.preventDefault();
-      addLegLine(Number(e.target.dataset.leg), e.target.value);
+      addLegLine(Number(cible(e).dataset.leg), champ(e).value);
     }
   });
 
   // Précharge le marché quand on focalise un champ terminal du compagnon -> peuple sa datalist.
   document.addEventListener("focusin", (e) => {
-    if ((e.target.id === "journeyStart" || e.target.id === "journeyAddStop") && !listesPretes()) {
+    if ((champ(e).id === "journeyStart" || champ(e).id === "journeyAddStop") && !listesPretes()) {
       if (etat.MARKET) peuplerListes();
       else withMarket(() => {});
     }
@@ -301,11 +314,11 @@ export function brancherGestesVoyage() {
 
   // La carte 2D du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.
   $("journeyMap").addEventListener("click", (e) => {
-    const a = e.target.closest(".jm-arret");
+    const a = cible(e).closest(".jm-arret");
     if (a) setJourneyStop(Number(a.dataset.i));
   });
   $("journeyMap").addEventListener("keydown", (e) => {
-    const a = e.target.closest(".jm-arret");
+    const a = cible(e).closest(".jm-arret");
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setJourneyStop(Number(a.dataset.i)); }
   });
 
@@ -314,13 +327,13 @@ export function brancherGestesVoyage() {
   // input/change est la contrepartie exacte l'un de l'autre — les fusionner persisterait à chaque
   // caractère.
   document.addEventListener("input", (e) => {
-    if (e.target.classList && e.target.classList.contains("jman-qty")) {
-      liveLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target);
+    if (cible(e).classList && cible(e).classList.contains("jman-qty")) {
+      liveLegQty(Number(cible(e).dataset.leg), Number(cible(e).dataset.i), cible(e));
     }
   });
   document.addEventListener("change", (e) => {
-    if (e.target.classList && e.target.classList.contains("jman-qty")) {
-      editLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target.value);
+    if (cible(e).classList && cible(e).classList.contains("jman-qty")) {
+      editLegQty(Number(cible(e).dataset.leg), Number(cible(e).dataset.i), champ(e).value);
     }
   });
 }

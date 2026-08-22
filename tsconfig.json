@@ -37,5 +37,5 @@
     "verbatimModuleSyntax": true,
     "jsx": "react-jsx"
   },
-  "include": ["amorce.ts", "logic.ts", "types.ts", "etat.ts", "format.ts", "filtres.ts", "corrections.ts", "marche.ts", "frais.ts", "persistance.ts", "donnees.ts", "voyage-donnees.ts", "App.tsx", "main.tsx", "vues/**/*.tsx"]
+  "include": ["amorce.ts", "controles.ts", "corrections-gestes.ts", "soute-gestes.ts", "listes.ts", "navigation.ts", "tri.ts", "selecteur.ts", "manifeste-gestes.ts", "voyage-gestes.ts", "presse-papiers.ts", "soute-actions.ts", "logic.ts", "types.ts", "etat.ts", "format.ts", "filtres.ts", "corrections.ts", "marche.ts", "frais.ts", "persistance.ts", "donnees.ts", "voyage-donnees.ts", "App.tsx", "main.tsx", "vues/**/*.tsx"]
 }

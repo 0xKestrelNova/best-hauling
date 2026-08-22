@@ -1044,3 +1044,18 @@ export type Meta = {
   app_version?: string;
   commit?: string;
 };
+
+/**
+ * Un nœud de NOTRE arbre, tel que les délégations le manipulent.
+ *
+ * `Element.closest()` rend `Element | null` dans `lib.dom`, ce qui est exact en général et faux
+ * ici : tout ce que cette application rend est du HTML, et chaque délégation lit ensuite un
+ * `dataset`. Sans ce type, les 39 `closest(...).dataset` du dépôt demanderaient 39 casts.
+ *
+ * L'interface se referme sur elle-même — `closest` rend un `Noeud` — pour que la chaîne
+ * `e.target.closest(a).closest(b)` reste typée. C'est un rétrécissement LÉGITIME : `Noeud | null`
+ * est assignable à `Element | null`, donc rien n'est promis qui ne soit vrai.
+ */
+export interface Noeud extends HTMLElement {
+  closest(selecteurs: string): Noeud | null;
+}

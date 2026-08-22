@@ -25,7 +25,20 @@ import { indexStationExacte } from "./marche.ts";
 import { saveState } from "./persistance.ts";
 import { rafraichir } from "./rendu.ts";
 
-const $ = (id) => document.getElementById(id);
+import type { Noeud } from "./types.ts";
+// La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
+// `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
+// partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
+// l'économie (même choix que `$`, pris huit fois dans ce dépôt).
+const cible = (e: Event) => e.target as Noeud;
+/** La même, quand le code a déjà établi que la cible est un champ (garde par `id` ou par classe). */
+const champ = (e: Event) => e.target as HTMLInputElement;
+
+
+// `$` est typé `HTMLInputElement` et non `HTMLElement`, parce que dans CE module il ne sert
+// qu'à des contrôles de formulaire — dont on lit ou écrit la `value`. C'est le même choix
+// que `filtres.ts` et `persistance.ts` : l'alias dit ce que le module en fait.
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 
 // ── LE WIDGET ──────────────────────────────────────────────────────────────────────────────────
 // Autocomplétion maison, partagée par le champ Vaisseau et le sélecteur de station (ADR-003).
@@ -106,7 +119,7 @@ export function monterAutocompletion({ input, list, options, filtre, rendu, choi
 
   // mousedown (et non click) pour devancer le blur du champ.
   list.addEventListener("mousedown", (e) => {
-    const li = e.target.closest("li[data-i]"); // les en-têtes de groupe n'en portent pas : inertes
+    const li = cible(e).closest("li[data-i]"); // les en-têtes de groupe n'en portent pas : inertes
     if (!li) return;
     e.preventDefault();
     valide(matches[Number(li.dataset.i)]);
@@ -158,7 +171,7 @@ export function monterSelecteurStation() {
   // laisserait une image cassée. Les événements `error` ne remontent pas, mais ils descendent :
   // un seul écouteur en phase de CAPTURE, posé une fois, couvre tous les rendus à venir.
   list.addEventListener("error", (e) => {
-    if (e.target.tagName === "IMG") e.target.closest("li")?.classList.add("no-shot");
+    if (cible(e).tagName === "IMG") cible(e).closest("li")?.classList.add("no-shot");
   }, true);
 
   monterAutocompletion({
