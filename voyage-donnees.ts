@@ -181,7 +181,13 @@ export function journeyEndIndex(): number | null {
 /** Les arrêts qu'on pourrait ajouter depuis la fin du parcours, filtres appliqués. */
 export function journeyStopSuggestions() {
   const fromIdx = journeyEndIndex();
-  return fromIdx == null ? [] : stopSuggestions(etat.MARKET!, fromIdx, readFilters());
+  if (fromIdx == null) return [];
+  const f = readFilters();
+  // `effVals` et `feeResolver` DESCENDENT, et c'est le sens du montant : sans le premier la
+  // suggestion chiffrerait sur des prix que l'utilisateur a corrigés, sans le second elle
+  // annoncerait un brut là où la jambe qu'elle crée affichera un net. Elle contredirait sa propre
+  // jambe, qui, elle, les passe déjà (`legManifest`).
+  return stopSuggestions(etat.MARKET!, fromIdx, f, 4, effVals, feeResolver(f));
 }
 
 // ── LA GÉNÉRATION DU COMPAGNON ────────────────────────────────────────────────────────────────

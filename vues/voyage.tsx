@@ -15,6 +15,7 @@
 //     et le détruisait à chaque rendu. La carte étant passée à React, ce détour n'a plus de raison
 //     d'être — et un conteneur peint à part DANS une carte possédée par React est précisément le
 //     piège de #120.
+import { compactValue } from "../logic.ts";
 import { fmt, fmtFee, signe } from "../format.ts";
 import { Fragment } from "react";
 import { PointFraicheur, IconeCommodite, TagIllegal } from "./communs.tsx";
@@ -61,7 +62,10 @@ export type Jambe = {
   suggestions: ProprietesSuggestions | null;
 };
 
-export type SuggestionArret = { label: string; terminal: string; commodity: string; margin: number };
+/** Ce que la vue lit d'une suggestion. `net` est ce que l'arrêt RAPPORTE — le profit du manifeste
+ *  qu'on y emporterait, frais déduits — et c'est lui qui classe (#50). `null` = non chiffrable
+ *  (soute non bornée) : une ABSENCE de mesure, pas un zéro. */
+export type SuggestionArret = { label: string; terminal: string; commodity: string; margin: number; net: number | null };
 
 export type ProprietesVoyage = {
   stations: { name: string; system: string }[];
@@ -265,11 +269,20 @@ export function CarteVoyage(p: ProprietesVoyage) {
             <button
               className="jstop-suggest"
               data-label={s.label}
-              title={`Ajouter ${s.terminal} — via ${s.commodity}, +${fmt(s.margin)} marge/SCU`}
+              // L'infobulle porte les DEUX chiffres, et dans cet ordre : ce que l'arrêt rapporte
+              // d'abord — c'est lui qui classe — puis la marge au SCU, qui dit à quel prix. La
+              // commodité citée est celle de plus forte marge ; le manifeste réellement chargé peut
+              // en contenir d'autres (c'est le second symptôme de #50, laissé ouvert).
+              title={s.net != null
+                ? `Ajouter ${s.terminal} — ${fmt(s.net)} aUEC pour un chargement complet, via ${s.commodity} à +${fmt(s.margin)}/SCU`
+                : `Ajouter ${s.terminal} — via ${s.commodity}, +${fmt(s.margin)} marge/SCU (borne la soute pour chiffrer l'arrêt)`}
               key={s.label}
             >
               {`+ ${s.terminal} `}
-              <span className="muted">{`+${fmt(s.margin)}`}</span>
+              {/* Le montant COMPACT : ces boutons tiennent sur une rangée, et « +311 010 » y prend
+                  la place de deux. Sans soute bornée il n'y a pas de montant — on retombe alors sur
+                  la marge au SCU, avec son unité, pour qu'on ne confonde pas les deux chiffres. */}
+              <span className="muted">{s.net != null ? `+${compactValue(s.net)}` : `+${fmt(s.margin)}/SCU`}</span>
             </button>
           ))}
         </div>

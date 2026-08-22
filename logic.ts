@@ -1331,7 +1331,13 @@ export function compactValue(n: number | null): string {
   if (n == null || !isFinite(n)) return "—";
   const a = Math.abs(n);
   if (a >= 1e6) return Math.round(n / 1e5) / 10 + "M";
-  if (a >= 1e3) return Math.round(n / 100) / 10 + "K";
+  // Le seuil se lit sur la valeur ARRONDIE, pas sur la brute. 999 999 s'arrondissait à 1 000,0 et
+  // rendait « 1000K » : quatre chiffres devant un préfixe qui existe justement pour n'en laisser que
+  // trois. Un montant qui atteint le million doit le dire (#50).
+  if (a >= 1e3) {
+    const k = Math.round(n / 100) / 10;
+    return Math.abs(k) >= 1000 ? Math.round(n / 1e5) / 10 + "M" : k + "K";
+  }
   return String(Math.round(n));
 }
 
@@ -1446,17 +1452,41 @@ const legPasses = (r: Route, f: Filtres): boolean => routePasses(r, { ...f, sysF
 // « légales uniquement » est coché, avant-poste exclu, relevé périmé — et la jambe ajoutée
 // s'affichait « aucun fret rentable », son manifeste étant filtré, lui, par pairEligible.
 // Même divergence de règles que celle qui a donné pairEligible : une seule source, partagée.
-export function stopSuggestions(market: Marche, origin: number, f: Filtres, limit: number = 4): SuggestionArret[] {
+export function stopSuggestions(market: Marche, origin: number, f: Filtres, limit: number = 4, resolve: Resolveur | null = null, autoloadFor: ResolveurFrais | null = null): SuggestionArret[] {
+  // DEUX SOURCES, ET C'EST VOULU (#50).
+  //
+  // `enRouteDeals` + `legPasses` décident QUI est éligible : eux seuls appliquent `sameOnly`, `q` et
+  // l'avant-poste d'ORIGINE, que `pairEligible` — le filtre de `manifestsFrom` — ignore. Changer de
+  // source ferait reparaître des suggestions que la vue refuse d'afficher, et c'est précisément ce
+  // que le test « ne propose JAMAIS un trajet que la vue refuse d'afficher » garde.
+  //
+  // `manifestsFrom` ne fait qu'ESTAMPILLER le montant sur ce qui a survécu au filtre. C'est le
+  // patron déjà prouvé par `estampillerManifestes` pour la chaîne.
   const byDest = new Map();
   for (const d of enRouteDeals(market, origin, "", null, f)) {
     if (!legPasses(d, f)) continue;
     const label = stationLabel(d.sell.terminal, d.sell.system);
     const cur = byDest.get(label);
     if (!cur || d.margin > cur.margin) {
-      byDest.set(label, { label, terminal: d.sell.terminal, system: d.sell.system, commodity: d.commodity, margin: d.margin });
+      byDest.set(label, { label, terminal: d.sell.terminal, system: d.sell.system, commodity: d.commodity, margin: d.margin, net: null });
     }
   }
-  return [...byDest.values()].sort((a, b) => b.margin - a.margin).slice(0, limit);
+
+  // Le montant NET, par destination. `manifestsFrom` rend `[]` sans soute bornée : `net` reste alors
+  // `null` partout et le classement retombe sur la marge au SCU — 107 origines réelles sont dans ce
+  // cas, et un 0 s'y lirait « cet arrêt ne rapporte rien » alors qu'on ne l'a pas mesuré.
+  if (resolve) {
+    for (const trip of manifestsFrom(market, origin, "", f, resolve, null, autoloadFor)) {
+      const s = byDest.get(stationLabel(trip.dest.name, trip.dest.system));
+      if (s) s.net = trip.profit;
+    }
+  }
+
+  // Le NET classe, la marge au SCU départage. Une suggestion sans montant passe derrière celles qui
+  // en ont un : on ne met pas devant ce qu'on n'a pas su chiffrer.
+  return [...byDest.values()]
+    .sort((a, b) => (b.net ?? -Infinity) - (a.net ?? -Infinity) || b.margin - a.margin)
+    .slice(0, limit);
 }
 // Meilleure jambe entre deux terminaux (commodité de marge max), filtres appliqués comme
 // ci-dessus, ou null si aucun fret éligible : l'appelant pose alors une jambe « à vide ».

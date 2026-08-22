@@ -1271,6 +1271,12 @@ test("compactValue : notation compacte K/M", () => {
   assert.equal(compactValue(540), "540");
   assert.equal(compactValue(0), "0");
   assert.equal(compactValue(null), "—");
+  // Le cas de bord de #50, et il était FAUX en production : 999 999 rendait « 1000K », soit quatre
+  // chiffres devant un préfixe qui existe pour n'en laisser que trois. Un montant qui atteint le
+  // million doit le DIRE — c'est la seule frontière que ce formateur trace.
+  assert.equal(compactValue(999999), "1M");
+  assert.equal(compactValue(999499), "999.5K");
+  assert.equal(compactValue(-999999), "-1M");
 });
 
 // ---------- Heatmap relative (mode Marché) ----------
@@ -3314,6 +3320,45 @@ test("stopSuggestions : ne propose JAMAIS un trajet que la vue refuse d'afficher
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ noOutpost: true }))), ["Relais"]);
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ sameOnly: true }))), ["Poste"]);
   assert.deepEqual(terminaux(stopSuggestions(MARCHE_ARRETS, 0, filtres({ q: "ferraille" }))), ["Relais"]);
+});
+
+// #50 : LE MARCHÉ DE L'ARBITRAGE. Deux destinations, et celle qui a la plus forte marge au SCU est
+// celle qui rapporte le MOINS — parce qu'elle n'a que 3 SCU en rayon. C'est exactement le défaut
+// mesuré sur les vraies données : 37 origines sur 93 mettent la mauvaise destination en tête, et à
+// PSS Alpha le bouton de gauche vaut 56 832 aUEC quand celui rangé derrière en vaut 311 010.
+const MARCHE_NET = {
+  terminals: [
+    { name: "Dépôt", system: "Stanton", planet: "P", outpost: false },
+    { name: "Rare", system: "Stanton", planet: "P", outpost: false },   // marge énorme, stock famélique
+    { name: "Volume", system: "Stanton", planet: "P", outpost: false }, // marge modeste, stock plein
+  ],
+  commodities: [
+    { name: "Gemme", code: "GEM", kind: "metal", illegal: false, buys: [[0, 1000, 3, 9e9, 3]], sells: [[1, 6000, 9e9, 9e9, 3]] },
+    { name: "Sable", code: "SAB", kind: "metal", illegal: false, buys: [[0, 100, 9e9, 9e9, 3]], sells: [[2, 500, 9e9, 9e9, 3]] },
+  ],
+};
+
+test("stopSuggestions : le classement suit ce que l'arrêt RAPPORTE, pas la marge au SCU (#50)", () => {
+  // « Rare » : 5 000 de marge au SCU, mais 3 SCU en rayon -> 15 000 net.
+  // « Volume » :  400 de marge au SCU, sur les 96 SCU de la soute -> 38 400 net.
+  // L'ancien classement mettait « Rare » en tête : 15 000 annoncés comme meilleurs que 38 400.
+  const s = stopSuggestions(MARCHE_NET, 0, filtres(), 4, idResolve);
+  assert.deepEqual(terminaux(s), ["Volume", "Rare"]);
+  assert.equal(s[0].net, 38400);
+  assert.equal(s[1].net, 15000);
+  // La marge au SCU RESTE portée : elle départage à net égal, et l'infobulle la cite encore.
+  assert.equal(s[0].margin, 400);
+  assert.equal(s[1].margin, 5000);
+});
+
+test("stopSuggestions : sans soute bornée, le net est `null` et le classement retombe sur la marge (#50)", () => {
+  // `manifestsFrom` rend [] dès que `useCargo` est faux : sans capacité, aucun net n'est calculable.
+  // 107 origines réelles sont dans ce cas. Le champ doit valoir `null` — jamais un 0 silencieux, qui
+  // se lirait « cet arrêt ne rapporte rien » alors qu'on n'en sait rien.
+  const s = stopSuggestions(MARCHE_NET, 0, filtres({ useCargo: false }), 4, idResolve);
+  assert.deepEqual(terminaux(s), ["Rare", "Volume"]); // 5 000/SCU devant 400/SCU
+  assert.equal(s[0].net, null);
+  assert.equal(s[1].net, null);
 });
 
 test("stopSuggestions : le menu « système d'achat » ne bride PAS les suggestions", () => {

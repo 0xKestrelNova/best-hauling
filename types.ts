@@ -867,7 +867,15 @@ export type Parcours = { legs: Jambe[]; current: number; start?: Station };
 
 export type RetraitArret = Parcours & { removedFrom: number; removedCount: number; insertedCount: number };
 
-export type SuggestionArret = { label: string; terminal: string; system: string; commodity: string; margin: number };
+/** Une destination proposée depuis l'étape courante du parcours.
+ *
+ *  `net` est ce que l'arrêt RAPPORTE — le profit du manifeste qu'on y emporterait, frais déduits —
+ *  et c'est LUI qui classe (#50). `margin` reste la marge au SCU de la meilleure commodité : elle
+ *  départage à net égal, et l'infobulle la cite encore.
+ *
+ *  `net` vaut `null` quand aucun manifeste n'est calculable — soute non bornée, ou rayon vide. C'est
+ *  une ABSENCE de mesure, pas un zéro : 0 se lirait « cet arrêt ne rapporte rien ». */
+export type SuggestionArret = { label: string; terminal: string; system: string; commodity: string; margin: number; net: number | null };
 
 export type IntentionLigne = { name: string; units: number };
 

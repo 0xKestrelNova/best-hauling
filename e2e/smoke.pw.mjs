@@ -3330,3 +3330,44 @@ test("Trajets multi : le bouton du manifeste n'est ni le plus petit ni un sosie 
   const sien = (await manifeste.innerText()).trim();
   expect(glyphes.map((g) => g.trim()), "le bouton ne porte pas un glyphe de pastille").not.toContain(sien);
 });
+
+// #50 : le bouton de suggestion annonçait une marge AU SCU sur un stock qu'on n'a pas. Mesuré sur
+// l'instantané : 37 origines sur 93 mettaient la mauvaise destination en tête, et depuis PSS Alpha
+// le bouton de gauche valait 56 832 aUEC quand celui rangé derrière en valait 311 010 — 254 178
+// laissés au sol par un classement qui regardait le prix au lieu du total.
+//
+// Le vrai contrat n'est pas « un montant s'affiche » mais « CE montant est celui de la jambe ». Une
+// suggestion qui promet un chiffre que la jambe créée contredit est pire que pas de chiffre du tout.
+test("Voyage : le montant d'une suggestion est celui que la jambe rapporte vraiment (#50)", async ({ page }) => {
+  await page.check("#useCargo");
+  await voyageAvecSuggestion(page);
+
+  const bouton = page.locator("#journeyCard .jstop-suggest").first();
+  const annonce = (await bouton.innerText()).trim();
+  // Un montant compact et SIGNÉ, pas une marge au SCU : « +311K », jamais « +9 472/SCU ».
+  expect(annonce, "le bouton annonce un montant compact").toMatch(/\+\s*[\d,.]+[KM]?\s*$/);
+  expect(annonce, "le bouton n'annonce plus une marge au SCU").not.toContain("/SCU");
+
+  // L'infobulle porte le montant en clair ET la marge au SCU, dans cet ordre.
+  const bulle = await bouton.getAttribute("title");
+  expect(bulle, "l'infobulle dit ce que l'arrêt rapporte").toMatch(/aUEC pour un chargement complet/);
+  expect(bulle, "l'infobulle garde la marge au SCU").toMatch(/\/SCU/);
+
+  // LE CONTRAT : on ajoute l'arrêt, et le profit de la jambe créée doit valoir ce qui était promis.
+  // Les deux passent par le même formateur compact, donc la comparaison est exacte.
+  const promis = annonce.match(/\+\s*([\d,.]+[KM]?)\s*$/)[1];
+  await bouton.click();
+  await expect(page.locator("#journeyCard .jleg")).toHaveCount(2, { timeout: 8000 });
+  const profitJambe = await page.locator("#journeyCard .jleg").last().locator(".jleg-profit").innerText();
+  const compact = await page.evaluate(
+    ([texte]) => {
+      const n = Number(texte.replace(/[^\d-]/g, ""));
+      const a = Math.abs(n);
+      if (a >= 1e6) return Math.round(n / 1e5) / 10 + "M";
+      if (a >= 1e3) { const k = Math.round(n / 100) / 10; return Math.abs(k) >= 1000 ? Math.round(n / 1e5) / 10 + "M" : k + "K"; }
+      return String(Math.round(n));
+    },
+    [profitJambe],
+  );
+  expect(compact, `la jambe rapporte ${profitJambe}, le bouton promettait +${promis}`).toBe(promis);
+});
