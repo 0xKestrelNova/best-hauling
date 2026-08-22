@@ -594,7 +594,7 @@ Les relevés bruts et le raisonnement complet sont dans
   strictement inchangés). Runner intégré `node --test`, **zéro dépendance**.
 - **E2E de fumée** ([`e2e/smoke.pw.mjs`](e2e/smoke.pw.mjs), Playwright) : non-régression des bugs vécus
   (carte vaisseau au reload, demande corrigée à 0, contrôles qui ne fuient plus, persistance des corrections,
-  navigation, cible tactile du ▶, dépliant de chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
+  navigation, cible tactile du ▶ et du 🧾 qui ouvre le chargement) et **cohérence des filtres par vue** (« légales » agit sur Trajets/Boucles/Commodités,
   « même système » contraint la Chaîne). Playwright est une dépendance **de dev uniquement** — le site livré reste sans dépendance.
 - **Socle de build** ([`e2e/socle.pw.mjs`](e2e/socle.pw.mjs)) : depuis la v2, la suite E2E sert
   `dist/` — **ce que le build produit réellement**, et non les fichiers du dépôt. Servir les sources
