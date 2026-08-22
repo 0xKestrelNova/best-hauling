@@ -34,6 +34,7 @@
 
 // Fonctions de calcul pures (testées par logic.test.mjs).
 import { etat } from "./etat.ts";
+import type { Boucle, Meta, Route } from "./types.ts";
 import { loadOverrides } from "./corrections.ts";
 import { updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
@@ -112,17 +113,20 @@ async function init() {
   const saved = loadState();
 
   try {
+    // Les trois `json()` rendent `any` : le type est POSÉ ICI, à la frontière, une fois. C'est le
+    // seul endroit du dépôt où des données extérieures entrent, et c'est donc le seul où un `as`
+    // dit quelque chose plutôt que de masquer.
     const [routes, loops, meta] = await Promise.all([
       fetch("data/routes.json").then((r) => r.json()),
       fetch("data/loops.json").then((r) => r.json()).catch(() => []),
       fetch("data/meta.json").then((r) => r.json()).catch(() => null),
       chargerVaisseaux(),
-    ]);
+    ]) as [Route[], Boucle[], Meta | null, void];
     etat.ROUTES = routes;
     etat.LOOPS = loops;
 
     // Remplit les filtres système (achat + vente) : #system et la destination « En route ».
-    const systems = [...new Set(routes.flatMap((r) => [r.buy.system, r.sell.system]))].sort();
+    const systems: string[] = [...new Set(routes.flatMap((r) => [r.buy.system, r.sell.system]))].sort();
     const sel = $("system"), dest = $("destSystem");
     systems.forEach((s) => {
       sel.appendChild(new Option(s, s));

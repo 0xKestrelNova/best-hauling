@@ -1021,3 +1021,26 @@ export type DisqueSysteme = {
   corps: CorpsCarte[];
   auMax?: number;
 };
+
+/**
+ * L'estampille que le pipeline écrit dans `data/meta.json` : d'où viennent les données, de quand,
+ * et combien il y en a. Lue UNE fois à l'amorçage, jamais relue — c'est ce qui lui vaut de ne pas
+ * entrer dans `etat.ts`.
+ *
+ * `app_version` et `commit` sont FACULTATIFS et c'est délibéré : l'amorce versionnée dans `data/`
+ * ne les porte pas tant qu'un build n'est pas passé, et le rail préfère alors ne rien afficher
+ * plutôt qu'un « v— ».
+ */
+export type Meta = {
+  generated_at: number;
+  source: string;
+  source_url: string;
+  commodities: number;
+  terminals: number;
+  routes: number;
+  loops?: number;
+  systems: string[];
+  data_signature: string;
+  app_version?: string;
+  commit?: string;
+};
