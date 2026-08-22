@@ -103,9 +103,27 @@ export function brancherNavigation() {
   });
   $("brandHome")?.addEventListener("click", () => basculerVue("routes"));
 
-  // Raccourcis clavier : / (recherche), 1 à 8 (vues). Ignorés pendant la saisie.
+  // Raccourcis clavier : / (recherche), 1 à 8 (vues). Ignorés pendant la saisie, et MUETS sous une
+  // modale.
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // ── LA GARDE DE MODALITÉ (#62) ─────────────────────────────────────────────────────────────
+    // L'aide de démarrage est un dialogue modal : rien ne doit agir DERRIÈRE son voile. Sans cette
+    // ligne, taper « 3 » depuis son bouton de fermeture basculait la vue du dessous, et refermer
+    // l'aide découvrait un autre écran que celui qu'on venait de quitter — de même « / » donnait le
+    // focus à un champ invisible et inatteignable à la souris.
+    //
+    // POURQUOI PAS `el.tagName === "BUTTON"`, qui semble être la vraie réparation : c'est MESURÉ, et
+    // ça casse deux tests. `e2e/plan.pw.mjs:47` et `e2e/tournee.pw.mjs:45` cliquent un bouton du rail
+    // PUIS tapent un chiffre — relevé : après `click("#viewRoutes")`, `activeElement` vaut
+    // `BUTTON#viewRoutes` (sans `role`), et « 7 » ouvre bien le Plan de vol. Les boutons du rail SONT
+    // le sélecteur de vue ; un chiffre tapé pendant qu'ils ont le focus est le geste voulu, affirmé
+    // deux fois. Ce qui fuyait n'était donc pas « les <button> natifs » en général, c'était l'absence
+    // de toute notion de modalité — ce dépôt n'en avait jamais eu.
+    //
+    // Et c'est un BOOLÉEN d'état, pas une question posée au DOM : après un clic dans le voile le
+    // focus retombe sur `<body>`, où `closest('[role="dialog"]')` rendrait `null`.
+    if (etat.aideOuverte) return;
     const el = document.activeElement;
     // `role="button"` couvre d'un coup tout ce que l'app rend activable sans être un <button> :
     // l'en-tête d'une jambe, une escale de la carte, une valeur corrigeable. Sans lui, tabuler

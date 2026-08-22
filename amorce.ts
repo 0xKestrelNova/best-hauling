@@ -54,6 +54,8 @@ import { loadManifestEdit } from "./manifeste-etat.ts";
 import { brancherGestesManifeste } from "./manifeste-gestes.ts";
 import { brancherPressePapiers } from "./presse-papiers.ts";
 import { brancherGestesVoyage } from "./voyage-gestes.ts";
+import { brancherAide } from "./aide-gestes.ts";
+import { ouvrirAideSiPremiereVisite } from "./aide.ts";
 
 
 import { chargerVaisseaux, montrerCarteVaisseau } from "./selecteur.ts";
@@ -97,6 +99,7 @@ async function init() {
   brancherGestesManifeste();
   brancherGestesSoute();
   brancherGestesVoyage();
+  brancherAide();
 
   loadOverrides();
   loadAutoloadK();
@@ -181,6 +184,16 @@ async function init() {
     $("empty").textContent = "Impossible de charger data/routes.json — lance le script de mise à jour.";
     console.error(e);
   }
+
+  // L'AIDE DE PREMIÈRE VISITE (#62). APRÈS le try/catch, et DEHORS : un premier visiteur dont le
+  // marché n'a pas chargé est le plus démuni de tous, et c'est précisément à lui qu'il faut dire ce
+  // qu'il regarde. Le rail est du markup statique — l'aide sait le lire même quand les données
+  // manquent.
+  //
+  // En DERNIER de l'amorce, et c'est un ordre qui compte : `basculerVue()` ci-dessus appelle
+  // `rafraichir()`, donc `saveState()`. Ouvrir l'aide avant ferait écrire le hash avec une modale
+  // déjà à l'écran — sans conséquence aujourd'hui, mais l'ordre inverse n'a aucun avantage.
+  ouvrirAideSiPremiereVisite();
 }
 
 init();
