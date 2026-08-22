@@ -70,7 +70,17 @@ function tuilesStation(S: number, q: string): TuileCommodite[] {
     // l'écran au défilement.
     tuiles.push({ nom: c.name, kind: c.kind, illegal: c.illegal, achat: !!b, cotes });
   });
-  return tuiles;
+  // PAR NOM, et en français (#60). L'ordre de `marche.commodities` est celui d'insertion d'une Map
+  // remplie en parcourant les prix UEX : il ne veut rien dire, et sur les gros comptoirs — GrimHEX
+  // en compte 92 — il fallait balayer la grille à l'œil pour retrouver une commodité.
+  //
+  // UN SEUL tri ici, pas un par section : `VueStation` sépare les tuiles par `filter`, qui préserve
+  // l'ordre. Deux tris seraient deux endroits à tenir d'accord.
+  //
+  // `localeCompare(…, "fr")` et non `<` : le second range « Étain » après tout l'alphabet, parce
+  // qu'il compare des points de code. C'est le même comparateur que la bande de stations, dont
+  // l'ordre rendait justement ce désordre-ci visible.
+  return tuiles.sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
 }
 
 /** Les stations corrigées, la station affichée épinglée en tête. */
