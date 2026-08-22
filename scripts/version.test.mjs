@@ -28,6 +28,22 @@ test("le nom du cache de sw.js suit la version — le bump manuel n'est plus oub
     "bump de version sans bump du cache : les visiteurs installés garderaient l'ancien index.html");
 });
 
+test("l'amorce de data/ ne porte jamais une version PÉRIMÉE", () => {
+  // L'instantané versionné dans `data/` est régénéré par `chore(data)`, à la main, quand ça arrange.
+  // S'il porte une estampille, elle doit être CELLE DE MAINTENANT — sinon le rail annonce en
+  // développement une version qui n'est plus, et un rapport de bug parti de là désigne le mauvais
+  // code. C'est exactement ce qui vient d'arriver en production : `package.json` était resté à
+  // 1.1.0 pendant que le déployé était la v2, et le rail affichait « v1.1.0 · b555614 » — un
+  // numéro de v1 sur un commit de v2.
+  //
+  // Sans estampille, RIEN à vérifier : une amorce n'est pas un déploiement, et le rail préfère
+  // alors se taire (`.rail-version:empty { display: none }`) plutôt qu'annoncer un « v— ».
+  const meta = JSON.parse(lire("data", "meta.json"));
+  if (meta.app_version == null) return;
+  assert.equal(meta.app_version, VERSION,
+    "l'amorce de data/meta.json annonce une version que package.json ne porte plus");
+});
+
 test("le build estampille meta.json avec la version et le commit", () => {
   // Lecture de source : `build-data.mjs` fait des appels réseau, on ne le rejoue pas ici. Ce qu'on
   // vérifie est qu'il tire sa version de la source unique au lieu d'en écrire une seconde.

@@ -5,7 +5,7 @@
 // recevrait encore l'ANCIEN index.html — sans CSP et avec son <script> inline — pendant toute une
 // visite, tandis que rail.js, lui, serait déjà là. `activate` purge tout cache au nom différent :
 // le bump garantit que la nouvelle page et son script arrivent ENSEMBLE.
-const CACHE = "best-hauling-v1.1.0";
+const CACHE = "best-hauling-v2.0.0";
 // Coquille précachée. Cette liste est un DÉFAUT DE REPLI : en production, le build la remplace par
 // ce qu'il a réellement émis, noms hachés compris (vite.config.mjs, plugin best-hauling:precache).
 // `logic.mjs` n'y figure plus depuis qu'il est devenu `logic.ts` (ADR-008 §5) — un fichier
