@@ -3156,3 +3156,48 @@ test("Rail : le repli automatique ne mange pas la préférence manuelle (#86)", 
   await railVaut(208);
   await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "true");
 });
+
+// #81 : la mesure qui MANQUAIT. Celle de #54 porte sur `.table-shell` — le CADRE — et un chiffre
+// qui déborde de sa cellule sans élargir la table lui est invisible. C'est exactement ce qui s'est
+// produit : #54 a réduit le défaut sans le supprimer, et son critère « aucun nombre ne déborde de
+// sa colonne » n'a jamais été vérifié. Celle-ci porte sur la CELLULE. Les deux sont nécessaires.
+//
+// `td.num` est en `white-space: nowrap`, et c'est voulu : un « 6 315 398 » coupé en deux lignes est
+// illisible. Mais un nombre qui ne se coupe pas et dont la colonne rétrécit SORT de sa cellule et
+// passe sous la voisine. Ni `overflow: hidden` seul — on lirait « 1 759 » pour « 1 759 500 ».
+for (const { largeur, hauteur } of [
+  { largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 },
+  { largeur: 1100, hauteur: 900 }, { largeur: 960, hauteur: 900 },
+]) {
+  test(`chiffres : aucun ne sort de sa colonne en ${largeur}×${hauteur} (#81)`, async ({ page }) => {
+    await page.setViewportSize({ width: largeur, height: hauteur });
+
+    // Rend les cellules numériques qui débordent, avec de quoi les nommer dans le rapport : sans le
+    // libellé de la colonne et la valeur, un « +17 » ne dit pas où regarder.
+    const debordements = (sel) => page.locator(sel).evaluate((table) => {
+      const titres = [...table.querySelectorAll("thead th")].map((h) => h.textContent.trim());
+      const sortis = [];
+      for (const td of table.querySelectorAll("tbody td.num")) {
+        const trop = td.scrollWidth - td.clientWidth;
+        if (trop <= 0) continue;
+        const rang = [...td.parentElement.children].indexOf(td);
+        sortis.push(`${titres[rang] || `col ${rang + 1}`} +${trop} (${td.textContent.trim().slice(0, 18)})`);
+      }
+      // Une entrée par COLONNE, pas par ligne : 316 lignes rendraient le rapport illisible.
+      return [...new Set(sortis.map((x) => x.split(" +")[0]))];
+    });
+
+    await expect(page.locator("#rows tr").first()).toBeVisible();
+    expect(await debordements("#routes"), "Trajets").toEqual([]);
+
+    await page.click("#viewLoops");
+    await expect(page.locator("#loopRows tr").first()).toBeVisible();
+    expect(await debordements("#loops"), "Boucles").toEqual([]);
+
+    await page.click("#viewEnroute");
+    const depart = await page.locator("#originList option").first().getAttribute("value");
+    await page.fill("#origin", depart);
+    await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
+    expect(await debordements("#enroute"), "En route").toEqual([]);
+  });
+}
