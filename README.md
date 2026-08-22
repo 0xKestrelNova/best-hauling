@@ -61,6 +61,12 @@ signe et **en rouge**, jamais dans le vert des gains.
   est une estimation grossière.
 - **Fiabilité des données** : pastille d'âge par relevé, filtre de fraîcheur (< 24 h / 3 j / 7 j), point de statut d'inventaire, tag « à vérifier », bandeau global « données d'il y a X h ».
 - **Filtres** : commodité, système, même système uniquement, exclure les avant-postes, commodités légales uniquement, limiter au stock & à la demande UEX. Ils ne s'appliquent pas tous à toutes les vues — voir la **[matrice ci-dessous](#portée-des-filtres-par-vue)**.
+- **Vaisseau** : le champ ◈ s'ouvre sur ce qu'on peut **réellement piloter**, du plus gros au plus
+  petit. UEX publie 20 vaisseaux **concepts** — annoncés par CIG, pas encore volables — et le tri par
+  capacité les mettait en tête : `MISC Hull E` et ses 12 000 SCU ouvraient la liste, devant le plus
+  gros vaisseau existant qui en tient 4 608. Ils restent **trouvables en tapant leur nom**, et
+  portent alors un `⚠ concept`, dans la liste comme sur la carte : une soute annoncée est une
+  promesse, pas une capacité, et un classement de routes bâti dessus doit se savoir spéculatif.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
 - **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`8` vues) ; tout ce qui s'active
   au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs

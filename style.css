@@ -490,6 +490,12 @@ input::placeholder { color: var(--muted); }
 .stn-pick li.active .stn-opt-code { color: var(--acc); }
 /* Le glyphe ne suffit pas : le mot reste écrit, comme partout ailleurs dans ce dépôt. */
 .stn-pick .stn-opt-post { flex: 0 0 auto; font-size: 10px; color: var(--warn); white-space: nowrap; }
+/* « ⚠ concept » : un vaisseau annoncé, pas volable (#44). Même teinte et même discrétion que
+   « ⚠ avant-poste » — c'est un avertissement, pas une alarme. Il vit DANS le span du nom, jamais en
+   troisième enfant flex : `.autocomplete li` répartit ses enfants par `space-between`, et un
+   troisième bloc ferait dériver la colonne SCU. */
+.ship-opt-concept { margin-left: 7px; font-size: 10px; color: var(--warn); white-space: nowrap; }
+#shipCardScu .ship-opt-concept { display: block; margin: 4px 0 0; }
 
 /* Vignette de station — primitive PARTAGÉE avec la bande de la vue Corrections (LOT 3) : une seule
    définition, sinon deux dégradés divergents pour la même chose. La photo se superpose au carré
