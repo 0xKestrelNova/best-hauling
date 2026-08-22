@@ -3092,3 +3092,36 @@ test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son t
   // « Copié » ferait croire à une seconde copie qui n'a pas eu lieu.
   await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
 });
+
+// #60 : les commodités d'une station sortaient dans l'ordre du tableau `commodities` de
+// market.json — c'est-à-dire l'ordre d'insertion d'une Map remplie en parcourant les prix UEX, qui
+// ne veut rien dire. Sur GrimHEX (3 achats, 89 ventes) il fallait balayer la grille à l'œil.
+//
+// L'incohérence sautait d'autant plus aux yeux que la BANDE de stations, elle, est rangée :
+// `groupOverridesByTerminal` départage par `localeCompare(terminal, "fr")`. On choisissait sa
+// station dans une liste ordonnée pour tomber dans un contenu qui ne l'était pas.
+//
+// Le tri est vérifié PAR SECTION : « On y achète » et « On y écoule » sont deux listes, et un tri
+// posé sur le parcours global les mêlerait. `localeCompare(…, "fr")` et non `<` : « Étain » se
+// range après « Estuarine », pas à la fin de l'alphabet.
+test("Corrections : les commodités d'une station sortent par ordre alphabétique (#60)", async ({ page }) => {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#stationList option").first()).toBeAttached({ timeout: 15000 });
+
+  // La station la plus fournie du jeu de données : c'est là que le défaut se voit.
+  const labels = await page.locator("#stationList option").evaluateAll((os) => os.map((o) => o.value));
+  const grimhex = labels.find((l) => /GrimHEX/i.test(l)) || labels[0];
+  await page.fill("#station", grimhex);
+  await expect(page.locator("#correctionsStation .scomm").first()).toBeVisible();
+
+  for (const section of ["achat", "vente"]) {
+    // Le DERNIER `<span>` porte le nom ; le premier est l’icône de catégorie, et `.scomm-name` les
+    // contient tous deux. Trier le libellé décoré trierait par emoji — pas ce que l’œil cherche.
+    const noms = await page.locator(`#correctionsStation .scomm.${section} .scomm-name > span:last-child`).allInnerTexts();
+    if (noms.length < 2) continue; // une section à zéro ou une entrée ne prouve rien
+    // Le marqueur « ⛔ ILLÉGAL » est un frère du texte, dans le même span : il ne compte pas.
+    const propres = noms.map((n) => n.replace(/⛔.*$/, "").replace(/\s+/g, " ").trim());
+    const attendu = [...propres].sort((a, b) => a.localeCompare(b, "fr"));
+    expect(propres, `section ${section} (${propres.length} tuiles)`).toEqual(attendu);
+  }
+});
