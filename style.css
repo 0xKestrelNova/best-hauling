@@ -835,7 +835,9 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
   flex: 1 1 460px; min-width: 380px;
   background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--acc-2);
 }
-.ship-journey-row.stacked .journey-map { width: 100%; max-width: none; }
+/* (La règle `.ship-journey-row.stacked .journey-map` a disparu : elle était INATTEIGNABLE depuis
+   que la carte du parcours est passée enfant de `<section id="plan">` (ADR-004). Elle décrivait la
+   troisième colonne du bandeau compagnon, qui n'existe plus — #43.) */
 .jm-label {
   display: block; margin-bottom: 8px;
   font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
