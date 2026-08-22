@@ -1138,6 +1138,77 @@ async function positionner(page, label) {
 const commodites = (page) =>
   page.locator("#commodityList option").evaluateAll((o) => o.map((x) => x.value));
 
+test("Soute : la vente partielle se saisit en « ce qui reste », et les deux champs se répondent (#49)", async ({ page }) => {
+  // Le scénario fondateur : 2 200 SCU à bord, l'écran du comptoir affiche « 2 170 restants ».
+  // L'app ne demandait que « ce qui part » — l'utilisateur soustrayait 30 de tête à chaque escale.
+  // La soute est DÉCLARÉE et non chargée depuis un manifeste : le total est alors un chiffre rond
+  // choisi ici, et le test dit ce qu'il mesure au lieu de dépendre de l'instantané UEX du jour.
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.locator("#holdAddNo").click();
+  await declarer(page, nom, 2200, 1000);
+  await positionner(page, "Megumi — Pyro");
+
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+  const restants = page.locator("#holdCard .hold-rest-qty");
+  const partent = page.locator("#holdCard .hold-sell-qty");
+
+  // Le curseur s'ouvre sur le RESTANT : le seul des deux chiffres que le jeu donne tout fait.
+  await expect(restants).toBeFocused();
+  await expect(restants).toHaveValue("0");
+  await expect(partent).toHaveValue("2200"); // « tout part » à l'ouverture, comme avant #49
+
+  // On recopie ce que l'écran du jeu affiche ; l'autre champ fait la soustraction.
+  await restants.fill("2170");
+  await expect(partent).toHaveValue("30");
+
+  // …et le miroir marche dans les DEUX sens.
+  await partent.fill("500");
+  await expect(restants).toHaveValue("1700");
+
+  // Le geste consomme bien « ce qui part » : `.hold-sell-qty` n'a pas changé de sens. On passe par
+  // ⬓ déposer, qui est rendu quel que soit ce que le comptoir reprend — donc indépendant des
+  // données du jour, à la différence de ✓ vendre.
+  await restants.fill("2170");
+  await page.locator("#holdCard .hold-store").click();
+  expect(holdScuDe(await lots(page))).toBe(2170);
+  const depots = JSON.parse(await page.evaluate(() => localStorage.getItem("best-hauling-depots") || "{}"));
+  expect(Object.values(depots).flat()[0].units).toBe(30);
+});
+
+test("Soute : les bornes du champ de vente sont tenues, et le mot ne promet pas une vente (#49)", async ({ page }) => {
+  await ouvrirDeclaration(page);
+  const nom = (await commodites(page))[0];
+  await page.locator("#holdAddNo").click();
+  await declarer(page, nom, 2200, 1000);
+  await positionner(page, "Megumi — Pyro");
+  await page.locator("#holdCard .hold-line", { hasText: nom }).locator(".hold-sell-btn").click();
+
+  const restants = page.locator("#holdCard .hold-rest-qty");
+  const partent = page.locator("#holdCard .hold-sell-qty");
+
+  // Au-delà du total : le miroir passe à 0 tout de suite, mais le champ FRAPPÉ n'est ramené qu'au
+  // départ du curseur — le rétrécir à la frappe mangerait le chiffre en cours de saisie.
+  await restants.fill("9999");
+  await expect(partent).toHaveValue("0");
+  await expect(restants).toHaveValue("9999");
+  await restants.blur();
+  await expect(restants).toHaveValue("2200");
+
+  // Vidé, puis négatif : jamais de SCU négatif, jamais un couple incohérent.
+  await restants.fill("");
+  await expect(partent).toHaveValue("2200");
+  await partent.fill("-40");
+  await expect(restants).toHaveValue("2200");
+
+  // Les libellés ne disent pas « vendus » : ⬓ déposer est toujours offert, et ✓ vendre n'existe
+  // que si le comptoir reprend la commodité. Un mot qui promet une vente mentirait ici.
+  const mots = (await page.locator("#holdCard .hold-sell-lbl").allTextContents()).join(" ");
+  expect(mots).toContain("restants");
+  expect(mots).toContain("partent");
+  expect(mots).not.toMatch(/vendu/i);
+});
+
 test("Soute : déclarer du fret à bord sans voyage, sans jambe et sans manifeste (#55)", async ({ page }) => {
   // À vide, la carte Soute est masquée : sans point d'entrée ailleurs, la fonctionnalité était
   // littéralement indécouvrable — zéro bouton dans la page pour ouvrir quoi que ce soit.

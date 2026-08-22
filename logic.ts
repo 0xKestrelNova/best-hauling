@@ -1927,6 +1927,30 @@ export function sellFromHold(hold: Lot[], name: string, units: number, price: nu
   return { hold: suivant, vendu, recette, cout, profit: recette - cout, lots: consommes };
 }
 
+// ── #49 : « ce qui part » et « ce qui reste » sont le MÊME chiffre, vu des deux bouts ──────────
+// Au comptoir, l'écran du jeu affiche ce qui RESTE en soute (« 2 170 ») ; l'app ne demandait que
+// ce qui PART (« 30 »). L'utilisateur soustrayait de tête à chaque escale — et une soustraction
+// fausse se paye en fret vendu qu'on croyait garder.
+//
+// La fonction ne sait PAS si la sortie est une vente ou un dépôt, et c'est voulu : les deux
+// boutons de la carte s'en servent, et ✓ vendre n'existe que si le comptoir reprend la commodité.
+//
+// TOUT est ramené dans 0..total, et la somme est un INVARIANT : `part + reste === total`, toujours.
+// C'est lui qui autorise le miroir de l'interface à écrire dans le champ voisin sans jamais
+// produire un couple qui ne veuille rien dire.
+//
+// Les entrées douteuses ont toutes le même sort, et c'est délibéré : un champ vidé, un texte
+// (`<input type="number">` rend "" dès qu'on y tape une lettre) et un négatif valent 0. La
+// conséquence se VOIT avant tout clic, puisque le miroir affiche aussitôt l'autre bout du total.
+// `Math.floor` parce qu'un SCU ne se coupe pas — la troncature, jamais l'arrondi, pour qu'aucune
+// saisie ne fasse partir plus que ce que l'utilisateur a écrit.
+// Un `total` douteux ramène { 0, 0 } : on ne fabrique pas du fret à partir d'un nombre absent.
+export function repartirVente(total: number, saisi: number | string, champ: "part" | "reste"): { part: number; reste: number } {
+  const max = Math.max(0, Math.floor(Number(total) || 0));
+  const n = Math.min(max, Math.max(0, Math.floor(Number(saisi) || 0)));
+  return champ === "part" ? { part: n, reste: max - n } : { part: max - n, reste: n };
+}
+
 // Ce qu'il reste en rayon après avoir chargé `units`. Charger, c'est vider d'autant : sans ça, la
 // station continue d'annoncer un stock qu'on vient d'emporter, et le manifeste suivant le reproposte.
 //
