@@ -74,7 +74,11 @@ export function monterAutocompletion({ input, list, options, filtre, rendu, choi
 
   // q vide -> toute la liste (parcours au focus) ; sinon filtre par sous-chaîne.
   function show(q) {
-    const tout = options() || [];
+    // `q` DESCEND jusqu'à `options` : la liste ouverte au focus n'est pas forcément la même que la
+    // liste filtrée. Le sélecteur de vaisseau s'en sert pour n'ouvrir que sur ce qui est pilotable,
+    // tout en laissant une recherche explicite retrouver un concept (#44). Celui des stations
+    // ignore l'argument, et reste valide tel quel.
+    const tout = options(q) || [];
     const pool = q ? tout.filter((o) => filtre(o, q)) : tout;
     matches = q && max > 0 ? pool.slice(0, max) : pool;
     if (!matches.length) return hide();
@@ -225,6 +229,11 @@ function badgeSysteme(system) {
 }
 
 // ── LE SÉLECTEUR DE VAISSEAU ───────────────────────────────────────────────────────────────────
+/** Le marqueur d'un vaisseau annoncé mais pas volable. Même patron que « ⚠ avant-poste » du
+ *  sélecteur de station : un mot, une teinte d'avertissement, et un `title` qui dit pourquoi. */
+const MARQUEUR_CONCEPT =
+  '<span class="ship-opt-concept" title="Vaisseau annoncé par CIG, pas encore volable en jeu : sa soute est une promesse, pas une capacité.">⚠ concept</span>';
+
 // La liste est l'ÉTAT du module, et non une variable capturée par une fermeture : c'est ce qui
 // permet à `montrerCarteVaisseau()` d'exister avant que le fetch ait répondu (voir l'en-tête).
 let vaisseaux = [];
@@ -247,10 +256,22 @@ export async function chargerVaisseaux() {
 
   monterAutocompletion({
     input, list,
-    options: () => vaisseaux,
+    // AU FOCUS, on n'ouvre que sur ce qu'on peut piloter (#44). UEX publie 20 vaisseaux CONCEPT sur
+    // les 128 qui ont une soute, et le tri par capacité les mettait en tête : 7 des 12 premières
+    // lignes étaient des vaisseaux qui n'existent pas en jeu, Hull E et ses 12 000 SCU en ouverture.
+    // Un classement de routes chiffré sur 12 000 SCU imaginaires était à un clic et zéro avertissement.
+    //
+    // Dès qu'on TAPE, la liste entière revient : un concept reste trouvable pour qui le cherche
+    // exprès. C'est le choix contre une case « inclure les concepts », qui aurait inventé un réglage
+    // persistant — donc une clé d'état, donc une question de permalien — pour un défaut qui ne
+    // concerne que la liste ouverte à vide.
+    options: (q) => (q ? vaisseaux : vaisseaux.filter((s) => !s.concept)),
     filtre: (s, q) => s.name.toLowerCase().includes(q),
     rendu: (m) => m.map((s, i) =>
-      `<li role="option" data-i="${i}"><span>${esc(s.name)}</span>` +
+      `<li role="option" data-i="${i}">` +
+      // Le marqueur va DANS le span du nom, jamais en troisième enfant : `.autocomplete li` est un
+      // flex à `justify-content: space-between`, et un troisième bloc ferait dériver la colonne SCU.
+      `<span>${esc(s.name)}${s.concept ? MARQUEUR_CONCEPT : ""}</span>` +
       `<span class="scu">${s.scu.toLocaleString("fr-FR")} SCU</span></li>`).join(""),
     choisir: (s) => {
       input.value = s.name;
@@ -296,6 +317,10 @@ function carteVaisseau(s) {
     wrap.style.display = "none";
   }
   $("shipCardName").textContent = s.name;
-  $("shipCardScu").innerHTML = `Soute : <b>${s.scu.toLocaleString("fr-FR")} SCU</b>`;
+  // Le marqueur vit AUSSI ici, et pas seulement dans la liste (#44). Un concept choisi puis restauré
+  // au rechargement n'affiche plus la liste — seulement cette carte. S'arrêter au sélecteur
+  // laisserait le mensonge intact précisément à l'endroit où il dure.
+  $("shipCardScu").innerHTML =
+    `Soute : <b>${s.scu.toLocaleString("fr-FR")} SCU</b>` + (s.concept ? MARQUEUR_CONCEPT : "");
   card.hidden = false;
 }

@@ -173,7 +173,16 @@ export const SCU_RELEVES = {
 export function shipEntry(v) {
   const name = v.name_full || v.name;
   const releve = SCU_RELEVES[name];
-  return { name, scu: releve ?? numField(v.scu), photo: v.url_photo || "" };
+  const e = { name, scu: releve ?? numField(v.scu), photo: v.url_photo || "" };
+  // `is_concept` : un vaisseau ANNONCÉ, jamais volable. UEX en publie 20 sur les 128 qui ont une
+  // soute, et le tri par capacité les met en tête — Hull E, 12 000 SCU, ouvrait la liste (#44).
+  //
+  // Le champ n'est posé QUE quand il vaut vrai, et c'est délibéré : un `dist/` bâti sur un
+  // `ships.json` antérieur à ce champ doit rendre 128 vaisseaux pilotables, pas zéro. Le repli
+  // ouvert est la seule forme sûre — d'où un test client qui s'écrit `!s.concept`, jamais
+  // `s.pilotable === true`.
+  if (v.is_concept) e.concept = true;
+  return e;
 }
 
 // Génère les routes d'arbitrage pour une commodité.
