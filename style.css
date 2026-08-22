@@ -603,8 +603,12 @@ input::placeholder { color: var(--muted); }
 .jleg.current { border-left-color: var(--acc); background: rgb(var(--acc-rgb) / 0.06); }
 .jleg-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
 .jleg-n { display: inline-grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; font-family: var(--mono); font-size: 9px; color: var(--acc-2); border: 1px solid var(--acc-2); border-radius: 50%; }
-.jleg-route { font-weight: 600; color: var(--text-fort); }
-.jleg-profit { margin-left: auto; font-family: var(--mono); }
+/* `flex: 1` : le nom ABSORBE l'espace libre de la rangée, ce qui garde le centre géométrique de
+   l'en-tête DANS le nom quelle que soit la largeur. C'est ce qui rend la non-collision structurelle
+   au lieu d'être une coïncidence de largeurs — voir `.jleg-load` pour ce qu'elle protège.
+   `min-width: 0` sinon un nom long refuse de se compresser et repousse le bouton hors de la carte. */
+.jleg-route { flex: 1; min-width: 0; font-weight: 600; color: var(--text-fort); }
+.jleg-profit { margin-left: 8px; font-family: var(--mono); }
 .jleg-cargo { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10.5px; color: var(--muted); }
 .jcargo-item { display: inline-flex; align-items: center; gap: 5px; }
 .jcargo-item .cicon { width: 18px; height: 18px; font-size: 10px; }
@@ -773,14 +777,50 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
 .depot-take:hover { background: rgb(var(--acc-2-rgb) / 0.2); }
 .depot-take:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
 
-/* « ✓ chargé » sur la jambe : le moment où l'intention devient un fait. Vert quand c'est à bord. */
+/* « ✓ chargé » sur la jambe : le moment où l'intention devient un fait.
+   C'est le geste le PLUS engageant de l'application — il crée les lots de la soute au prix affiché,
+   retranche le stock du terminal d'achat et fige les autres jambes qui achètent au même point. Il
+   était pourtant l'élément le plus effacé de sa rangée : 9,5 px en `var(--muted)`, la couleur que ce
+   dépôt réserve au secondaire, sur 19 px de haut, entre deux libellés de 11,5 px (#53).
+
+   L'emphase allait à l'ÉTAT DÉJÀ ACQUIS et pas à l'action : le bouton ne s'allumait qu'une fois le
+   geste fait. Les deux états gardent donc le vert, mais dans l'autre sens de lecture — l'action
+   PROPOSÉE prend le contour vif, l'état ACQUIS se calme en fond léger. Il reste parfaitement
+   distinct (fond plein contre fond transparent), sans crier plus fort que ce qu'il reste à faire.
+
+   24 px de haut : la cible tactile de WCAG 2.2 SC 2.5.8, la même règle que ▶ tient déjà. Le padding
+   passe donc de 2 à 5 px verticaux, et la taille de 9,5 à 11,5 px — celle de l'en-tête, pour que ce
+   ne soit plus le plus petit texte de sa propre rangée. */
 .jleg-load {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase;
-  white-space: nowrap; color: var(--muted); background: none;
-  border: 1px solid var(--line); border-radius: 2px; padding: 2px 6px; margin-left: 6px; cursor: pointer;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.5px; text-transform: uppercase;
+  white-space: nowrap; color: var(--good); background: rgb(var(--good-rgb) / 0.08);
+  border: 1px solid var(--good); border-radius: 2px;
+  padding: 5px 9px; cursor: pointer;
+  /* POUSSÉ À DROITE, et c'est une conséquence de l'agrandissement, pas une coquetterie.
+     `.jleg-head` est cliquable pour déplier l'éditeur ET contient ce bouton. Tant qu'il faisait
+     65 × 19 px au milieu de la rangée, le centre géométrique de l'en-tête tombait à côté ; à
+     30 px de haut et 11,5 px de corps, il tombe DESSUS — `elementFromPoint` au centre rendait
+     `jleg-load`. Cliquer le milieu de l'en-tête pour le déplier chargeait donc la jambe : le geste
+     le plus engageant de l'application, déclenché par erreur. C'est le défaut que style.css
+     signalait déjà à 460 px, ramené à toutes les largeurs.
+     Il passe donc EN BOUT DE RANGÉE (`order: 1`), après le chevron. Le milieu de l'en-tête — la
+     zone qu'on vise pour déplier — cesse d'être à lui, et il se groupe avec le chiffre qu'il engage.
+     `.jleg-route { flex: 1 }` complète la garantie : le nom absorbe l'espace libre, donc le centre
+     tombe dans le nom quand la carte est large, et sur le profit quand elle est étroite. Jamais sur
+     le bouton. Mesuré à 1440 et à 900 px, et tenu par `e2e/smoke.pw.mjs`.
+     Le simple décalage à droite ne suffisait PAS : à 900 px la carte fait 311 px et un bouton de
+     81 px y enjambe le centre quelle que soit sa marge. */
+  order: 1; margin-left: 8px;
 }
-.jleg-load:hover { color: var(--good); border-color: var(--good); }
-.jleg-load.charge { color: var(--good-fg); background: var(--good); border-color: var(--good); font-weight: 700; }
+.jleg-load:hover { background: rgb(var(--good-rgb) / 0.2); }
+/* La convention de focus du dépôt. Aucune règle ne visait ce bouton, alors qu'Entrée l'active. */
+.jleg-load:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
+/* « ⬢ à bord » : un ÉTAT, pas une action. Il se distingue sans réclamer le regard. */
+.jleg-load.charge {
+  color: var(--good); background: rgb(var(--good-rgb) / 0.16);
+  border-color: rgb(var(--good-rgb) / 0.45); font-weight: 700;
+}
+.jleg-load.charge:hover { background: rgb(var(--good-rgb) / 0.26); }
 
 /* ---------- Carte 2D du parcours (ADR-001) ---------- */
 /* Bandeau pleine largeur sous le compagnon. Tout est dessiné par app.js : aucun asset, aucune
