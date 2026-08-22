@@ -916,6 +916,13 @@ tbody tr:hover td { border-bottom-color: var(--line2); }
 
 /* Icône de catégorie (emoji) */
 .commodity-cell { display: flex; align-items: center; gap: 10px; }
+/* Les pastilles et le libellé « n commodités » passent SOUS les deux boutons, indentés de 36 px —
+   30 px de ▶ plus les 6 px d'écart réel de `.loc > div:first-child`, dont la spécificité l'emporte
+   sur celle d'ici. L'indentation les aligne donc exactement sur le bord gauche du bouton manifeste,
+   et ce décrochement dit ce qu'aucun texte ne disait : ces commodités sont le CONTENU de ce
+   manifeste. Le retour à la ligne existait déjà à 1440 px, mais à ras du bord — il ne disait rien.
+   `flex-basis: 100%` force le passage à la ligne sans toucher au reste de la cellule. */
+.commodity-cell .multi-icons, .commodity-cell .cname { flex-basis: 100%; margin-left: 36px; }
 .commodity-cell > span { font-family: var(--font); }
 
 /* Badges alignés SOUS le titre (système, avant-poste, illégal, à vérifier, saut inter-système). */
@@ -934,7 +941,7 @@ tbody tr:hover td { border-bottom-color: var(--line2); }
 .loop-end { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .loop-mid { display: flex; align-items: center; gap: 8px; }
 .cicon {
-  flex-shrink: 0; width: 30px; height: 30px; display: grid; place-items: center; font-size: 15px;
+  flex-shrink: 0; width: 26px; height: 26px; display: grid; place-items: center; font-size: 14px;
   border-radius: 4px; border: 1px solid var(--k-line, var(--line2)); background: var(--k-bg, rgb(var(--text-fort-rgb) / .04));
 }
 
@@ -984,13 +991,23 @@ tbody tr:hover td { border-bottom-color: var(--line2); }
 .ovmark { font-size: 9px; margin-left: 2px; vertical-align: super; }
 input.editv-input { width: 80px; min-width: 0; padding: 2px 5px; font-size: 12px; font-family: var(--mono); text-align: right; background: rgb(var(--fond-carte-rgb) / 0.95); border: 1px solid var(--acc); color: var(--text); border-radius: 3px; }
 
-/* Bouton « voir le chargement » — lignes multi-commodité uniquement (#30). */
+/* Bouton « voir le chargement » — lignes multi-commodité uniquement (#30).
+   MÊME TAILLE que le ▶ voisin (#52) : c'est le seul autre bouton de la cellule, et il était le plus
+   petit des trois objets alignés — plus petit que des pastilles de catégorie qui, elles, ne sont même
+   pas cliquables. Sa subordination continue de se dire par la COULEUR (contour contre fond plein),
+   jamais par la taille. 30 px tient au passage la cible tactile de WCAG 2.2 SC 2.5.8, comme ▶.
+   Son glyphe est passé de 📦 à 🧾 : `KIND_ICON.other` vaut « 📦 » et sert de repli à toute catégorie
+   sans icône dédiée — six commodités de l'amorce l'affichent en pastille, à 6 px du bouton et en plus
+   grand que lui. On ne savait plus lequel des deux était cliquable. Une caisse, c'est du fret ; un
+   manifeste, c'est un papier. */
 .route-toggle {
-  flex-shrink: 0; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; font-size: 12px; line-height: 1;
+  flex-shrink: 0; width: 30px; height: 30px; padding: 0; display: grid; place-items: center; font-size: 14px; line-height: 1;
   background: rgb(var(--text-fort-rgb) / 0.04); border: 1px solid var(--line2); border-radius: 4px; cursor: pointer; color: var(--muted);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 .route-toggle:hover { color: var(--acc); border-color: var(--acc); }
+/* La convention de focus du dépôt. Aucune règle ne visait ce bouton, alors qu'il est activable. */
+.route-toggle:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
 /* Ouvert, ce bouton prenait le remplissage ambre plein. Il ne le peut plus : le ▶ voisin l'a pris
    (#29), et deux carrés pleins côte à côte annulent la hiérarchie. L'état actif se dit donc ici en
    CONTOUR — d'autant que le glyphe est un emoji, que `color` ne repeint pas : sur fond ambre plein,

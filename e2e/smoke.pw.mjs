@@ -3125,3 +3125,44 @@ test("Corrections : les commodités d'une station sortent par ordre alphabétiqu
     expect(propres, `section ${section} (${propres.length} tuiles)`).toEqual(attendu);
   }
 });
+
+// #52 : en multi-commodité, la première colonne alignait trois objets dont les tailles disaient le
+// CONTRAIRE de leur importance — ▶ à 30 px (action principale), le bouton du manifeste à 24, et les
+// pastilles de catégorie à 30. Le seul autre bouton de la cellule était donc plus petit que des
+// pastilles qui ne sont même pas cliquables.
+//
+// Pire : sa boîte 📦 n'était pas à lui. `KIND_ICON.other` vaut « 📦 » et sert de repli à toute
+// catégorie sans icône dédiée — six commodités de l'amorce l'affichent en pastille, à 6 px du bouton
+// et en plus grand que lui. Sur ces lignes-là, on ne savait plus lequel des deux 📦 était cliquable.
+test("Trajets multi : le bouton du manifeste n'est ni le plus petit ni un sosie (#52)", async ({ page }) => {
+  await page.check("#useCargo");
+  await page.check("#multiCommodity");
+  await expect(page.locator("#rows .route-toggle").first()).toBeVisible({ timeout: 8000 });
+
+  const cellule = page.locator("#rows tr .commodity-cell").first();
+  const manifeste = cellule.locator(".route-toggle");
+  const jouer = cellule.locator(".journey-pick");
+  const pastille = cellule.locator(".multi-icons .cicon").first();
+
+  // 1. Même taille que ▶, et au moins la cible tactile de WCAG 2.2 SC 2.5.8. Sa subordination se dit
+  //    par la COULEUR — contour contre fond plein — jamais par la taille.
+  const bm = await manifeste.boundingBox();
+  const bj = await jouer.boundingBox();
+  expect(bm.width, "largeur du bouton manifeste").toBe(bj.width);
+  expect(bm.height, "hauteur du bouton manifeste").toBe(bj.height);
+  expect(bm.height).toBeGreaterThanOrEqual(24);
+
+  // 2. Les pastilles cessent d'être les plus gros objets de la ligne.
+  const bp = await pastille.boundingBox();
+  expect(bp.width, "pastille vs bouton").toBeLessThanOrEqual(bm.width);
+
+  // 3. Elles passent SOUS les deux boutons, alignées sur le bord gauche du bouton manifeste : le
+  //    décrochement dit ce qu'aucun texte ne dit — ces commodités sont le contenu de ce manifeste.
+  expect(Math.abs(bp.x - bm.x), "indentation des pastilles").toBeLessThanOrEqual(1);
+  expect(bp.y, "les pastilles sont sous les boutons").toBeGreaterThan(bm.y + bm.height - 1);
+
+  // 4. Plus aucun glyphe partagé entre le bouton et les pastilles de la MÊME cellule.
+  const glyphes = await cellule.locator(".multi-icons .cicon").allInnerTexts();
+  const sien = (await manifeste.innerText()).trim();
+  expect(glyphes.map((g) => g.trim()), "le bouton ne porte pas un glyphe de pastille").not.toContain(sien);
+});

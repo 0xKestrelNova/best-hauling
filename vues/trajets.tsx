@@ -274,7 +274,7 @@ function LigneComposee({ t, celluleFrais, libelleCaisses, releveLePlusAncien, te
             title="Voir le chargement"
             aria-label="Voir le chargement"
             aria-expanded={deplie}
-          >📦</button>
+          >🧾</button>
           <span className="multi-icons" title={noms}>
             {t.lines.slice(0, MAX_ICONES).map((l, k) => <IconeCommodite key={k} kind={l.kind} />)}
             {n > MAX_ICONES ? <span className="muted">+{n - MAX_ICONES}</span> : null}
