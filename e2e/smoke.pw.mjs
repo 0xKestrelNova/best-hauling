@@ -2881,7 +2881,21 @@ test("score : le tableau n'écrit jamais une largeur hors [0, 100] (#39)", async
 // le conteneur qui défile tout seul. Un test au niveau page passerait à tort, et c'est exactement
 // pour ça que rien ne voyait le défaut. La tolérance de 1 px couvre `.table-shell::after`, dont le
 // crochet décoratif déborde en permanence (style.css:613) — même convention qu'à la ligne 219.
-for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur: 1280, hauteur: 720 }]) {
+// #86 ajoute 1100×900 à la boucle, et c'est LUI qui la rendait rouge : mesuré à +133 px de
+// débordement sur Trajets, rail déplié — le rail lui-même. Replié à la main il tombait à +2, ce qui
+// veut dire que l'utilisateur devait le replier pour que la page tienne, sans que rien le lui dise.
+//
+// La TOLÉRANCE monte à 2 px au seul 1100, et il faut dire pourquoi plutôt que de l'arrondir : le
+// rail réglé, il reste 2 px de débordement dont il n'est pas la cause. Mesuré à cette largeur —
+// `.table-shell` fait 970, la table fait 970, les dix colonnes somment à 970, et `table.scrollWidth`
+// vaut 972. C'est donc le CONTENU d'une cellule qui sort de sa colonne, pas la table qui sort de son
+// cadre : c'est #81 (« en fenêtre réduite les chiffres sortent de leur colonne »), et le corriger ici
+// serait empiéter sur une autre issue. Le jour où #81 tombe, ce 2 redevient 1.
+for (const { largeur, hauteur, tolerance } of [
+  { largeur: 1920, hauteur: 1080, tolerance: 1 },
+  { largeur: 1280, hauteur: 720, tolerance: 1 },
+  { largeur: 1100, hauteur: 900, tolerance: 2 },
+]) {
   test(`tableaux : aucune barre horizontale en ${largeur}×${hauteur} (#54)`, async ({ page }) => {
     await page.setViewportSize({ width: largeur, height: hauteur });
     const debord = (sel) => page.locator(sel).evaluate((e) => {
@@ -2890,18 +2904,18 @@ for (const { largeur, hauteur } of [{ largeur: 1920, hauteur: 1080 }, { largeur:
     });
 
     await expect(page.locator("#rows tr").first()).toBeVisible();
-    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(1);
+    expect(await debord("#routes"), "Trajets").toBeLessThanOrEqual(tolerance);
 
     await page.click("#viewLoops");
     await expect(page.locator("#loopRows tr").first()).toBeVisible();
-    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(1);
+    expect(await debord("#loops"), "Boucles").toBeLessThanOrEqual(tolerance);
 
     // « En route » partage le rendu de Trajets ; il faut un terminal de départ pour qu'il peuple.
     await page.click("#viewEnroute");
     const depart = await page.locator("#originList option").first().getAttribute("value");
     await page.fill("#origin", depart);
     await expect(page.locator("#enrouteRows tr").first()).toBeVisible();
-    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(1);
+    expect(await debord("#enroute"), "En route").toBeLessThanOrEqual(tolerance);
   });
 }
 
@@ -3091,6 +3105,56 @@ test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son t
   // Le libellé REVIENT : « ✓ Copié » est un retour visuel, pas un état. Un bouton resté sur
   // « Copié » ferait croire à une seconde copie qui n'a pas eu lieu.
   await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
+});
+
+// #86, second critère : le point de rupture ne doit PAS marcher sur la préférence de l'utilisateur.
+// C'est le piège de cette issue — une bascule automatique qui écrase un choix explicite est plus
+// agaçante que le défaut qu'elle corrige. Elle ne le peut pas ici, et c'est structurel : le repli
+// automatique est une media query, `rail.js` n'en sait rien et ne touche jamais à la largeur. Ce
+// test épingle cette séparation, qui se perdrait au premier « repli automatique en JavaScript ».
+test("Rail : le repli automatique ne mange pas la préférence manuelle (#86)", async ({ page }) => {
+  // Au large, le choix manuel commande.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  // `.rail` anime sa largeur sur 0,18 s : une mesure prise juste après le clic lit l'état d'AVANT.
+  // On attend que la valeur se pose, plutôt que de dormir un temps arbitraire.
+  const railVaut = (px) => expect.poll(
+    () => page.locator(".rail").evaluate((e) => Math.round(e.getBoundingClientRect().width)),
+    { timeout: 3000 }
+  ).toBe(px);
+  await railVaut(208);
+
+  await page.click("#railToggle");
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "false");
+
+  // On rétrécit : le rail est déjà replié, rien ne change.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68);
+
+  // Sous le point de rupture, le bouton est masqué — la fenêtre a déjà tranché, un contrôle qui ne
+  // fait rien n'a pas à s'afficher.
+  await expect(page.locator("#railToggle")).toBeHidden();
+
+  // On réélargit : la préférence REPLIÉE est toujours celle de l'utilisateur, elle reprend la main.
+  // C'est le sens qui compte : la media query n'a rien écrasé, elle s'est seulement superposée.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(68);
+  await expect(page.locator("#railToggle")).toBeVisible();
+
+  // Et dans l'autre sens : on déplie AU LARGE, on rétrécit, on réélargit — le choix revient intact.
+  await page.click("#railToggle");
+  await railVaut(208);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await railVaut(68); // la fenêtre commande ici
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await railVaut(208); // et le choix reprend là
+
+  // Il survit au rechargement, comme avant #86.
+  await page.reload();
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await railVaut(208);
+  await expect(page.locator("#railToggle")).toHaveAttribute("aria-expanded", "true");
 });
 
 // #60 : les commodités d'une station sortaient dans l'ordre du tableau `commodities` de
