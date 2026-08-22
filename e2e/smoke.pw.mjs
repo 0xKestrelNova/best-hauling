@@ -3133,5 +3133,18 @@ test("Voyage : « ✓ chargé » se lit comme l'action de la jambe (#53)", async
     const l = await bouton.boundingBox();
     const chevauche = Math.min(r.y + r.height, l.y + l.height) - Math.max(r.y, l.y);
     expect(chevauche, `nom et bouton sur la même rangée à ${largeur} px`).toBeGreaterThan(0);
+
+    // 5. LE CENTRE DE L'EN-TÊTE N'EST PAS SUR LE BOUTON, et c'est la contrainte que grossir le
+    //    bouton a failli emporter — elle n'était tenue par AUCUN test. `.jleg-head` est cliquable
+    //    pour déplier l'éditeur et CONTIENT ce bouton : quand le centre tombe dessus, cliquer le
+    //    milieu de la rangée charge la jambe au lieu de la déplier. Le geste le plus engageant de
+    //    l'application, déclenché par erreur. Playwright vise le centre, donc la CI l'a vu — mais
+    //    seulement par ricochet, sur six autres tests, et sans dire pourquoi.
+    const auCentre = await page.locator("#journeyCard .jleg-head").first().evaluate((h) => {
+      const b = h.getBoundingClientRect();
+      const el = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return el ? el.className : "";
+    });
+    expect(auCentre, `ce qu'on touche au centre de l'en-tête à ${largeur} px`).not.toContain("jleg-load");
   }
 });
