@@ -3063,3 +3063,32 @@ test("Soute : une déclaration en cours de saisie survit à un geste fait ailleu
   await expect(page.locator("#holdAddName")).toHaveValue("Titanium");
   await expect(page.locator("#holdAddScu")).toHaveValue("42");
 });
+
+// « ⧉ Copier » de la carte de chargement — le dernier bouton de copie sans aucun test, mesuré au
+// moment de démonter la coquille : `grep -rn copyManifest e2e/` ne rendait rien, alors que ses trois
+// frères (`#planCopy`, `#copyDepots`, `#exportCorrections`) en avaient. Un geste qu'on s'apprête à
+// déménager sans filet est un geste qu'on déménagera mal.
+//
+// Ce que le texte doit porter, et qui n'est vérifiable QUE là : le couple de terminaux en tête (une
+// liste de commodités sans sa route ne se relit pas), une ligne par commodité avec ses SCU, et le
+// total. C'est un plan qu'on lit sur un second écran en pilotant — pas un export de données.
+test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son total (#copyManifest)", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await manifesteDepuis(page, "Megumi — Pyro");
+
+  // `.mname` porte AUSSI le ✕ de retrait de la ligne : on ne garde que le nom.
+  const premiere = (await page.locator("#manifest .mname").first().innerText()).replace(/\s*✕\s*$/, "").trim();
+  await page.click("#copyManifest");
+  await expect(page.locator("#copyManifest")).toHaveText(/Copié/);
+
+  const texte = await page.evaluate(() => navigator.clipboard.readText());
+  expect(texte).toContain("Manifeste");
+  expect(texte).toContain("Megumi");                    // le départ, en tête
+  expect(texte).toContain(premiere);                    // la première commodité chargée
+  expect(texte).toMatch(/\d+ SCU/);                     // des quantités, pas seulement des noms
+  expect(texte).toMatch(/Total : .*SCU.*profit/);       // et la ligne qui conclut
+
+  // Le libellé REVIENT : « ✓ Copié » est un retour visuel, pas un état. Un bouton resté sur
+  // « Copié » ferait croire à une seconde copie qui n'a pas eu lieu.
+  await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
+});

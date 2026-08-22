@@ -24,12 +24,15 @@ import { feeResolver } from "./frais.ts";
 import { findCommodity, resolveStationLabel, stationCourante, stationMap } from "./marche.ts";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { rafraichir } from "./rendu.ts";
-import { saveChargements, saveSoute, venteImplicite } from "./soute-actions.js";
+import { chargerJambe, saveChargements, saveSoute, venteImplicite } from "./soute-actions.js";
 import {
   journeyEndIndex, legEffectiveLines, legIntent, legKey, legSuggestCtx, legTerminals,
   saveJourneyEdits, saveJourneyPins,
 } from "./voyage-donnees.ts";
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
+import { listesPretes, peuplerListes } from "./listes.js";
+
+const $ = (id) => document.getElementById(id);
 
 // Le chargement courant de la carte « En route », dérivé à la demande (cf. manifeste-donnees.ts).
 const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
@@ -221,4 +224,103 @@ export function removeJourneyStop(stopIndex) {
   etat.JOURNEY = r.start ? { legs: [], current: 0, start: r.start } : { legs: r.legs, current: r.current };
   syncViewsToJourney();
   rafraichir();
+}
+
+/**
+ * Branche les huit délégations du compagnon de voyage. Six d'entre elles vivent sur `document`.
+ *
+ * ── L'ORDRE DES BRANCHES DU CLIC EST UN CONTRAT ───────────────────────────────────────────────
+ * `.jleg-load` DOIT passer avant `.jleg-head` : le bouton « ✓ chargé » vit DANS l'en-tête de jambe,
+ * et l'inverse déplierait l'éditeur en plus de charger la soute.
+ *
+ * ── DEUX `document` keydown DANS DEUX MODULES ─────────────────────────────────────────────────
+ * Celui-ci (Entrée dans les trois champs d'ajout) et celui des raccourcis 1…8 (`navigation.js`) ne
+ * se recouvrent pas : le second sort si `activeElement` est un INPUT. Mais l'ordre d'enregistrement
+ * est devenu l'ordre d'IMPORT dans l'amorce — c'est écrit ici et là-bas, même si c'est aujourd'hui
+ * sans effet.
+ */
+export function brancherGestesVoyage() {
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#journeyClear")) { clearJourney(); return; }
+    // Démarrer un voyage « de zéro » : bouton « Commencer » depuis l'invite.
+    if (e.target.closest("#journeyStartBtn")) { beginJourney($("journeyStart").value); return; }
+    // Ajout d'arrêt : bouton « + Arrêt » ou une suggestion.
+    if (e.target.closest("#journeyAddBtn")) { addStopByTerminal($("journeyAddStop").value); return; }
+    const sug = e.target.closest(".jstop-suggest");
+    if (sug) { addStopByTerminal(sug.dataset.label); return; }
+    // Retirer un arrêt (✕ sur une étape) -> reconnexion des voisins.
+    const del = e.target.closest(".jstep-del");
+    if (del) { removeJourneyStop(Number(del.dataset.i)); return; }
+    // Édition du manifeste d'une jambe : déplier / retirer / ajouter / réinitialiser.
+    // `.jman-suggest .suggest-add` et NON `.suggest-add` nu : la carte de chargement pose le second
+    // et a sa propre délégation. Les deux ne se croisent que par cette qualification.
+    const legSug = e.target.closest(".jman-suggest .suggest-add");
+    if (legSug) { addLegSuggestion(Number(legSug.dataset.leg), legSug.dataset.name); return; }
+    const legDel = e.target.closest(".jman-del");
+    if (legDel) { delLegLine(Number(legDel.dataset.leg), legDel.dataset.name); return; }
+    const load = e.target.closest(".jleg-load");
+    if (load) { chargerJambe(Number(load.dataset.leg)); return; } // AVANT .jleg-head : le bouton y vit
+    if (e.target.closest(".jman-reset")) { resetLeg(Number(e.target.closest(".jman-reset").dataset.leg)); return; }
+    const addBtn = e.target.closest(".jman-add-btn");
+    if (addBtn) { addLegLine(Number(addBtn.dataset.leg), addBtn.closest(".jman-add").querySelector(".jman-add-input").value); return; }
+    const head = e.target.closest(".jleg-head");
+    if (head) { toggleLegEditor(Number(head.dataset.leg)); return; }
+    // Parcours interactif : clic sur une étape (⦿) = « je suis ici » -> recale les vues.
+    const step = e.target.closest(".jstep");
+    if (step) setJourneyStop(Number(step.dataset.i));
+  });
+
+  // L'en-tête d'une jambe est annoncé `role="button"` : Entrée/Espace doivent l'activer comme le
+  // clic. On teste `e.target` LUI-MÊME et non `closest()` — modèle `.editv` plutôt que `.jm-arret` :
+  // le bouton « ✓ chargé » vit DANS l'en-tête, et un `closest()` déplierait l'éditeur EN PLUS de
+  // charger la soute à chaque Entrée sur ce bouton.
+  $("journeyCard").addEventListener("keydown", (e) => {
+    if (!e.target.classList || !e.target.classList.contains("jleg-head")) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); // Espace ne doit pas défiler la page
+    toggleLegEditor(Number(e.target.dataset.leg));
+  });
+
+  // Ajout d'arrêt / de commodité à la touche Entrée.
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(e.target.value); }
+    else if (e.target.id === "journeyAddStop" && e.key === "Enter") { e.preventDefault(); addStopByTerminal(e.target.value); }
+    else if (e.target.classList && e.target.classList.contains("jman-add-input") && e.key === "Enter") {
+      e.preventDefault();
+      addLegLine(Number(e.target.dataset.leg), e.target.value);
+    }
+  });
+
+  // Précharge le marché quand on focalise un champ terminal du compagnon -> peuple sa datalist.
+  document.addEventListener("focusin", (e) => {
+    if ((e.target.id === "journeyStart" || e.target.id === "journeyAddStop") && !listesPretes()) {
+      if (etat.MARKET) peuplerListes();
+      else withMarket(() => {});
+    }
+  });
+
+  // La carte 2D du parcours : cliquer une escale déplace « je suis ici », comme le fil d'étapes.
+  $("journeyMap").addEventListener("click", (e) => {
+    const a = e.target.closest(".jm-arret");
+    if (a) setJourneyStop(Number(a.dataset.i));
+  });
+  $("journeyMap").addEventListener("keydown", (e) => {
+    const a = e.target.closest(".jm-arret");
+    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setJourneyStop(Number(a.dataset.i)); }
+  });
+
+  // Les SCU d'une ligne de jambe : suggestions et profit en direct à la frappe (`liveLegQty`
+  // n'appelle que `notifier()`), persistance au blur ou à Entrée (`editLegQty`). Le couple
+  // input/change est la contrepartie exacte l'un de l'autre — les fusionner persisterait à chaque
+  // caractère.
+  document.addEventListener("input", (e) => {
+    if (e.target.classList && e.target.classList.contains("jman-qty")) {
+      liveLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target);
+    }
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target.classList && e.target.classList.contains("jman-qty")) {
+      editLegQty(Number(e.target.dataset.leg), Number(e.target.dataset.i), e.target.value);
+    }
+  });
 }

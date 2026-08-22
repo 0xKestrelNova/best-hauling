@@ -17,6 +17,10 @@ import { findCommodity, indexArriveeForcee, indexOrigine, stationMap } from "./m
 import { rafraichir } from "./rendu.ts";
 import { manifesteCourant, manifestRemaining, suggestionsFor } from "./manifeste-donnees.ts";
 import { compositionValide, oublierComposition, retenirComposition } from "./manifeste-etat.ts";
+import { copyManifest } from "./presse-papiers.js";
+import { manifestToJourney } from "./voyage-gestes.js";
+
+const $ = (id) => document.getElementById(id);
 
 const champ = (id) => document.getElementById(id)?.value ?? "";
 
@@ -91,3 +95,38 @@ export function oublierCompositionSiRouteChangee() {
 export function resetManifeste() { oublierComposition(); rafraichir(); }
 
 const chargementCourant = () => { const r = manifesteCourant(readFilters()); return r.etat === "ok" ? r.m : null; };
+
+/**
+ * Branche les trois délégations de la carte de chargement.
+ *
+ * Elles sont posées sur `#manifest`, et pas dans le délégué global du compagnon : cet écouteur-ci
+ * ne voit que SA carte, là où le délégué global voit toute la page. C'est ce qui garde `.suggest-add`
+ * sans ambiguïté — le délégué global, lui, ne le teste que sous `.jman-suggest`.
+ */
+export function brancherGestesManifeste() {
+  // Les totaux se recalculent à la FRAPPE, sans re-rendre : le champ SCU est non contrôlé, React
+  // garde son nœud, mais un cycle complet remonterait sa valeur calculée sous les doigts.
+  $("manifest").addEventListener("input", (e) => {
+    if (e.target.classList.contains("mqty-input")) updateManifestTotals();
+  });
+
+  $("manifest").addEventListener("click", (e) => {
+    if (e.target.closest("#manifestToJourney")) { manifestToJourney(); return; }
+    if (e.target.closest("#copyManifest")) { copyManifest(); return; }
+    if (e.target.closest("#manifestAddBtn")) { addManifestCommodity($("manifestAddInput").value); return; }
+    if (e.target.closest("#manifestReset")) { resetManifeste(); return; }
+    const del = e.target.closest(".mline-del");
+    if (del) { removeManifestLine(del.dataset.name); return; }
+    const add = e.target.closest(".suggest-add");
+    if (add) addSuggestion(add.dataset.name);
+  });
+
+  // Le `preventDefault()` est indispensable : le champ vit dans un formulaire implicite avec
+  // `#manifestAddBtn`, et Entrée le soumettrait.
+  $("manifest").addEventListener("keydown", (e) => {
+    if (e.target.id === "manifestAddInput" && e.key === "Enter") {
+      e.preventDefault();
+      addManifestCommodity(e.target.value);
+    }
+  });
+}

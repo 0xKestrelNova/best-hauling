@@ -19,9 +19,11 @@
 // Une copie qui rate le point 1 ne casse aucun test — elle laisse simplement un voyage se recalculer
 // sur un stock qu'on vient de contredire.
 
-import { DUREE_VOL } from "./logic.ts";
+import { DUREE_VOL, ovKey } from "./logic.ts";
 import type { ChampCorrection, CoteMarche } from "./types.ts";
-import { ovCount, relevePerimees, resetOverrides, setOverride } from "./corrections.ts";
+import { ovCount, relevePerimees, resetOverrides, saveOverrides, setOverride } from "./corrections.ts";
+import { etat } from "./etat.ts";
+import { indexStationExacte } from "./marche.ts";
 import { pinLegsForVolume } from "./voyage-donnees.ts";
 import { showToast } from "./messages.ts";
 import { rafraichir } from "./rendu.ts";
@@ -110,6 +112,41 @@ export function effacerToutesLesCorrections(): void {
   if (!ovCount()) return;
   if (!confirm("Effacer toutes tes corrections locales de prix et de stock ?")) return;
   resetOverrides();
+  updateOvBadge();
+  rafraichir();
+}
+
+/**
+ * Efface les corrections de la SEULE station affichée — le bouton du bandeau collant.
+ *
+ * Chaque volume effacé fige d'abord les jambes qui en dépendaient : rendre son stock à UEX reste un
+ * changement de volume, et sans ce gel un voyage déjà planifié se rebattrait tout seul (#48).
+ */
+export function effacerStation(): void {
+  const S = indexStationExacte();
+  const nom = S != null ? etat.MARKET!.terminals[S].name : null;
+  if (!nom) return;
+  for (const cle of Object.keys(etat.OVERRIDES)) {
+    const [commodite, terminal, cote] = cle.split("|");
+    if (terminal !== nom) continue;
+    if (etat.OVERRIDES[cle].vol != null) pinLegsForVolume(commodite, terminal, cote as CoteMarche);
+    delete etat.OVERRIDES[cle];
+  }
+  saveOverrides();
+  updateOvBadge();
+  rafraichir();
+}
+
+/**
+ * Rend UN chiffre à sa valeur UEX — le contrôle dédié posé dans la tuile, hors du `.editv`.
+ *
+ * Même règle de gel que ci-dessus, et pour la même raison : un volume qui revient à UEX est un
+ * volume qui CHANGE.
+ */
+export function revenirAUEX(commodite: string, terminal: string, cote: CoteMarche, champ: ChampCorrection): void {
+  if (champ === "vol") pinLegsForVolume(commodite, terminal, cote);
+  const o = etat.OVERRIDES[ovKey(commodite, terminal, cote)];
+  setOverride(commodite, terminal, cote, champ, null, o ? o.base : 0);
   updateOvBadge();
   rafraichir();
 }
