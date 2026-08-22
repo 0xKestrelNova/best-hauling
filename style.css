@@ -899,23 +899,32 @@ th.sorted-desc::after { content: " ▾"; color: var(--acc); }
 th.sorted-asc::after { content: " ▴"; color: var(--acc); }
 
 /* Largeurs de colonnes (Trajets & En route : 10 colonnes)
-   Rééquilibrage de #54, mesuré au plancher de 960 px — le seul cas où ça se joue, puisque au-delà
-   tout le monde est à l'aise. Les quatre colonnes de droite étaient contraintes par leur INTITULÉ
-   et non par leurs chiffres (« Unités à acheter » : 142 px de titre pour 44 px de données), pendant
-   qu'« Acheter » et « Vendre » se partageaient 40 % de la table. Les titres ont été raccourcis et
-   leur sens mis en `title=` (index.html) ; ces pourcentages rendent le reste aux chiffres.
-   À 960 px, chaque colonne couvre désormais son intitulé : Marge/SCU 86 pour 84 exigés,
-   Profit/h 72 pour 67, Unités 62 pour 60, Coût 53 pour 51, Profit 58 pour 55, ROI 48 pour 45. */
+   #54 a rééquilibré une première fois sur l'INTITULÉ des colonnes de droite ; #81 rééquilibre sur
+   leur CONTENU, qui est le vrai plancher — et qui débordait encore : à 960 px, ROI +11, Coût +10,
+   Profit +17, Profit/h +3. Un `td.num` est en `nowrap` (voir plus bas, et c'est voulu : un
+   « 6 315 398 » coupé en deux lignes est illisible), donc un nombre trop large ne se replie pas —
+   il SORT de sa cellule et passe sous la voisine.
+
+   La place vient d'« Acheter » et « Vendre ». Ces deux-là ENVELOPPENT (`overflow-wrap: anywhere`),
+   donc leur plancher réel n'est pas la ligne complète mais le mot le plus long — 129 px et 115 px
+   mesurés. Elles recevaient 20 % et 17,5 %, soit 37,5 % de la table pour 244 px de plancher
+   combiné. Elles passent à 15 % et 14 % : 8,5 points rendus aux colonnes qui, elles, ne peuvent
+   pas envelopper.
+
+   Ces 8,5 points ne sont pas répartis au hasard, ils suivent le débordement mesuré : Profit et
+   Profit/h en prennent le plus, ROI et Coût 1,5 chacun, Marge/SCU une demi-marge de sécurité.
+   Ce qui n'est PAS fait, et délibérément : `overflow: hidden` seul remplacerait un chevauchement
+   par un nombre silencieusement amputé — on lirait « 1 759 » pour « 1 759 500 », ce qui est pire. */
 #routes th:nth-child(1), #enroute th:nth-child(1) { width: 15%; }
-#routes th:nth-child(2), #enroute th:nth-child(2) { width: 20%; }
-#routes th:nth-child(3), #enroute th:nth-child(3) { width: 17.5%; }
+#routes th:nth-child(2), #enroute th:nth-child(2) { width: 15%; }
+#routes th:nth-child(3), #enroute th:nth-child(3) { width: 14%; }
 #routes th:nth-child(4), #enroute th:nth-child(4) { width: 8%; text-align: center; }
-#routes th:nth-child(5), #enroute th:nth-child(5) { width: 9%; }
-#routes th:nth-child(6), #enroute th:nth-child(6) { width: 5%; }
+#routes th:nth-child(5), #enroute th:nth-child(5) { width: 9.5%; }
+#routes th:nth-child(6), #enroute th:nth-child(6) { width: 6.5%; }
 #routes th:nth-child(7), #enroute th:nth-child(7) { width: 6.5%; }
-#routes th:nth-child(8), #enroute th:nth-child(8) { width: 5.5%; }
-#routes th:nth-child(9), #enroute th:nth-child(9) { width: 6%; }
-#routes th:nth-child(10), #enroute th:nth-child(10) { width: 7.5%; }
+#routes th:nth-child(8), #enroute th:nth-child(8) { width: 7%; }
+#routes th:nth-child(9), #enroute th:nth-child(9) { width: 8.5%; }
+#routes th:nth-child(10), #enroute th:nth-child(10) { width: 10%; }
 /* Boucles : 8 colonnes. Même maladie que Trajets, en plus petit et pour une autre raison : ici
    c'est le CHIFFRE qui déborde, pas l'intitulé — « Profit/h » recevait 61 px pour un `6 315 398`
    qui en réclame 91, et `td.num` est en `nowrap`. Les quatre premières colonnes enveloppent, elles
