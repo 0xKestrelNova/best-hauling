@@ -100,3 +100,17 @@ export async function copyShareLink() {
     // Presse-papiers indisponible (contexte non sécurisé) : on laisse l'URL dans la barre.
   }
 }
+
+/**
+ * Branche les deux boutons de copie qui ne vivent pas dans une carte déjà déléguée.
+ *
+ * `#planCopy` passe par une délégation sur `#planHead` — le conteneur, pas le bouton : React le
+ * repeint à chaque rendu, et un écouteur posé sur le bouton lui-même mourrait au premier. C'est le
+ * précédent de la FRONTIÈRE (ADR-012 §2). `#share`, lui, est un bouton statique du rail.
+ */
+export function brancherPressePapiers() {
+  document.getElementById("planHead").addEventListener("click", (e) => {
+    if (e.target.closest("#planCopy")) copierPlan();
+  });
+  document.getElementById("share").addEventListener("click", copyShareLink);
+}
