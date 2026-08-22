@@ -338,7 +338,33 @@ a:hover { color: #ffcf6b; text-decoration: underline; }
 .rail-status-head { display: flex; align-items: center; gap: 7px; font-size: 9px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); animation: hb-pulse 2.4s infinite; }
 
-/* Rail rétracté */
+/* Rail rétracté.
+   DEUX déclencheurs, et c'est tout l'objet de #86 : le clic (`.rail-collapsed`, posé par rail.js et
+   persisté), ET la fenêtre. Entre 821 px et 1250 px, la page a besoin des 140 px du rail et rien ne
+   les lui donnait : à 1100 px le tableau débordait de 133 px, c'est-à-dire exactement le rail.
+   L'utilisateur devait le replier À LA MAIN pour que la page tienne, sans que rien le lui dise.
+
+   Le point de rupture est en CSS et non en JavaScript, délibérément. Un repli automatique piloté par
+   un script devrait arbitrer entre la fenêtre et la préférence enregistrée — et une bascule qui
+   écrase un choix explicite est plus agaçante que le défaut qu'elle corrige. Ici il n'y a rien à
+   arbitrer : sous 1250 px c'est la fenêtre qui décide, au-dessus c'est le clic, et `rail.js` n'est
+   au courant de rien. Sa préférence survit intacte et reprend la main dès qu'on élargit.
+
+   1250 px et non 1100 : le débordement mesuré à 1100 vaut 133 px, donc il commence bien avant. La
+   marge évite une bande de largeurs où la page tient de justesse. */
+@media (max-width: 1250px) {
+  .rail { width: 68px; }
+  .rail .rl,
+  .brand-text,
+  .rail-status-head .rl { display: none; }
+  .vbtn { justify-content: center; padding-left: 0; padding-right: 0; }
+  .share-btn { padding: 11px 0; font-size: 15px; }
+  .brand { justify-content: center; padding-left: 0; padding-right: 0; }
+  /* Le bouton de repli n'a plus rien à commander : la fenêtre a déjà tranché. Le masquer évite un
+     contrôle qui ne fait rien — même règle que sous 820 px. */
+  .rail-toggle { display: none; }
+}
+
 .rail-collapsed .rail { width: 68px; }
 .rail-collapsed .rail .rl,
 .rail-collapsed .brand-text,
