@@ -268,6 +268,18 @@ test("shipEntry : un vaisseau sans relevé garde la valeur UEX", () => {
   assert.equal(shipEntry({ name: "Champ pourri", scu: "1e3; DROP" }).scu, 0); // coercition, comme partout
 });
 
+test("shipEntry : un vaisseau CONCEPT se signale, les autres ne portent rien (#44)", () => {
+  // UEX publie `is_concept` : un vaisseau annoncé, jamais volable. Le sélecteur en proposait 20 sur
+  // 128, dont 7 dans les 12 premières lignes — Hull E (12 000 SCU) en tête. Un classement de routes
+  // chiffré sur 12 000 SCU imaginaires était à un clic, et à zéro avertissement.
+  assert.equal(shipEntry({ name_full: "MISC Hull E", scu: 12000, is_concept: 1 }).concept, true);
+  // Le champ n'est posé QUE quand il vaut vrai : un `dist/` bâti sur un ships.json antérieur au
+  // champ doit rendre 128 lignes pilotables, pas 0. Le repli ouvert est la seule forme sûre, et
+  // c'est pour ça que le test client s'écrit `!s.concept` et jamais `s.pilotable === true`.
+  assert.equal("concept" in shipEntry({ name_full: "MISC Hull C", scu: 4608, is_concept: 0 }), false);
+  assert.equal("concept" in shipEntry({ name_full: "MISC Hull C", scu: 4608 }), false);
+});
+
 test("shipEntry : le relevé en jeu corrige UEX (Drake Ironclad)", () => {
   // UEX annonce 2 200 SCU ; le vaisseau en tient 2 216. Sans cette correction, la soute — donc les
   // unités, donc le profit et le classement de toutes les vues — est fausse à chaque rebuild.

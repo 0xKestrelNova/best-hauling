@@ -3371,3 +3371,39 @@ test("Voyage : le montant d'une suggestion est celui que la jambe rapporte vraim
   );
   expect(compact, `la jambe rapporte ${profitJambe}, le bouton promettait +${promis}`).toBe(promis);
 });
+
+// #44 : UEX publie `is_concept` — un vaisseau ANNONCÉ, jamais volable. 20 des 128 vaisseaux à soute
+// en sont, et le tri par capacité les mettait en tête : 7 des 12 premières lignes n'existaient pas
+// en jeu, MISC Hull E et ses 12 000 SCU en ouverture. Un classement de routes chiffré sur 12 000 SCU
+// imaginaires était donc à un clic, et à zéro avertissement.
+//
+// Le compte n'est PAS figé en dur : `data/ships.json` est régénéré par `chore(data)`, et une
+// assertion à 108 périmerait au premier rebuild. On lit le fichier servi et on compare.
+test("Vaisseau : le sélecteur ouvre sur ce qui est pilotable, et dit quand ça ne l'est pas (#44)", async ({ page }) => {
+  const servis = await page.evaluate(() => fetch("data/ships.json").then((r) => r.json()));
+  const pilotables = servis.filter((s) => !s.concept);
+  expect(pilotables.length, "l'instantané distingue bien les concepts").toBeLessThan(servis.length);
+
+  // AU FOCUS : que du pilotable, et le plus gros en tête.
+  await page.click("#ship");
+  await expect(page.locator("#shipList li").first()).toBeVisible();
+  await expect(page.locator("#shipList li")).toHaveCount(pilotables.length);
+  await expect(page.locator("#shipList .ship-opt-concept")).toHaveCount(0);
+  const premier = await page.locator("#shipList li span").first().innerText();
+  const attendu = [...pilotables].sort((a, b) => b.scu - a.scu)[0].name;
+  expect(premier.trim(), "le premier de la liste est le plus gros PILOTABLE").toBe(attendu);
+
+  // EN TAPANT : un concept redevient trouvable pour qui le cherche exprès, marqueur compris.
+  const concept = servis.find((s) => s.concept);
+  await page.fill("#ship", concept.name.split(" ").slice(-2).join(" "));
+  const ligne = page.locator("#shipList li").filter({ hasText: concept.name }).first();
+  await expect(ligne).toBeVisible();
+  await expect(ligne.locator(".ship-opt-concept")).toHaveText(/concept/i);
+
+  // ET SUR LA CARTE : c'est là que le mensonge durait, puisqu'un choix restauré n'affiche plus la
+  // liste. Le marqueur doit y être aussi.
+  await ligne.click();
+  await expect(page.locator("#shipCard")).toBeVisible();
+  await expect(page.locator("#shipCardScu .ship-opt-concept")).toHaveText(/concept/i);
+  await expect(page.locator("#shipCardScu .ship-opt-concept")).toHaveAttribute("title", /pas encore volable/i);
+});
