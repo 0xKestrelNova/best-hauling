@@ -70,7 +70,15 @@ signe et **en rouge**, jamais dans le vert des gains.
 - **Permaliens & persistance** : l'état (filtres, tri, vue, vaisseau) est mémorisé (localStorage) et encodé dans l'URL → bouton **Partager**.
 - **Copier le manifeste**, **raccourcis clavier** (`/` recherche, `1`–`8` vues) ; tout ce qui s'active
   au clic s'active aussi à **Entrée/Espace** (en-têtes de tri, escales de la carte, valeurs
-  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux.
+  corrigeables, en-tête d'une jambe), et les raccourcis se taisent tant que le focus est sur l'un d'eux
+  — comme ils se taisent **sous une modale** : rien n'agit derrière le voile de l'aide.
+- **Première visite** : au tout premier chargement, une **aide modale** dit ce qu'est cet écran et à
+  quoi répond chacune des huit vues. Sa liste n'est pas écrite à la main — elle est **lue sur le
+  rail** (numéro, libellé, description), pour qu'une vue ajoutée ou renumérotée ne puisse pas la
+  rendre menteuse. Elle se referme à **Échap**, au clic hors du panneau ou par son bouton, et ne
+  revient plus : le drapeau vit dans `localStorage` sous **sa propre clé** (`best-hauling-aide-vue`)
+  et **ne part jamais dans le permalien** — un lien partagé ne doit pas décider à la place de son
+  destinataire s'il a déjà vu l'aide. Le **?** posé à côté du logo la rejoue à tout moment.
 - Systèmes couverts : **Stanton**, **Pyro**, **Nyx**.
 
 ### Portée des filtres par vue

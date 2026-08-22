@@ -82,6 +82,13 @@ export interface Etat {
   venteEnCours: string | null;      // commodité dont le champ « vendu » est ouvert
   ecoulerOuvert: boolean;
   declarationOuverte: boolean;
+  /**
+   * L'aide de démarrage est ouverte (#62). Elle est MODALE, et c'est ce booléen — et non le DOM —
+   * qui le dit : `navigation.ts` doit pouvoir refuser les raccourcis 1…8 même quand le focus est
+   * retombé sur `<body>` (un clic dans le voile suffit), cas où `closest('[role="dialog"]')` rendrait
+   * `null` et laisserait les touches traverser. Même patron que les deux booléens ci-dessus.
+   */
+  aideOuverte: boolean;
 }
 
 // `sortDir` et ses jumeaux sont typés `number` et non `1 | -1` : trois écritures composées
@@ -115,6 +122,7 @@ export const etat: Etat = {
   venteEnCours: null,
   ecoulerOuvert: false,
   declarationOuverte: false,
+  aideOuverte: false,
 };
 
 let version = 0;

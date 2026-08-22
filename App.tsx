@@ -28,6 +28,7 @@ import { VueTrajetsArbitrage } from "./vues/trajets-vue.tsx";
 import { CarteParcours } from "./vues/carte-vue.tsx";
 import { VueEnRoute } from "./vues/enroute-vue.tsx";
 import { Bandeau } from "./vues/bandeau-vue.tsx";
+import { Aide } from "./vues/aide.tsx";
 import { indexStationExacte } from "./marche.ts";
 
 /**
@@ -95,6 +96,12 @@ export function App() {
       {/* LE BANDEAU. Sa garde est NÉGATIVE — il est visible dans six vues sur huit, seul le Plan de
           vol le masque. C'est l'inverse du patron des vues d'onglet, et le seul de son espèce. */}
       <Bandeau />
+      {/* L'AIDE DE DÉMARRAGE (#62), et la SEULE chose de cet arbre qui ne passe par aucun portail :
+          elle n'a pas de conteneur dans `index.html`, parce qu'elle est neuve. Elle rend donc dans
+          `#racine` lui-même — dernier enfant de <body> — ce qui la pose au-dessus du rail sans un
+          z-index à négocier. En DERNIER, pour que l'ordre du document suive l'ordre visuel.
+          Sa garde est en tête du composant, comme celle de `VueCommodites`. */}
+      <Aide />
     </>
   );
 }

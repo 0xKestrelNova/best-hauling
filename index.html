@@ -55,6 +55,12 @@
             <span class="brand-sub">Flight&nbsp;Ops</span>
           </span>
         </button>
+        <!-- Le rejeu de l'aide (#62), à la place que le commentaire ci-dessus lui réservait : FRÈRE
+             de #brandHome, jamais son enfant. Son écouteur est une délégation posée sur .brand
+             (aide-gestes.ts) — ce markup n'appartient pas à l'arbre React.
+             Masqué quand le rail est rétracté : il n'y reste que 68 px, dont 40 pour le losange. -->
+        <button id="aideRejouer" class="brand-aide" type="button"
+                aria-label="Revoir l'aide de démarrage" title="Revoir l'aide de démarrage">?</button>
       </div>
 
       <button class="rail-toggle" id="railToggle" title="Rétracter / déplier le menu" aria-label="Rétracter le menu" aria-expanded="true">«</button>
