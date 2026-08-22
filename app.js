@@ -9,7 +9,7 @@ import {
 // l'unique notification. Voir pont.js pour pourquoi il n'y a ni magasin ni abonnement.
 import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
-import { fmt, signe } from "./format.ts";
+import { esc, fmt, signe } from "./format.ts";
 import { readFilters } from "./filtres.ts";
 import {
   effVals, isOv, loadOverrides, ovCount, resetOverrides, saveOverrides, setOverride,
@@ -42,6 +42,9 @@ import {
 
 
 import { nouvelleGenerationVoyage, pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
+import {
+  chargerVaisseaux, memoriserStation, monterSelecteurStation, montrerCarteVaisseau, stationChangee,
+} from "./selecteur.js";
 import { monterRacine } from "./main.tsx";
 import { planData } from "./vues/plan-vue.tsx";
 import {
@@ -79,26 +82,15 @@ import { BUY_STATUS, KIND_ICON, SELL_STATUS } from "./vues/communs.tsx";
 // Ils n'existaient que parce qu'une fonction calculait et que trois autres peignaient ; un composant
 // qui fait les deux dans la même passe n'en a pas besoin. Aucun n'avait de lecteur hors de la vue.
 // Compagnon de voyage : parcours sélectionné { legs[], current } ou null.
-// Affiche la carte du vaisseau correspondant au champ (défini par loadShips ; utilisé à la restauration).
-let showShipCard = () => {};
-
 
 const $ = (id) => document.getElementById(id);
 // Volume dont le null veut dire « capacité non communiquée par UEX » et non « zéro » :
 // `scu_sell` n'est renseigné que sur une minorité de points de vente. Un « — » s'y lisait
 // « aucune demande » alors qu'aucun plafond n'est appliqué dans ce cas — d'où « n.c. ».
 
-// Échappe toute chaîne insérée dans innerHTML. Les données UEX sont communautaires
-// (nicknames de terminaux, etc. potentiellement soumis par des utilisateurs) : on les
-// traite comme non fiables pour éviter toute injection HTML.
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// L'échappement HTML (`esc`) et le badge de système sont partis : le premier dans `format.ts`, où il
+// a une seule source pour tous ses appelants, le second dans `selecteur.js`, son unique lecteur.
 
-// Formatte le nom d'un système en badge coloré.
-function sysBadge(system) {
-  const cls = esc(system.toLowerCase());
-  return `<span class="sys ${cls}">${esc(system)}</span>`;
-}
 
 // L'icône de commodité et le marqueur « illégal » sont rendus par `IconeCommodite` et `TagIllegal`
 // (vues/communs.tsx). Leurs versions en chaîne ont disparu avec `multiCargoHTML`, leur dernier
@@ -199,16 +191,8 @@ let enrouteReady = false;     // datalist/destSystem peuplés une seule fois
 // Nom de terminal -> terminal de market.json. Pont indispensable aux frais d'autoload : routes.json
 // et loops.json ne portent QUE des noms, et les noms sont déjà la clé métier du dépôt (corrections
 // locales, jambes de voyage). Peuplée en même temps que stationMap.
-// La dernière station RENDUE. Elle ne sert QU'au garde du champ #station — ne pas re-rendre si la
-// station résolue n'a pas changé, sans quoi le rendu différé du debounce détache l'éditeur d'un
-// chiffre ouvert entre les deux (même famille que #24). Ce n'est donc PAS la station affichée :
-// celle-là se dérive à chaque lecture par `indexStationExacte()`.
-//
-// `undefined` et non `null` : `null` est une valeur mesurée (« le champ ne désigne rien »), et les
-// confondre rendrait la première transition « restaurée par permalien → champ rendu illisible »
-// invisible au garde — le panneau resterait sur l'ancienne station à côté d'un champ vide.
-let derniereStation;
-const memoriserStation = () => { derniereStation = indexStationExacte(); };
+// Le garde du champ #station (« ne pas re-rendre si la station n'a pas changé ») vit avec le
+// sélecteur qui l'écrit : `memoriserStation` / `stationChangee` (selecteur.js).
 
 // Charge le graphe de marché à la demande. Deux règles, apprises à la dure :
 //   - on mémorise la PROMESSE en vol, pas seulement son résultat : sinon chaque frappe pendant le
@@ -233,68 +217,11 @@ function setupEnRoute() {
   $("commodityList").innerHTML = etat.MARKET.commodities
     .map((c) => `<option value="${esc(c.name)}">${esc(c.code || "")}</option>`).join("");
 
-  monteStationPicker();
+  // Le sélecteur de station (ADR-003) se monte ICI et une seule fois : il lui faut MARKET, et
+  // `setupEnRoute` est le seul point du cycle où le marché est garanti présent.
+  monterSelecteurStation();
 
   enrouteReady = true;
-}
-
-// Sélecteur de station de la vue Corrections : les 114 terminaux rangés système › zone › station
-// (ADR-003). Monté une seule fois, depuis setupEnRoute, car il lui faut MARKET.
-function monteStationPicker() {
-  const input = $("station"), list = $("stationPickList");
-  if (!input || !list) return;
-  // On aplatit l'arbre : le filtre et la navigation travaillent sur une liste PLATE déjà triée,
-  // et c'est sa contiguïté par (système, zone) qui permet au rendu de reposer un en-tête au simple
-  // changement de clé. Filtrer l'arbre lui-même casserait cette propriété.
-  const plates = stationTree(etat.MARKET.terminals).flatMap((s) => s.zones.flatMap((z) => z.stations));
-
-  // Un `<img onerror>` posé par innerHTML est INERTE sous `script-src 'self'` (index.html:23) et
-  // laisserait une image cassée. Les événements `error` ne remontent pas, mais ils descendent :
-  // un seul écouteur en phase de CAPTURE, posé une fois, couvre tous les rendus à venir.
-  list.addEventListener("error", (e) => {
-    if (e.target.tagName === "IMG") e.target.closest("li")?.classList.add("no-shot");
-  }, true);
-
-  montePicker({
-    input, list,
-    options: () => plates,
-    // Nom ET code : taper « PYROG » remonte les deux passerelles homonymes, que le badge distingue.
-    filtre: (s, q) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q),
-    max: 0, // 114 lignes tiennent : plafonner masquerait des stations sans le dire
-    rendu: (m) => {
-      let grp = "", html = "";
-      m.forEach((s, i) => {
-        const cle = `${s.system} › ${s.zone}`;
-        // En-tête SANS data-i : ni sélectionnable au clavier, ni cliquable.
-        if (cle !== grp) { grp = cle; html += `<li role="presentation" class="opt-grp">${sysBadge(s.system)}<span>${esc(s.zone)}</span></li>`; }
-        html += `<li role="option" data-i="${i}">${vignetteStation(s)}` +
-          `<span class="stn-opt-name">${esc(s.name)}</span>` +
-          `<span class="stn-opt-code">${esc(s.code)}</span>` +
-          (s.outpost ? '<span class="stn-opt-post" title="Avant-poste : élévateur de fret parfois en panne">⚠ avant-poste</span>' : "") +
-          `</li>`;
-      });
-      return html;
-    },
-    // Écrit le LIBELLÉ CANONIQUE, jamais le nom seul : `indexStationExacte` résout par
-    // correspondance exacte via stationMap, et c'est cette même chaîne que le permalien transporte.
-    choisir: (s) => { input.value = s.label; memoriserStation(); refresh(); saveState(); },
-  });
-}
-
-// Vignette d'une station : la photo UEX si elle existe, sinon un carré teinté par système portant
-// le code. 17 terminaux sur 114 n'ont pas de photo — la vignette générée évite le trou, sans
-// requête. Le filtre `^https://` est délibéré même si aucune URL non-https n'existe aujourd'hui :
-// l'attribut est interpolé dans du HTML, et c'est justement parce qu'aucune donnée ne le déclenche
-// qu'aucun test ne l'attraperait s'il manquait.
-function vignetteStation(s) {
-  // La photo se pose EN ABSOLU par-dessus le repli, dans un conteneur commun. La superposer à coups
-  // de marge négative les décalait de la valeur du `gap` flex, et le code débordait derrière la
-  // photo (« TA » derrière celle de Nyx Gateway (Stanton), dont le code est NYXSTA).
-  const photo = s.shot && /^https:\/\//i.test(s.shot)
-    ? `<img class="stn-shot" src="${esc(s.shot)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
-    : "";
-  return `<span class="stn-vign sys-${esc((s.system || "").toLowerCase())}">` +
-    `<span class="stn-shot-gen">${esc(s.code)}</span>${photo}</span>`;
 }
 
 // Résout le terminal de départ depuis le texte du champ (libellé exact).
@@ -825,146 +752,8 @@ function setupLoopSort() {
   });
 }
 
-// Autocomplétion maison, partagée par le champ Vaisseau et le sélecteur de station (ADR-003).
-// Un `<datalist>` natif ne se met pas en forme et cale sa liste sur la largeur du champ : les noms
-// de station y sont tronqués (jusqu'à 33 caractères pour « Terra Gateway (Stanton) — Stanton »).
-//
-// Trois généralisations par rapport à l'autocomplétion vaisseau dont elle est tirée, chacune
-// indispensable au sélecteur de station :
-//   1. `options` est une FONCTION relue à chaque ouverture, et non un tableau capturé au montage :
-//      les vaisseaux existent dès le départ, les stations seulement après market.json.
-//   2. la navigation passe par `li[data-i]` et non par `list.children`. Des en-têtes de groupe
-//      brisent la bijection enfants ↔ résultats : sans ce filtre, la 3e flèche bas poserait
-//      `.active` sur un en-tête non sélectionnable et Entrée choisirait la mauvaise station.
-//   3. `rendu` reçoit le tableau ENTIER et rend le HTML en bloc, ce qui permet d'intercaler
-//      ces en-têtes.
-// `max: 0` = pas de plafond (les 114 stations tiennent ; les vaisseaux, eux, se coupent à 12).
-function montePicker({ input, list, options, filtre, rendu, choisir, max = 12 }) {
-  let matches = [];
-  let active = -1;
-  const items = () => [...list.querySelectorAll("li[data-i]")];
-
-  function hide() {
-    list.hidden = true;
-    list.innerHTML = "";
-    active = -1;
-    input.setAttribute("aria-expanded", "false");
-  }
-
-  // q vide -> toute la liste (parcours au focus) ; sinon filtre par sous-chaîne.
-  function show(q) {
-    const tout = options() || [];
-    const pool = q ? tout.filter((o) => filtre(o, q)) : tout;
-    matches = q && max > 0 ? pool.slice(0, max) : pool;
-    if (!matches.length) return hide();
-    active = 0;
-    list.innerHTML = rendu(matches);
-    highlight();
-    list.hidden = false;
-    input.setAttribute("aria-expanded", "true");
-  }
-
-  function highlight() {
-    items().forEach((li, i) => li.classList.toggle("active", i === active));
-    items()[active]?.scrollIntoView({ block: "nearest" });
-  }
-
-  function valide(o) {
-    if (!o) return;
-    hide();
-    choisir(o);
-  }
-
-  input.addEventListener("input", () => show(input.value.trim().toLowerCase()));
-  input.addEventListener("focus", () => show(input.value.trim().toLowerCase()));
-
-  input.addEventListener("keydown", (e) => {
-    if (list.hidden) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      active = Math.min(active + 1, matches.length - 1);
-      highlight();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      active = Math.max(active - 1, 0);
-      highlight();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      valide(matches[active]);
-    } else if (e.key === "Escape") {
-      hide();
-    }
-  });
-
-  // mousedown (et non click) pour devancer le blur du champ.
-  list.addEventListener("mousedown", (e) => {
-    const li = e.target.closest("li[data-i]"); // les en-têtes de groupe n'en portent pas : inertes
-    if (!li) return;
-    e.preventDefault();
-    valide(matches[Number(li.dataset.i)]);
-  });
-
-  input.addEventListener("blur", () => setTimeout(hide, 150));
-  return { hide, show };
-}
-
-// Charge les vaisseaux et branche leur autocomplétion.
-async function loadShips() {
-  const ships = await fetch("data/ships.json").then((r) => r.json()).catch(() => []);
-  // Tri par capacité de soute décroissante : les plus gros haulers apparaissent en premier.
-  ships.sort((a, b) => b.scu - a.scu);
-  const input = $("ship");
-  const list = $("shipList");
-  const byName = new Map(ships.map((s) => [s.name.toLowerCase(), s.scu]));
-
-  function showCard(s) {
-    const card = $("shipCard");
-    const img = $("shipImg");
-    const wrap = img.parentElement;
-    // N'accepte que des URL https:// (le flux communautaire pourrait contenir autre chose).
-    if (s.photo && /^https:\/\//i.test(s.photo)) {
-      wrap.style.display = "";
-      img.onerror = () => (wrap.style.display = "none"); // masque si l'image échoue
-      img.alt = s.name;
-      img.src = s.photo;
-    } else {
-      wrap.style.display = "none";
-    }
-    $("shipCardName").textContent = s.name;
-    $("shipCardScu").innerHTML = `Soute : <b>${s.scu.toLocaleString("fr-FR")} SCU</b>`;
-    card.hidden = false;
-  }
-
-  // Affiche la carte du vaisseau déjà présent dans le champ (ex. après restauration d'état).
-  showShipCard = () => {
-    const s = ships.find((x) => x.name.toLowerCase() === input.value.trim().toLowerCase());
-    if (s) showCard(s);
-  };
-
-  montePicker({
-    input, list,
-    options: () => ships,
-    filtre: (s, q) => s.name.toLowerCase().includes(q),
-    rendu: (m) => m.map((s, i) =>
-      `<li role="option" data-i="${i}"><span>${esc(s.name)}</span>` +
-      `<span class="scu">${s.scu.toLocaleString("fr-FR")} SCU</span></li>`).join(""),
-    choisir: (s) => {
-      input.value = s.name;
-      $("cargo").value = s.scu;
-      showCard(s);
-      refresh();
-    },
-  });
-
-  // Modifier la soute à la main efface le nom du vaisseau et la carte.
-  $("cargo").addEventListener("input", () => {
-    const scu = byName.get(input.value.trim().toLowerCase());
-    if (String(scu) !== $("cargo").value) {
-      input.value = "";
-      $("shipCard").hidden = true;
-    }
-  });
-}
+// L'autocomplétion maison, le sélecteur de station et celui des vaisseaux vivent dans
+// `selecteur.js` — avec le garde du champ `#station`, qui n'a de sens qu'à côté de ce qui l'écrit.
 
 // ---------- Persistance & permaliens ----------
 // L'état (filtres, tri, vue, vaisseau) est sauvé dans localStorage ET encodé dans le
@@ -1205,11 +994,7 @@ async function init() {
   // sans ce garde, le rendu différé du debounce arrivait ~300 ms après et refaisait le même écran
   // pour rien — en détachant au passage l'éditeur d'un chiffre ouvert entre les deux. Même famille
   // que #24 : tout re-rendu gratuit de cette vue efface une saisie en cours.
-  $("station").addEventListener("input", debounce(() => {
-    const avant = derniereStation;
-    memoriserStation();
-    if (derniereStation !== avant) refresh();
-  }));
+  $("station").addEventListener("input", debounce(() => { if (stationChangee()) refresh(); }));
   $("corrections").addEventListener("click", (e) => {
     // Les relevés d'autoload se testent AVANT les corrections : leur ✕ porte aussi `.corr-del`
     // (même bouton à l'écran) et tomberait sinon dans la branche qui écrit dans OVERRIDES.
@@ -1478,7 +1263,7 @@ async function init() {
       fetch("data/routes.json").then((r) => r.json()),
       fetch("data/loops.json").then((r) => r.json()).catch(() => []),
       fetch("data/meta.json").then((r) => r.json()).catch(() => null),
-      loadShips(),
+      chargerVaisseaux(),
     ]);
     etat.ROUTES = routes;
     etat.LOOPS = loops;
@@ -1521,7 +1306,7 @@ async function init() {
     // Les trois synchros d'interface restent ici ; le module les appelle DANS le verrou de
     // restauration, pour qu'aucune ne puisse resauver au milieu.
     applyState(saved, () => { applySortIndicators(); syncToggles(); refletBoardCommodites(); });
-    showShipCard(); // ré-affiche la carte du vaisseau restauré (image comprise)
+    montrerCarteVaisseau(); // ré-affiche la carte du vaisseau restauré (image comprise)
     // Le compagnon de voyage vient d'un permalien, donc de données non fiables. S'il échoue, il ne
     // doit pas emporter TOUTE l'app dans le catch ci-dessous, qui accuserait alors data/routes.json
     // — parfaitement chargé — et laisserait l'utilisateur devant une page vide et un message faux.

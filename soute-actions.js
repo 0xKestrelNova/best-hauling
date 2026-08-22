@@ -17,7 +17,7 @@
 // une persistance, un message et un rendu. Le crochet de `rendu.ts` lève le dernier obstacle.
 
 import {
-  declarerLot, exporterEntrepots, freeCargo, holdByCommodity, holdScu, loadHold,
+  declarerLot, holdScu, loadHold,
   migrerChargements, migrerRefus, parseStationLabel, poserChargement, refuseHere,
   retirerChargement, sellAllAt, sellFromHold, sellableAt, soldeDuPoint, stationLabel,
   stockApres, storeFromHold, takeFromStore,

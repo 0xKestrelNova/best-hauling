@@ -9,7 +9,7 @@
 // SANS CONSÉQUENCE tant qu'aucun rendu ne tombe dans la fenêtre — mais c'est la même famille que
 // #45, et ça mérite d'être écrit noir sur blanc plutôt que découvert.
 
-import { encodeJourney, exporterCorrections, exporterEntrepots, manifestTotals } from "./logic.ts";
+import { exporterCorrections, exporterEntrepots, manifestTotals } from "./logic.ts";
 import { etat } from "./etat.ts";
 import { readFilters } from "./filtres.ts";
 import { fmt, fmtFee, scuBoxesLabel, signe } from "./format.ts";
