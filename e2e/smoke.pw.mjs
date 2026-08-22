@@ -3092,3 +3092,46 @@ test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son t
   // « Copié » ferait croire à une seconde copie qui n'a pas eu lieu.
   await expect(page.locator("#copyManifest")).toHaveText(/Copier/, { timeout: 4000 });
 });
+
+// #53 : « ✓ chargé » est le geste le PLUS engageant de l'application — il crée les lots de la soute
+// au prix affiché, retranche le stock du terminal d'achat et fige les autres jambes qui achètent au
+// même point. C'était aussi l'élément le plus effacé de sa rangée : 9,5 px en `var(--muted)`, sur
+// 19 px de haut, entre deux libellés de 11,5 px. L'emphase allait à l'état DÉJÀ ACQUIS (« ⬢ à bord »,
+// vert plein) et pas à l'action à faire.
+//
+// Les quatre mesures ci-dessous sont celles de l'issue, dans son ordre. La dernière est la
+// contrainte à ne pas casser en grossissant : à 460 px, l'en-tête s'empilait sur deux lignes et le
+// centre de la zone cliquable tombait sur le bouton au lieu du dépliement (style.css).
+test("Voyage : « ✓ chargé » se lit comme l'action de la jambe (#53)", async ({ page }) => {
+  await jambeChargeable(page);
+  const bouton = page.locator("#journeyCard .jleg-load").first();
+  const route = page.locator("#journeyCard .jleg-route").first();
+
+  // 1. La cible tactile : même règle que ▶ (WCAG 2.2 SC 2.5.8), déjà tenue ailleurs dans ce fichier.
+  const b = await bouton.boundingBox();
+  expect(b.height, "hauteur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+  expect(b.width, "largeur de « ✓ chargé »").toBeGreaterThanOrEqual(24);
+
+  // 2. Il ne peut plus être le plus petit texte de sa rangée.
+  const px = (l) => l.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+  expect(await px(bouton), "corps du bouton vs nom de la jambe").toBeGreaterThanOrEqual(await px(route));
+
+  // 3. Il n'est plus dans la couleur que le dépôt réserve au secondaire, AVANT le clic.
+  await expect(bouton).toHaveText(/chargé/i); // on est bien à l'état non chargé
+  const couleur = await bouton.evaluate((e) => getComputedStyle(e).color);
+  expect(couleur, "couleur au repos").not.toBe("rgb(138, 147, 168)"); // var(--muted)
+
+  // 4. L'en-tête reste sur UNE ligne, à la largeur nominale de la carte comme à sa largeur repliée.
+  //
+  // La mesure porte sur le CHEVAUCHEMENT VERTICAL du nom et du bouton, pas sur la hauteur de
+  // l'en-tête. Celle-ci grandit légitimement quand le bouton grandit — une première version de ce
+  // test comparait à « deux fois la hauteur du nom » et échouait sur un en-tête parfaitement sur une
+  // ligne. Deux éléments qui se chevauchent en Y sont sur la même rangée ; c'est ça, « une ligne ».
+  for (const largeur of [1440, 900]) {
+    await page.setViewportSize({ width: largeur, height: 900 });
+    const r = await route.boundingBox();
+    const l = await bouton.boundingBox();
+    const chevauche = Math.min(r.y + r.height, l.y + l.height) - Math.max(r.y, l.y);
+    expect(chevauche, `nom et bouton sur la même rangée à ${largeur} px`).toBeGreaterThan(0);
+  }
+});
