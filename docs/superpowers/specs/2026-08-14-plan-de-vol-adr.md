@@ -196,3 +196,104 @@ cesse de répondre après un rendu. La carte doit rester un frère persistant, p
 - **La disposition responsive** de la vue sous 1280 px, qui suivra les mêmes règles que les tableaux
   (voir #81).
 - **Aucun calcul.** C'est un déménagement d'interface : les chiffres ne changent pas.
+
+## Amendement du 2026-08-22 — la frontière entre RÉGLER et CONSTATER
+
+**Décideur :** 0xKestrelNova · **Issues :** #178, #179, #180 · **Jalon :** v2.3.0 — Le Plan de vol vivant
+
+### 9. « On n'y change rien » visait les hypothèses, pas les faits
+
+La décision 6 a été lue comme une interdiction générale d'agir. Elle n'en était pas une, et le code le
+prouve depuis la décision 4 : la carte du parcours ne vit QUE dans cette vue, ses escales sont des
+boutons annoncés (`role="button"`, `tabindex="0"`, `aria-label="Se placer à …"`, `cursor: pointer`),
+et leur clic appelle `setJourneyStop` — qui, en avançant, appelle `venteImplicite`
+(`voyage-gestes.ts:57` → `soute-actions.ts:156`) : la soute se vide, `saveSoute()` écrit, et un toast
+annonce « ✓ Vendu en quittant … ». **Le geste le plus coûteux de l'application se fait déjà depuis la
+vue censée n'en accepter aucun.**
+
+**Mesuré le 2026-08-22**, voyage engagé, vue Plan de vol : cliquer `.jm-arret` fait passer « je suis
+ici » de l'escale 0 à l'escale 1, le hash devient `j={"c":1,…}`, `#origin` se recale sur
+« Devlin Scrap — Stanton », et la vue **reste** `v=plan`. Entrée au clavier fait le même geste.
+
+Cet amendement n'ouvre donc rien : il écrit la règle que le code applique déjà, pour qu'elle cesse
+d'être redécidée à chaque issue.
+
+**Correction d'une prémisse fausse.** #179 et #180 s'appuient sur « ✓ chargé, que la vue affiche
+déjà ». C'est inexact : `.jleg-load` vit dans `#journeyCard`, donc dans `#shipJourneyRow`, que la
+décision 6 masque ici — relevé dans la vue, **0 `.jleg-load` dans tout le document** (contre 1 en
+Trajets). Ce que le Plan affiche est le MOT « · chargée » (`vues/plan.tsx:142`), un état en lecture.
+Le précédent n'est pas « ✓ chargé » : c'est `.jm-arret`, et il engage davantage.
+
+### La règle
+
+> **Le Plan de vol MONTRE sans restriction tout ce qui décrit le voyage — image comprise — et
+> n'accepte un geste que s'il rapporte un fait déjà survenu EN JEU ; tout geste qui change ce que
+> l'application CALCULE reste dans les vues de recherche et ne paraît ici qu'en texte.**
+
+Deux moitiés, et la première est régulièrement oubliée : l'ADR-004 a dit « on n'y change rien »,
+jamais « on n'y montre rien ». **Afficher n'est jamais en cause.** Seuls les gestes sont filtrés.
+
+**Le test rapide**, quand on hésite : la valeur écrite est-elle une **hypothèse** du plan (`#ship`,
+`#useCargo`/`#cargo`, `#useBudget`/`#budget`, `#autoload`/`#alk`, et tout ce que lit `readFilters()`)
+ou un **registre de ce qui est** (`etat.JOURNEY.current`, `etat.SOUTE`, `etat.CHARGEMENTS`,
+`etat.DEPOTS`) ? Le premier est interdit, le second permis.
+
+**Le test qui tranche**, quand le rapide hésite : *le geste raconte-t-il quelque chose qui s'est passé
+dans le jeu, et qu'on ne peut pas défaire en jeu ?* J'ai bougé, j'ai chargé, j'ai ramassé du fret,
+j'ai vendu — oui, permis. Je change de vaisseau, je débloque le budget, je passe en profits bruts, je
+retire un lot saisi par erreur — non, interdit. La question d'une conclusion est **« où en suis-je »**,
+jamais **« et si… »**. Changer une hypothèse invalide le rapport qu'on est en train de lire ; rapporter
+un fait le fait avancer.
+
+**Trois garde-fous, qui ne sont pas la règle mais l'accompagnent :**
+
+1. **Le récapitulatif ne devient jamais le contrôle.** Un geste permis arrive comme sa PROPRE surface,
+   jamais en rendant éditable une ligne qu'on lit. `#planHold` garde ses zéro boutons
+   (`e2e/plan.pw.mjs:211`) : cette assertion protège la carte de soute, pas la vue, et elle ne bouge
+   pas.
+2. **La délégation reste une délégation** (ADR-012 §2). `#journeyMap`, `#planHead`, `#planBody`,
+   `#holdDeclare` sont des conteneurs d'`index.html` que les portails remplissent sans les posséder.
+   Aucun de ces gestes n'est idempotent — `setJourneyStop` vend, `declarerABord` crée un lot : un
+   `onClick` posé en plus d'une délégation existante doublerait l'effet en silence.
+3. **Un geste permis se dit.** Un contrôle qui marche sans le montrer ne sert personne : la règle
+   autorise l'action, elle n'autorise pas l'action invisible.
+
+### Ce que la règle décide
+
+| Geste | Verdict | Pourquoi |
+|---|---|---|
+| Voir l'image du vaisseau (#178) | **permis** | ce n'est pas un geste : afficher n'est jamais en cause |
+| Cliquer une escale, « je suis ici » (#179) | **permis — et déjà en place** | fait de jeu ; écrit `etat.JOURNEY.current` |
+| Déclarer du fret à bord (#180) | **permis** | fait de jeu ; écrit `etat.SOUTE`, comme la vente implicite que la vue fait déjà |
+| « ✓ chargé » sur une jambe | **permis** (absent aujourd'hui) | fait de jeu ; écrit `etat.CHARGEMENTS` |
+| Vendre ici, déposer ici | **permis** par la règle, hors périmètre de #180 | faits de jeu ; à faire arriver par leur propre surface, pas dans `#planHold` |
+| Retirer un lot, vider la soute | **interdit** | corriger le registre de l'app n'est pas constater un fait du jeu |
+| Vaisseau, soute, budget, frais, filtres | **interdit** | hypothèses : les changer invalide la conclusion qu'on lit |
+| Corriger un prix, épingler une jambe, éditer un manifeste | **interdit** | réglages, et ils ont leurs vues |
+
+### Ce que ça donne, issue par issue
+
+- **#178** — une **vignette** à côté du nom du vaisseau dans `#planHead`, avec son `⚠ concept` (#44) :
+  c'est la vue qui récapitule les hypothèses, donc celle où une soute promise doit se signaler. Ne PAS
+  déménager ni dupliquer `#shipCard` : `selecteur.ts:289` écrit `$("shipCard").hidden = true` en direct
+  quand on édite `#cargo`, et une seconde copie serait un nœud qu'aucun écrivain ne connaît. La vignette
+  lit la fiche vaisseau, jamais le DOM de `#shipCard`. Image absente ou en échec (`onerror`,
+  `selecteur.ts:313`) → le **nom seul**, déjà première hypothèse de `planHypotheses` : aucun trou à
+  combler. L'image ne clique pas — la rendre activable la ferait basculer du côté interdit.
+- **#179** — l'issue change de nature : le geste **fonctionne**, il ne se **voit** pas. Reste à le dire
+  (un mot dans le bandeau `.jm-label`) et à lever l'asymétrie : les `.plan-step` du récapitulatif sont
+  inertes (`role` nul, `tabindex` nul, `cursor: auto` — mesuré) alors qu'elles listent les mêmes escales
+  que la carte. Les rendre cliquables est permis ; la délégation va sur `#planBody`, jamais en `onClick`.
+- **#180** — permis, et refuser #180 en acceptant #179 serait incohérent : la déclaration **ajoute** un
+  lot, quand le clic sur une escale en **vend**. Le formulaire arrive par sa propre surface
+  (`#holdDeclare` démasqué ici), pas en rendant `#planHold` éditable. Le compte de `flushSync` (4 :
+  `soute-actions.ts:212` et `:222`, `voyage-gestes.ts:111`, `vues/communs.tsx:143`) ne bouge pas —
+  `ouvrirDeclaration` en tient déjà un.
+
+### Ce que cet amendement ne rouvre pas
+
+La décision 6 tient **intégralement** pour les quatre réglages : ils restent masqués et repris en texte.
+La décision 3 (le bandeau reste dans les six vues de recherche) et la décision 4 (la carte ne vit que
+là) ne sont pas touchées. Ce qui revient dans le Plan de vol y revient **élément par élément et pour un
+fait nommé** — jamais `#shipJourneyRow` d'un bloc, qui ramènerait avec lui les ventes, les ✕ et les
+retraits de lot.
