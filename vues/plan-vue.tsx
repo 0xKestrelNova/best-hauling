@@ -14,6 +14,7 @@ import { globalK } from "../frais.ts";
 import { findCommodity, termByName } from "../marche.ts";
 import { withMarket } from "../donnees.ts";
 import { jambeChargee, legEffectiveLines, legFeeCtx } from "../voyage-donnees.ts";
+import { vaisseauChoisi } from "../selecteur.ts";
 import { corpsPlan, enTetePlan } from "./plan.tsx";
 
 const champ = (id: string): string =>
@@ -82,7 +83,11 @@ export function planZonesRisque() {
 
 /** L'EN-TÊTE : les quatre hypothèses, reprises en texte et en lecture seule, et les zones à risque. */
 export function EnTetePlan() {
-  return enTetePlan(planHypotheses(readFilters()), planZonesRisque());
+  return enTetePlan({
+    hypotheses: planHypotheses(readFilters()),
+    vaisseau: vaisseauChoisi(),
+    zones: planZonesRisque(),
+  });
 }
 
 /** LE CORPS : le parcours, la soute, les jambes, ce qu'il reste à faire. */
