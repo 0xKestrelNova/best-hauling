@@ -211,6 +211,54 @@ test("Plan de vol : la soute a un vrai visuel — à bord, place libre, capital 
   expect(await soute.locator("button").count()).toBe(0);
 });
 
+test("Plan de vol : déclarer du fret à bord sans quitter la conclusion (#180)", async ({ page }) => {
+  // C'est la vue qu'on garde ouverte EN VOLANT. Dire « j'ai ramassé 40 SCU de Titanium » ne doit
+  // plus coûter un aller-retour par une vue de recherche : c'est un fait de jeu, pas une hypothèse
+  // de calcul (ADR-004, amendement du 2026-08-22). Le formulaire arrive par SA PROPRE surface — le
+  // nœud `#holdDeclare`, seul rescapé du bandeau — jamais en rendant `#planHold` éditable.
+
+  // Un vaisseau choisi AVANT d'entrer : `#shipCard` est le seul nœud de la rangée dont
+  // l'effacement ici ne tient pas à React — `selecteur.ts:289` vient d'y écrire `hidden = false`
+  // en direct. Sans ce préalable, la règle CSS qui l'écarte pourrait sauter sans rien faire rougir.
+  await page.fill("#ship", "railen");
+  await page.locator("#shipList li").first().click();
+  await expect(page.locator("#shipCard")).toBeVisible();
+
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+  // La décision 3 ne bouge pas : tout ce qui ÉDITE reste dehors.
+  await expect(page.locator("#shipCard")).toBeHidden();
+  await expect(page.locator("#journeyCard")).toBeHidden();
+  await expect(page.locator("#controls")).toBeHidden();
+
+  await page.locator("#holdAddOpen").click();
+  await expect(page.locator("#holdAddName")).toBeVisible({ timeout: 20_000 });
+  await page.fill("#holdAddName", "Titanium");
+  await page.fill("#holdAddScu", "40");
+  await page.fill("#holdAddPaid", "100");
+  await page.locator("#holdAddOk").click();
+
+  // Le lot est entré en soute, et la conclusion s'est mise à jour SANS qu'on la quitte.
+  await expect(page.locator("#plan")).toBeVisible();
+  expect(page.url()).toContain("v=plan");
+  const soute = page.locator("#planHold");
+  await expect(soute).toContainText("Titanium");
+  await expect(soute).toContainText("40");
+  await expect(soute).toContainText(/4\s*000/); // 40 SCU × 100 aUEC : le capital engagé
+
+  // GARDE-FOU 1 de l'amendement : le récapitulatif ne devient jamais le contrôle. `#planHold` garde
+  // ses zéro boutons, et `#holdCard` — qui porte la vente, le ✕ et le retrait de lot — reste dehors.
+  expect(await soute.locator("button").count()).toBe(0);
+  await expect(page.locator("#holdCard")).toBeHidden();
+
+  // Le second sens : tout revient au retour dans une vue de recherche.
+  await page.click("#viewRoutes");
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await expect(page.locator("#shipCard")).toBeVisible();
+  await expect(page.locator("#journeyCard")).toBeVisible();
+  await expect(page.locator("#controls")).toBeVisible();
+});
+
 test("Plan de vol : la carte garde ses écouteurs directs après un re-rendu (#61)", async ({ page }) => {
   // #journeyMap porte ses écouteurs EN DIRECT, une seule fois, hors du HTML réécrit par innerHTML.
   // Le déménager dans un conteneur re-rendu reproduirait #24 : un geste qui cesse de répondre.
@@ -226,6 +274,89 @@ test("Plan de vol : la carte garde ses écouteurs directs après un re-rendu (#6
   // du groupe tombant entre le point et son libellé (idiome déjà en place dans smoke.pw.mjs).
   await arrets.nth(1).locator(".jm-cible").click(); // « je suis ici » sur le second arrêt
   await expect(arrets.nth(1)).toHaveClass(/ici/);
+});
+
+// ── Zones à risque (#69) ──────────────────────────────────────────────────────────────────────
+// Deux formes complémentaires, et elles se testent séparément : un AVERTISSEMENT qui se dit une
+// fois, et une ZONE nommée sur la carte. Les tests posent le parcours par PERMALIEN et non par ▶ :
+// #69 a besoin d'escales dans un système CHOISI, et la première ligne du tableau n'en promet aucun.
+// `j=` est le format qu'écrit `encodeJourney` et que relit `decodeJourney` — le chemin d'un lien
+// partagé, pas une porte dérobée de test.
+const jambe = (de, sysDe, vers, sysVers) => [de, sysDe, vers, sysVers, "Titanium", 10, 20, 10];
+const parcours = (...jambes) => "#v=plan&j=" + encodeURIComponent(JSON.stringify({ c: 0, l: jambes }));
+
+test("Plan de vol : trois escales dans Pyro n'avertissent qu'UNE fois (#69)", async ({ page }) => {
+  // « Un bandeau qu'on voit trois fois, on ne le voit plus. » Le groupement est fait dans le calcul
+  // (`risquesDuParcours` rend une zone par SYSTÈME), la vue ne fait que le suivre.
+  await ouvrirPlanPermalien(page, parcours(
+    jambe("Megumi", "Pyro", "Ruin Station", "Pyro"),
+    jambe("Ruin Station", "Pyro", "Gaslight", "Pyro"),
+    jambe("Gaslight", "Pyro", "Everus Harbor", "Stanton"),
+  ));
+  const zone = page.locator("#planRisques .plan-risque");
+  await expect(zone).toHaveCount(1);
+  await expect(zone).toContainText("Pyro");
+  await expect(zone).toContainText(/sans loi/i);      // la NATURE du risque, pas seulement son nom
+  await expect(zone).toHaveClass(/\bn2\b/);
+  // Stanton traversé ne produit rien : seule la zone à risque paraît.
+  await expect(zone).not.toContainText("Stanton");
+  // Le risque s'affiche, il ne se règle pas : la conclusion reste une conclusion (ADR-004).
+  expect(await page.locator("#planRisques button, #planRisques a, #planRisques input").count()).toBe(0);
+});
+
+test("Plan de vol : la carte NOMME la zone, elle ne fait pas que la teinter (#69)", async ({ page }) => {
+  // Règle maison : un état ne tient jamais à la seule couleur. La teinte REDOUBLE le mot.
+  await ouvrirPlanPermalien(page, parcours(
+    jambe("Megumi", "Pyro", "Ruin Station", "Pyro"),
+    jambe("Ruin Station", "Pyro", "Everus Harbor", "Stanton"),
+  ));
+  const nom = page.locator("#journeyMap .jm-zonenom");
+  await expect(nom).toHaveCount(1, { timeout: 10_000 }); // Pyro seul : Stanton n'a pas de zone
+  await expect(nom).toHaveText("⚠ HOSTILE");
+  // Et c'est bien le jeton d'alerte du thème qui arrive jusqu'au SVG — pas un noir de repli, que
+  // rien d'autre ne verrait sur un fond sombre.
+  await expect(nom).toHaveCSS("fill", "rgb(255, 93, 93)");
+  await expect(page.locator("#journeyMap .jm-zone")).toHaveCount(1);
+
+  // La carte reste LISIBLE : les deux disques, les trois escales et l'étape courante sont intacts.
+  await expect(page.locator("#journeyMap .jm-sysnom")).toHaveCount(2);
+  await expect(page.locator("#journeyMap .jm-arret")).toHaveCount(3);
+  await expect(page.locator("#journeyMap .jm-arret.ici")).toHaveCount(1);
+  await expect(page.locator("#journeyMap .jm-label")).toHaveText("◈ Carte du parcours schéma — rayons compressés · clique une escale pour t’y placer");
+});
+
+test("Plan de vol : Nyx est « à surveiller », pas « hostile » — deux paliers, deux mots (#69)", async ({ page }) => {
+  await ouvrirPlanPermalien(page, parcours(jambe("Levski", "Nyx", "PSS Alpha", "Nyx")));
+  const zone = page.locator("#planRisques .plan-risque");
+  await expect(zone).toHaveCount(1);
+  await expect(zone).toContainText(/à surveiller/);
+  await expect(zone).not.toHaveClass(/\bn2\b/);
+  await expect(page.locator("#journeyMap .jm-zonenom")).toHaveText("⚠ À SURVEILLER", { timeout: 10_000 });
+  await expect(page.locator("#journeyMap .jm-zonenom")).toHaveCSS("fill", "rgb(245, 167, 66)");
+});
+
+test("Plan de vol : un parcours qui ne quitte pas Stanton n'affiche RIEN (#69)", async ({ page }) => {
+  // Pas de bandeau « zone sûre » : l'absence d'avertissement est déjà l'information. Les deux
+  // escales sont des AVANT-POSTES (44 des 80 terminaux de Stanton en sont) et ça n'y change rien —
+  // la nuance `outpost` ne relève que Nyx.
+  await ouvrirPlanPermalien(page, parcours(jambe("Shubin SM0-18", "Stanton", "Shubin SM0-22", "Stanton")));
+  await expect(page.locator("#journeyMap .jm-svg")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("#planRisques")).toHaveCount(0);
+  await expect(page.locator("#journeyMap .jm-zonenom")).toHaveCount(0);
+  await expect(page.locator("#journeyMap .jm-zone")).toHaveCount(0);
+});
+
+test("Plan de vol : le récapitulatif copié emporte la zone à risque (#69)", async ({ page, context }) => {
+  // Un plan collé dans un salon qui traverse Pyro sans le dire perd très exactement ce que #69
+  // ajoute — et l'écran et le texte doivent dire la même chose, d'où le calcul partagé.
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await ouvrirPlanPermalien(page, parcours(jambe("Megumi", "Pyro", "Ruin Station", "Pyro")));
+  await expect(page.locator("#planRisques .plan-risque")).toHaveCount(1);
+  await page.click("#planCopy");
+  await expect(page.locator("#planCopy")).toHaveText(/Copié/);
+  const texte = await page.evaluate(() => navigator.clipboard.readText());
+  expect(texte).toContain("Zones à risque");
+  expect(texte).toMatch(/Pyro — hostile/);
 });
 
 // Les trois tests qui suivent gardent ce que la carte a de VÉRIFIABLE et que rien ne regardait :
@@ -379,7 +510,47 @@ test("Plan de vol : le récapitulatif d'étapes déplace « je suis ici », comm
   expect((await ici().first().innerText()).trim()).toBe(avant.trim());
 });
 
-// À AJOUTER À LA FIN de e2e/plan.pw.mjs. `voyageSimple` (l. 27) est déjà défini dans ce fichier.
+// #178 : la vue qui récapitule les hypothèses montrait le NOM du vaisseau, jamais son image — alors
+// que l'image existe, chargée par le sélecteur, et qu'elle ne s'édite pas. L'ADR-004 a dit « on n'y
+// change rien », jamais « on n'y montre rien » : afficher n'est pas un geste (amendement, #182).
+test("Plan de vol : l'image du vaisseau accompagne les hypothèses, sans les rendre modifiables (#178)", async ({ page }) => {
+  // Un vaisseau AVEC photo, choisi par le sélecteur — donc par le même chemin qu'un utilisateur.
+  await page.click("#ship");
+  await expect(page.locator("#shipList li").first()).toBeVisible();
+  const avecPhoto = page.locator("#shipList li").first();
+  const nom = (await avecPhoto.locator("span").first().innerText()).trim();
+  await avecPhoto.click();
+
+  await page.click("#viewPlan");
+  const hyp = page.locator("#planHypotheses");
+  await expect(hyp).toContainText(nom);
+
+  // L'image est là, elle a une source https, et elle N'EST PAS activable : pas de bouton, pas de
+  // rôle, pas de curseur de main — la rendre cliquable la ferait basculer du côté interdit.
+  const img = hyp.locator(".plan-vaisseau");
+  await expect(img).toBeVisible();
+  await expect(img).toHaveAttribute("src", /^https:\/\//);
+  expect(await img.evaluate((e) => e.closest("button, a") !== null), "l'image n'est pas activable").toBe(false);
+  expect(await img.evaluate((e) => getComputedStyle(e).cursor)).not.toBe("pointer");
+
+  // Et la vue reste une conclusion. Ce n'est PLUS `#shipJourneyRow` qu'on regarde — #180 l'a
+  // démasquée pour y faire tenir la déclaration — mais `#shipCard`, la carte ÉDITABLE du sélecteur :
+  // la vignette montre l'image sans ramener le choix. C'est exactement la frontière de l'ADR-004.
+  await expect(page.locator("#shipCard")).toBeHidden();
+});
+
+// #178, l'autre moitié : 20 vaisseaux sur 128 n'ont pas de photo, et une URL distante peut échouer.
+// Le repli n'est pas un trou — c'est le NOM SEUL, qui est déjà la première hypothèse.
+test("Plan de vol : sans photo, le nom du vaisseau suffit — aucun trou (#178)", async ({ page }) => {
+  const sansPhoto = await page.evaluate(() =>
+    fetch("data/ships.json").then((r) => r.json()).then((l) => (l.find((s) => !s.photo) || {}).name || null));
+  test.skip(!sansPhoto, "tous les vaisseaux de l'instantané ont une photo");
+
+  await page.fill("#ship", sansPhoto);
+  await page.click("#viewPlan");
+  await expect(page.locator("#planHypotheses")).toContainText(sansPhoto);
+  await expect(page.locator("#planHypotheses .plan-vaisseau")).toHaveCount(0);
+});
 
 test("Plan de vol : le convoi porte un indicatif, et RIEN ne le rebaptise (#68)", async ({ page }) => {
   await voyageSimple(page);
@@ -407,8 +578,6 @@ test("Plan de vol : le convoi porte un indicatif, et RIEN ne le rebaptise (#68)"
   await page.reload();
   await expect(indicatif).toHaveText(nom);
 });
-
-// À AJOUTER JUSTE APRÈS le test précédent, à la fin de e2e/plan.pw.mjs.
 
 test("Plan de vol : les escortes se déclarent ailleurs, l'indicatif se lit et se copie ici (#68)", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);

@@ -1,5 +1,4 @@
-/* ============================================================
-   Best Hauling — refonte « HUD / cockpit » (amber · violet)
+/* =====================================================   Best Hauling — refonte « HUD / cockpit » (amber · violet)
    Feuille de style ciblant le markup émis par app.js.
    ============================================================ */
 
@@ -596,6 +595,17 @@ input::placeholder { color: var(--muted); }
 .recap-kpi { display: flex; flex-direction: column; gap: 1px; }
 .recap-kpi b { font-family: var(--mono); font-size: 16px; color: var(--text); line-height: 1.1; }
 .recap-kpi span { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+/* ---------- Le Plan de vol garde UNE carte du bandeau : la déclaration (#180) ---------- */
+/* La rangée n'y est plus masquée d'un bloc. Ce qui part, ce sont les cartes qui ÉDITENT — le ✕ du
+   parcours, la vente, le retrait de lot, la reprise d'un dépôt ; déclarer « j'ai ça à bord », lui,
+   ne fait que CONSTATER un fait de jeu (ADR-004, amendement du 2026-08-22). Le Plan de vol était la
+   seule des huit vues où ce point d'entrée manquait.
+   Écrit en `:not()` et non carte par carte : une sixième carte ajoutée demain au bandeau sera
+   écartée d'ici PAR DÉFAUT, et c'est le bon défaut — on la fera revenir en la nommant.
+   En CSS et non par `hidden` : #shipCard a un écrivain impératif à lui (selecteur.ts:289), et
+   `display: none` n'entre en conflit avec personne. */
+.ship-journey-row.declaration-seule > :not(#voyageLeft),
+.ship-journey-row.declaration-seule #voyageLeft > :not(#holdDeclare) { display: none; }
 /* Bascule pleine largeur : voyage long -> tout s'empile, la colonne de gauche passe en rangée. */
 .ship-journey-row.stacked { flex-direction: column; }
 .ship-journey-row.stacked .voyage-left { flex-direction: row; flex-wrap: wrap; align-items: flex-start; max-width: none; width: 100%; }
@@ -904,6 +914,16 @@ input.jman-qty { width: 56px; min-width: 0; padding: 3px 5px; text-align: right;
 .jm-nom {
   fill: var(--text); font-size: 8.5px; font-family: var(--font); font-weight: 600;
   paint-order: stroke; stroke: var(--fond-carte); stroke-width: 2.6px; stroke-linejoin: round;
+}
+/* ZONE À RISQUE (#69) : un voile, et un NOM. Le voile seul serait un état qui ne tient qu'à une
+   couleur — la règle maison l'interdit depuis la bande de vignettes de #38. L'opacité est basse à
+   dessein : la carte reste la géographie, la zone n'est qu'un fond. `fill` n'est PAS déclaré ici,
+   il arrive en attribut de présentation depuis `vues/carte.tsx` (`--warn` ou `--bad`) ; le poser
+   en CSS l'écraserait. */
+.jm-zone { fill-opacity: 0.07; }
+.jm-zonenom {
+  font-size: 7px; font-family: var(--mono); font-weight: 600; letter-spacing: 1.6px;
+  text-anchor: middle;
 }
 .jm-arret.fait .jm-point { stroke-opacity: 0.4; }
 .jm-arret.fait .jm-nom { fill: var(--muted); }
@@ -1611,6 +1631,27 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .plan-hyp {
   margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--text);
   letter-spacing: 0.3px;
+}
+/* Les ZONES À RISQUE (#69), sous les hypothèses : une ligne par système traversé, jamais une par
+   jambe. Le liseré et le fond REDOUBLENT le mot, ils ne le remplacent pas — « ⚠ Pyro — hostile :
+   sans loi » se lit sans distinguer l'orange du rouge. Palier 1 en `--warn`, palier 2 en `--bad` :
+   les jetons d'alerte du thème, pas une palette de plus. */
+.plan-risques { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.plan-risque {
+  padding: 4px 9px; font-size: 11.5px; color: var(--text);
+  border-left: 2px solid var(--warn); background: rgb(var(--warn-rgb) / 0.09);
+}
+.plan-risque b { font-family: var(--mono); font-weight: 600; color: var(--warn); }
+.plan-risque.n2 { border-left-color: var(--bad); background: rgb(var(--bad-rgb) / 0.09); }
+.plan-risque.n2 b { color: var(--bad); }
+
+/* La vignette du vaisseau (#178). Elle ACCOMPAGNE le texte des hypothèses, elle ne le remplace pas :
+   sans photo — 20 vaisseaux sur 128 n'en ont pas, et une URL peut échouer — le nom seul reste, déjà
+   première hypothèse. Elle n'est pas activable : afficher n'est pas régler (ADR-004, amendement). */
+.plan-hyp { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.plan-vaisseau {
+  flex: 0 0 auto; width: 64px; height: 36px; object-fit: cover; border-radius: 3px;
+  border: 1px solid var(--line); background: rgb(var(--text-fort-rgb) / 0.04);
 }
 /* La carte reprend TOUTE la largeur, contrairement à sa colonne de 460 px d'avant : c'est l'objet
    qu'on vient voir en grand. Le dessin garde un plafond (un disque étiré ne gagne rien) mais bien

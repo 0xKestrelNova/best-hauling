@@ -6,14 +6,15 @@
 //
 // Elle ne reçoit AUCUNE prop : elle lit l'état, les filtres, les manifestes de jambe et le marché.
 // `plan.tsx` garde la présentation ; ce fichier porte le calcul et la décision.
-import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals, texteConvoi } from "../logic.ts";
+import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals, risquesDuParcours, texteConvoi } from "../logic.ts";
 import { etat, notifier } from "../etat.ts";
 import { readFilters } from "../filtres.ts";
 import { fmt, fmtFee } from "../format.ts";
 import { globalK } from "../frais.ts";
-import { findCommodity } from "../marche.ts";
+import { findCommodity, termByName } from "../marche.ts";
 import { withMarket } from "../donnees.ts";
 import { jambeChargee, legEffectiveLines, legFeeCtx } from "../voyage-donnees.ts";
+import { vaisseauChoisi } from "../selecteur.ts";
 import { corpsPlan, enTetePlan } from "./plan.tsx";
 
 const champ = (id: string): string =>
@@ -79,9 +80,27 @@ export function planConvoi(): string {
   return etat.JOURNEY ? texteConvoi(etat.JOURNEY.convoi, Number(champ("escortes")) || 0) : "";
 }
 
-/** L'EN-TÊTE : l'indicatif du convoi, puis les quatre hypothèses, en texte et en lecture seule. */
+/**
+ * Les ZONES À RISQUE du parcours courant (#69). `termByName` porte le booléen `outpost` ; tant que
+ * le marché n'est pas là, la table est vide et `estAvantPoste` rend faux — on ne suppose pas
+ * l'avant-poste, on se contente du palier du système.
+ *
+ * Exportée parce que la COPIE du récapitulatif la lit aussi : le texte collé dans un salon dirait
+ * autre chose que l'écran s'il la recalculait à sa façon.
+ */
+export function planZonesRisque() {
+  const stations = etat.JOURNEY ? journeyStations(etat.JOURNEY) : [];
+  return risquesDuParcours(stations, (nom) => !!termByName.get(nom)?.outpost).zones;
+}
+
+/** L'EN-TÊTE : l'indicatif du convoi, les quatre hypothèses en lecture seule, les zones à risque. */
 export function EnTetePlan() {
-  return enTetePlan(planHypotheses(readFilters()), planConvoi());
+  return enTetePlan({
+    hypotheses: planHypotheses(readFilters()),
+    vaisseau: vaisseauChoisi(),
+    zones: planZonesRisque(),
+    convoi: planConvoi(),
+  });
 }
 
 /** LE CORPS : le parcours, la soute, les jambes, ce qu'il reste à faire. */

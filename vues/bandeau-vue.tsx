@@ -107,6 +107,26 @@ function entrepots() {
   });
 }
 
+// ── La déclaration « j'ai ça à bord » ──────────────────────────────────────────────────────────
+// La SEULE carte du bandeau que le Plan de vol garde (#180) : elle n'édite rien, elle enregistre un
+// fait de jeu. Extraite en fonction parce qu'elle est désormais rendue depuis les SEPT vues où le
+// bandeau paraît — deux copies du même appel divergeraient au premier argument ajouté.
+function declaration() {
+  return carteDeclaration({
+    // L'en-tête « ◈ Soute vide » ne se pose qu'au-dessus d'une colonne SANS carte Soute titrée. Le
+    // Plan de vol en a une EN PERMANENCE — `#planHold`, titrée « ◈ Soute » même à vide — et l'y
+    // ajouter ferait lire deux panneaux là où il n'y en a qu'un, ce que ce drapeau existe justement
+    // pour éviter. Seule différence de la carte d'une vue à l'autre, et elle est de titrage.
+    souteVide: !etat.SOUTE.length && etat.view !== "plan",
+    // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà
+    // le repli de `stationCourante()`. On ne crée pas un second store, on rend le premier
+    // atteignable d'ici : deux positions divergeraient au premier aller-retour entre les vues.
+    avecPosition: !etat.JOURNEY && !!(etat.SOUTE.length || etat.declarationOuverte),
+    ouvert: etat.declarationOuverte,
+    origine: champ("origin"),
+  });
+}
+
 // ── Le compagnon de voyage ─────────────────────────────────────────────────────────────────────
 // Rend la carte ET son récapitulatif : les totaux du second sont un sous-produit du premier, et les
 // recalculer séparément ferait deux passes de manifestes par jambe pour un seul écran.
@@ -181,8 +201,9 @@ function compagnon() {
 }
 
 export function Bandeau() {
-  // LA GARDE EST NÉGATIVE, et c'est tout ce qui distingue le bandeau d'une vue d'onglet : il est
-  // visible partout SAUF dans le Plan de vol, qui le remplace par un récapitulatif inerte.
+  // LA GARDE EST NÉGATIVE, et c'est tout ce qui distingue le bandeau d'une vue d'onglet : QUATRE de
+  // ses cinq cartes sont visibles partout SAUF dans le Plan de vol, qui les remplace par un
+  // récapitulatif inerte. La cinquième — la déclaration — traverse la garde (#180).
   const visible = etat.view !== "plan";
 
   const { carte, recap } = visible ? compagnon() : { carte: null, recap: null };
@@ -201,24 +222,27 @@ export function Bandeau() {
     if (h(jc) > h(vl) + 140) row.classList.add("stacked");
   });
 
-  if (!visible) return null;
+  // LES QUATRE CARTES QUI ÉDITENT ne sont pas rendues dans le Plan de vol — `compagnon()` n'a même
+  // pas tourné. Ce sont `style.css` et `navigation.ts` qui les effacent de la rangée
+  // (`.declaration-seule`), pas `hidden` : #shipCard, qui n'est pas une `<Carte>`, a un écrivain
+  // impératif à lui.
+  //
+  // LE TERNAIRE EST POSÉ À LA PLACE D'UN `return null` GLOBAL, et c'est le point délicat : React
+  // réconcilie par POSITION dans la liste d'enfants. Un `<Carte holdDeclare>` qui serait tantôt
+  // seul enfant, tantôt troisième, serait démonté puis remonté à chaque passage — donc un
+  // formulaire à moitié rempli perdu en entrant dans le Plan de vol, et rien ne le dirait.
   return (
     <>
-      <Carte id="journeyCard" montrer>{carte}</Carte>
-      <Carte id="journeyRecap" montrer={!!recap}>{recap}</Carte>
-      <Carte id="holdDeclare" montrer>{carteDeclaration({
-        souteVide: !etat.SOUTE.length,
-        // « Je suis à » : sans voyage, la position EST le terminal de départ d'« En route » — déjà
-        // le repli de `stationCourante()`. On ne crée pas un second store, on rend le premier
-        // atteignable d'ici : deux positions divergeraient au premier aller-retour entre les vues.
-        avecPosition: !etat.JOURNEY && !!(etat.SOUTE.length || etat.declarationOuverte),
-        ouvert: etat.declarationOuverte,
-        origine: champ("origin"),
-      })}</Carte>
-      <Carte id="holdCard" montrer={!!etat.SOUTE.length}><Soute /></Carte>
-      <Carte id="depotsCard" montrer={!!Object.values(etat.DEPOTS).some((l) => Array.isArray(l) && l.length)}>
-        {entrepots()}
-      </Carte>
+      {visible ? <Carte id="journeyCard" montrer>{carte}</Carte> : null}
+      {visible ? <Carte id="journeyRecap" montrer={!!recap}>{recap}</Carte> : null}
+      {/* LA SEULE que le Plan de vol garde (#180) : déclarer CONSTATE, les quatre autres ÉDITENT. */}
+      <Carte id="holdDeclare" montrer>{declaration()}</Carte>
+      {visible ? <Carte id="holdCard" montrer={!!etat.SOUTE.length}><Soute /></Carte> : null}
+      {visible ? (
+        <Carte id="depotsCard" montrer={!!Object.values(etat.DEPOTS).some((l) => Array.isArray(l) && l.length)}>
+          {entrepots()}
+        </Carte>
+      ) : null}
     </>
   );
 }

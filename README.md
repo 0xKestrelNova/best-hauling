@@ -37,7 +37,7 @@ ouvre la vue.
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. La commodité choisie **survit à un filtre qui la masque** : le board affiche autre chose le temps de la recherche, et la retrouve dès que le filtre tombe. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 | **Tournée 📦** | **Vider la soute en un minimum d'arrêts**, l'argent n'arbitrant qu'à nombre d'arrêts égal — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'**inverse** de « où écouler », qui classe par ce que ça rapporte : les deux questions sont différentes, et celle-ci répond à « je ne veux plus porter ça » (le cas d'une sortie butin). La tournée est un **plancher** — un point de vente sur six seulement publie sa capacité — et se recalcule après chaque arrêt réel. La meilleure tournée **à un arrêt de plus** s'affiche à côté, avec son écart chiffré : l'app ne sait pas si tu as le temps ([ADR-007](docs/superpowers/specs/2026-08-15-tournee-ecoulement-adr.md)) |
-| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Le convoi y porte son **indicatif d'appel** — *« Baleine et ses trois Harpons »*. Un bouton **⧉ Copier le récapitulatif** en sort le texte, indicatif compris, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
+| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y RÈGLE rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. **On y constate, en revanche** : cliquer une escale de la carte y déplace « je suis ici », et **`+ déclarer ce que j'ai à bord`** y est atteignable comme partout ailleurs (#180) — rapporter un fait déjà survenu en jeu fait avancer le rapport, changer une hypothèse l'invalide. Le convoi y porte son **indicatif d'appel** — *« Baleine et ses trois Harpons »*. Un bouton **⧉ Copier le récapitulatif** en sort le texte, indicatif compris, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
 | **Corrections ✎** | *Un réglage, pas une vue d'analyse — d'où la dernière place.* Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 
 Autres éléments :
@@ -339,6 +339,35 @@ script de collecte se lance **à la main** et jamais depuis la CI — l'endpoint
 interne et non documenté, le site ne doit pas en dépendre. On ne dessine que ce qui porte un
 terminal chez UEX, ce qui tient les systèmes du lore (Castra, Terra…) hors de la carte.
 
+### Signaler les zones à risque
+
+Un plan de vol dit ce qu'il rapporte ; il devrait aussi dire **ce qu'il coûte en risque**. Quand le
+parcours traverse un système à risque, le Plan de vol l'écrit **une fois** — pas une fois par jambe
+qui y passe — juste sous les hypothèses, et la carte **nomme** la zone sous le nom du système
+(`⚠ HOSTILE`, `⚠ À SURVEILLER`) en plus de la teinter. La teinte redouble le mot, elle ne le
+remplace jamais : un état ne doit pas dépendre de la seule couleur. Un parcours qui ne quitte pas
+Stanton n'affiche **rien** — l'absence d'avertissement est déjà l'information.
+
+**Le jugement est ÉDITORIAL, et c'est à savoir avant de s'y fier.** Un terminal de
+`data/market.json` porte `name`, `system`, `planet`, `outpost`, `autoload`, `maxBox`, `code`,
+`shot`, `shotBy` : aucun champ de sécurité, de risque ou de juridiction — UEX n'en publie pas, il
+n'y a rien à brancher. La table est donc écrite à la main dans `logic.ts` (`RISQUE_SYSTEME`), datée
+par `RISQUE_ETABLI`, et elle **périmera** sans que rien ne le signale : Pyro évolue à chaque patch.
+
+Trois systèmes, trois paliers — *sûr*, *à surveiller*, *hostile* — et une seule nuance sous le
+système : le booléen `outpost`, celui-là même que filtre « Exclure les avant-postes ». Il ne relève
+aujourd'hui que **Nyx**, calme à ses stations et désert ailleurs. Rien de plus fin ne serait
+honnête : les 17 ancres de `data/starmap.json` sont au niveau du **corps**, pas du secteur, et une
+échelle à sept niveaux serait inventée de toutes pièces.
+
+Un système qu'UEX publierait en plus n'est **jamais** rangé parmi les sûrs : il ressort
+« à surveiller — hors de la table », et `node --test` échoue tant que le jugement n'a pas été porté
+(*« RISQUE_SYSTEME : la table couvre EXACTEMENT les systèmes de data/market.json »*).
+
+Enfin, le risque **ne pondère rien** : aucun profit, aucun classement, aucune route écartée. C'est
+une information affichée, un point. Un « profit ajusté du risque » serait une décision de
+conception majeure — un ADR, pas un ajout discret.
+
 ### La soute : ce qui est à bord, et ce que ça a coûté
 
 Le bouton **`✓ chargé`** sur une jambe dit à l'app « j'ai payé ce manifeste, il est en soute ». Elle
@@ -348,7 +377,7 @@ en prend l'instantané **au prix qu'elle venait d'afficher** — donc sans rien 
 **Deux entrées, pas une.** `✓ chargé` suppose un voyage, une jambe et un terminal qui vend la
 commodité : rien n'y rentre du butin ramassé au sol, d'un vaisseau rangé plein la semaine dernière,
 ni d'une cargaison achetée hors du site. Le bouton **`+ déclarer ce que j'ai à bord`** — présent
-dans **les six vues de recherche**, y compris soute vide — ouvre trois champs : la commodité (nom ou code UEX),
+dans **les huit vues**, Plan de vol compris depuis #180, et y compris soute vide — ouvre trois champs : la commodité (nom ou code UEX),
 les SCU, et le **prix payé au SCU**. Ce dernier est facultatif : laissé vide, c'est du **butin** au
 coût nul, et la ligne porte alors l'étiquette `butin`, parce que ce zéro fait compter *tout*
 l'encaissement comme profit dans « où écouler ».

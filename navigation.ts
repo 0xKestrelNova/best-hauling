@@ -11,9 +11,12 @@
 //   — `#empty` est masqué AVANT le cycle, donc avant les `useLayoutEffect` de Trajets, Boucles et
 //     « En route » : la vue active a toujours le dernier mot. Inverser, c'est effacer le message de
 //     la vue qu'on vient d'ouvrir — le bug #147, à l'envers ;
-//   — `#shipJourneyRow` est démasqué AVANT le cycle, parce que le bandeau MESURE sa hauteur pour
-//     décider d'empiler ses colonnes (`bandeau-vue.tsx`). Mesurée sur une rangée encore masquée,
-//     elle vaut zéro, et l'empilement ne se pose jamais. Rien ne le teste : c'est du CSS.
+//   — `#shipJourneyRow` n'est JAMAIS masquée, parce que le bandeau MESURE sa hauteur pour décider
+//     d'empiler ses colonnes (`bandeau-vue.tsx`). Mesurée sur une rangée masquée, elle vaudrait
+//     zéro, et l'empilement ne se poserait jamais. Depuis #180 elle survit même au Plan de vol, qui
+//     en écarte les cartes une à une par `.declaration-seule` — classe posée elle aussi AVANT le
+//     cycle, pour que la mesure du retour se fasse dans la disposition qu'elle mesure. Rien ne le
+//     teste : c'est du CSS.
 //
 // ── POURQUOI `rafraichir()` ET NON `notifier()` ───────────────────────────────────────────────
 // `etat.view` part dans le hash et dans le localStorage, et c'est lui qui SIGNE l'état restauré.
@@ -73,13 +76,18 @@ export function basculerVue(v) {
   const visibles = new Set(SECTIONS[v] || []);
   for (const id of TOUTES) { const el = $(id); if (el) el.hidden = !visibles.has(id); }
 
-  // Les deux blocs jusqu'ici PERMANENTS, que seule la vue de conclusion masque (ADR-004 §4 et §6).
-  // La barre de filtres : on ne change rien au voyage depuis le Plan de vol, l'y laisser ferait
-  // croire le contraire. Le bandeau : ses cartes sont éditables (✕ du parcours, vente en soute) et
-  // c'est tout ce que cette vue n'est pas — le Plan de vol le remplace par un récapitulatif inerte.
-  // Aucune valeur n'est touchée : les deux reviennent intacts au retour dans une vue de recherche.
+  // Les deux blocs que seule la vue de conclusion écarte (ADR-004 §4 et §6, amendé le 2026-08-22).
+  // La barre de filtres part ENTIÈRE : on ne change rien au voyage depuis le Plan de vol, l'y
+  // laisser ferait croire le contraire. Aucune valeur n'est touchée, elle revient intacte.
   $("controls").hidden = v === "plan";
-  $("shipJourneyRow").hidden = v === "plan";
+  // Le bandeau, lui, ne part plus d'un bloc (#180). Ses cartes ÉDITENT — le ✕ du parcours, la
+  // vente, le retrait de lot — et c'est tout ce que cette vue n'est pas ; mais `#holdDeclare` ne
+  // fait qu'enregistrer un fait de jeu (« j'ai ça à bord »), et le Plan de vol était la SEULE des
+  // huit vues où ce point d'entrée manquait. On garde donc la rangée et on écarte les cartes qui
+  // éditent, EN CSS (`.declaration-seule`, style.css) et non par `hidden` : `#shipCard` a déjà un
+  // écrivain impératif à lui (`selecteur.ts:289`), et deux écrivains du même attribut, on sait où
+  // ça mène. Un NŒUD unique, donc une délégation unique (`soute-gestes.ts`) et aucun id en double.
+  $("shipJourneyRow").classList.toggle("declaration-seule", v === "plan");
 
   // La carte de chargement n'appartient qu'à « En route » ; personne d'autre ne la referme.
   if (v !== "enroute") $("manifest").hidden = true;

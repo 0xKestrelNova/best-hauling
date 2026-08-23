@@ -292,6 +292,18 @@ export async function chargerVaisseaux() {
 }
 
 /**
+ * La fiche du vaisseau actuellement choisi, ou `null`.
+ *
+ * Elle lit la LISTE, jamais le DOM de `#shipCard` (#178). Ce nœud a un écrivain impératif externe —
+ * `$("shipCard").hidden = true` quand on édite la soute à la main — et un lecteur qui passerait par
+ * lui hériterait de cet état sans le savoir. La liste, elle, est la donnée.
+ */
+export function vaisseauChoisi() {
+  const nom = $("ship")?.value.trim().toLowerCase();
+  return (nom && vaisseaux.find((x) => x.name.toLowerCase() === nom)) || null;
+}
+
+/**
  * Affiche la carte du vaisseau déjà présent dans le champ — après restauration d'un état.
  *
  * Sans effet si la liste n'est pas chargée ou si le nom ne correspond à rien : c'est un rappel
