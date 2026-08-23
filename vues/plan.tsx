@@ -12,6 +12,9 @@
 // en enfant d'un conteneur réécrit — c'est la leçon de #24, rappelée par l'ADR-004.
 import { fmt, signe } from "../format.ts";
 import { Fragment } from "react";
+
+/** Ce que la vue lit d'un vaisseau : de quoi le MONTRER, rien pour le changer. */
+export type FicheVaisseau = { name: string; scu: number; photo?: string; concept?: boolean };
 import { IconeCommodite } from "./communs.tsx";
 
 type Fmt = (n: number) => string;
@@ -45,7 +48,7 @@ export type DonneesPlan = {
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
 
-export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
+export function EnTetePlan({ hypotheses, vaisseau }: { hypotheses: string[]; vaisseau: FicheVaisseau | null }) {
   return (
     <>
       <div className="plan-title">
@@ -60,7 +63,29 @@ export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
           sans savoir s'il est net. */}
       <div className="plan-hyp" id="planHypotheses"
            title="Ces quatre réglages changent le sens des chiffres ci-dessous. Pour les modifier, retourne dans une vue de recherche.">
-        {hypotheses.join(" · ")}
+        {/* LA VIGNETTE DU VAISSEAU (#178). Afficher n'est pas régler : l'amendement de l'ADR-004 dit
+            que la vue MONTRE sans restriction ce qui décrit le voyage, et ne filtre que les GESTES.
+            Elle n'est donc pas activable — la rendre cliquable la ferait basculer du côté interdit.
+            Pas d'image, ou image en échec : le NOM SEUL, qui est déjà la première hypothèse. Aucun
+            trou à combler, et c'est pour ça que la vignette est un frère du texte et non son
+            remplaçant. */}
+        {vaisseau && vaisseau.photo ? (
+          <img
+            className="plan-vaisseau"
+            src={vaisseau.photo}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : null}
+        <span>{hypotheses.join(" · ")}</span>
+        {/* Une soute PROMISE se signale ici aussi : c'est la vue qui récapitule les hypothèses, donc
+            celle où un vaisseau qui n'existe pas en jeu doit rendre le plan explicitement spéculatif
+            (#44). */}
+        {vaisseau && vaisseau.concept ? (
+          <span className="ship-opt-concept" title="Vaisseau annoncé par CIG, pas encore volable en jeu : sa soute est une promesse, pas une capacité.">⚠ concept</span>
+        ) : null}
       </div>
     </>
   );
@@ -193,5 +218,6 @@ export function CorpsPlan({ d }: { d: DonneesPlan }) {
   );
 }
 
-export const enTetePlan = (hypotheses: string[]) => <EnTetePlan hypotheses={hypotheses} />;
+export const enTetePlan = (hypotheses: string[], vaisseau: FicheVaisseau | null) =>
+  <EnTetePlan hypotheses={hypotheses} vaisseau={vaisseau} />;
 export const corpsPlan = (d: DonneesPlan) => <CorpsPlan d={d} />;
