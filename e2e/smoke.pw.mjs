@@ -1240,8 +1240,12 @@ test("Soute : déclarer du fret à bord sans voyage, sans jambe et sans manifest
   expect(JSON.parse(registre || "{}")).toEqual({});
 });
 
-test("Soute : la déclaration est atteignable depuis les SIX vues (#55)", async ({ page }) => {
-  const vues = ["viewRoutes", "viewLoops", "viewEnroute", "viewChain", "viewCorrections", "viewCommodities"];
+test("Soute : la déclaration est atteignable depuis les SEPT vues (#55, #180)", async ({ page }) => {
+  // SEPT depuis #180. Le Plan de vol était la seule des huit vues où « j'ai ça à bord » était
+  // inatteignable : `#holdDeclare` tombait avec `#shipJourneyRow`, masquée d'un bloc. Déclarer du
+  // fret CONSTATE un fait de jeu, ça ne règle aucune hypothèse — ADR-004, amendement du 2026-08-22.
+  const vues = ["viewRoutes", "viewLoops", "viewEnroute", "viewChain", "viewCorrections",
+                "viewCommodities", "viewPlan"];
   for (const v of vues) {
     await page.click(`#${v}`);
     await expect(page.locator("#holdAddOpen"), `point d'entrée soute absent de #${v}`).toBeVisible();

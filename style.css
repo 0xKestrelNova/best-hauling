@@ -596,6 +596,17 @@ input::placeholder { color: var(--muted); }
 .recap-kpi { display: flex; flex-direction: column; gap: 1px; }
 .recap-kpi b { font-family: var(--mono); font-size: 16px; color: var(--text); line-height: 1.1; }
 .recap-kpi span { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+/* ---------- Le Plan de vol garde UNE carte du bandeau : la déclaration (#180) ---------- */
+/* La rangée n'y est plus masquée d'un bloc. Ce qui part, ce sont les cartes qui ÉDITENT — le ✕ du
+   parcours, la vente, le retrait de lot, la reprise d'un dépôt ; déclarer « j'ai ça à bord », lui,
+   ne fait que CONSTATER un fait de jeu (ADR-004, amendement du 2026-08-22). Le Plan de vol était la
+   seule des huit vues où ce point d'entrée manquait.
+   Écrit en `:not()` et non carte par carte : une sixième carte ajoutée demain au bandeau sera
+   écartée d'ici PAR DÉFAUT, et c'est le bon défaut — on la fera revenir en la nommant.
+   En CSS et non par `hidden` : #shipCard a un écrivain impératif à lui (selecteur.ts:289), et
+   `display: none` n'entre en conflit avec personne. */
+.ship-journey-row.declaration-seule > :not(#voyageLeft),
+.ship-journey-row.declaration-seule #voyageLeft > :not(#holdDeclare) { display: none; }
 /* Bascule pleine largeur : voyage long -> tout s'empile, la colonne de gauche passe en rangée. */
 .ship-journey-row.stacked { flex-direction: column; }
 .ship-journey-row.stacked .voyage-left { flex-direction: row; flex-wrap: wrap; align-items: flex-start; max-width: none; width: 100%; }

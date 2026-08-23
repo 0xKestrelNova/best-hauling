@@ -211,6 +211,54 @@ test("Plan de vol : la soute a un vrai visuel — à bord, place libre, capital 
   expect(await soute.locator("button").count()).toBe(0);
 });
 
+test("Plan de vol : déclarer du fret à bord sans quitter la conclusion (#180)", async ({ page }) => {
+  // C'est la vue qu'on garde ouverte EN VOLANT. Dire « j'ai ramassé 40 SCU de Titanium » ne doit
+  // plus coûter un aller-retour par une vue de recherche : c'est un fait de jeu, pas une hypothèse
+  // de calcul (ADR-004, amendement du 2026-08-22). Le formulaire arrive par SA PROPRE surface — le
+  // nœud `#holdDeclare`, seul rescapé du bandeau — jamais en rendant `#planHold` éditable.
+
+  // Un vaisseau choisi AVANT d'entrer : `#shipCard` est le seul nœud de la rangée dont
+  // l'effacement ici ne tient pas à React — `selecteur.ts:289` vient d'y écrire `hidden = false`
+  // en direct. Sans ce préalable, la règle CSS qui l'écarte pourrait sauter sans rien faire rougir.
+  await page.fill("#ship", "railen");
+  await page.locator("#shipList li").first().click();
+  await expect(page.locator("#shipCard")).toBeVisible();
+
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+  // La décision 3 ne bouge pas : tout ce qui ÉDITE reste dehors.
+  await expect(page.locator("#shipCard")).toBeHidden();
+  await expect(page.locator("#journeyCard")).toBeHidden();
+  await expect(page.locator("#controls")).toBeHidden();
+
+  await page.locator("#holdAddOpen").click();
+  await expect(page.locator("#holdAddName")).toBeVisible({ timeout: 20_000 });
+  await page.fill("#holdAddName", "Titanium");
+  await page.fill("#holdAddScu", "40");
+  await page.fill("#holdAddPaid", "100");
+  await page.locator("#holdAddOk").click();
+
+  // Le lot est entré en soute, et la conclusion s'est mise à jour SANS qu'on la quitte.
+  await expect(page.locator("#plan")).toBeVisible();
+  expect(page.url()).toContain("v=plan");
+  const soute = page.locator("#planHold");
+  await expect(soute).toContainText("Titanium");
+  await expect(soute).toContainText("40");
+  await expect(soute).toContainText(/4\s*000/); // 40 SCU × 100 aUEC : le capital engagé
+
+  // GARDE-FOU 1 de l'amendement : le récapitulatif ne devient jamais le contrôle. `#planHold` garde
+  // ses zéro boutons, et `#holdCard` — qui porte la vente, le ✕ et le retrait de lot — reste dehors.
+  expect(await soute.locator("button").count()).toBe(0);
+  await expect(page.locator("#holdCard")).toBeHidden();
+
+  // Le second sens : tout revient au retour dans une vue de recherche.
+  await page.click("#viewRoutes");
+  await expect(page.locator("#holdCard")).toBeVisible();
+  await expect(page.locator("#shipCard")).toBeVisible();
+  await expect(page.locator("#journeyCard")).toBeVisible();
+  await expect(page.locator("#controls")).toBeVisible();
+});
+
 test("Plan de vol : la carte garde ses écouteurs directs après un re-rendu (#61)", async ({ page }) => {
   // #journeyMap porte ses écouteurs EN DIRECT, une seule fois, hors du HTML réécrit par innerHTML.
   // Le déménager dans un conteneur re-rendu reproduirait #24 : un geste qui cesse de répondre.
