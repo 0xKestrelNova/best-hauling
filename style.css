@@ -1633,7 +1633,11 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .plan-hold-paid { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 /* Le parcours : les mêmes étapes que le bandeau, mais INERTES — aucun bouton, aucun ✕. */
 .plan-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; margin-bottom: 12px; }
-.plan-step { padding: 3px 5px; border: 1px solid var(--line); background: rgb(var(--text-fort-rgb) / 0.03); font-size: 12px; }
+/* Une escale du récapitulatif est ACTIVABLE (#179) : le geste existait, rien ne le disait. Même
+   convention de survol et de focus que `.jstep` et `.jm-arret`, qui font déjà le même geste. */
+.plan-step { padding: 3px 5px; border: 1px solid var(--line); background: rgb(var(--text-fort-rgb) / 0.03); font-size: 12px; cursor: pointer; transition: border-color 0.12s; }
+.plan-step:hover { border-color: var(--acc); }
+.plan-step:focus-visible { outline: 2px solid var(--acc-2); outline-offset: 1px; }
 .plan-step.here { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc), 0 0 10px rgb(var(--acc-rgb) / 0.25); }
 .plan-sep { color: var(--muted); }
 .plan-legs { display: flex; flex-direction: column; gap: 8px; }

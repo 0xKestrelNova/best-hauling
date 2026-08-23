@@ -31,7 +31,28 @@ import { join, sep } from "node:path";
 // en bloc. Le découpage se rediscutera quand la migration sera finie et `app.js` retiré.
 //
 // Le plafond garde sa marge : toute hausse ULTÉRIEURE redevient une décision à écrire.
-const PLAFOND_OCTETS = 620_000;  // mesuré à 586 751 le 2026-08-15 (React 19 + première vue migrée)
+// RELEVÉ LE 2026-08-22, jour de la bascule v2 en production. Le plafond de 620 000 a été franchi de
+// 153 octets, et c'est une DÉCISION qu'on écrit, pas un seuil qu'on pousse.
+//
+//   v2.0.0 livrée      619 603 o   (l'aide de première visite, #62, a consommé la marge restante)
+//   + #176 et #179         550 o   → 620 153
+//
+// Ce qui a changé de nature depuis le relevé de la v1, et qui vaut d'être noté :
+//
+//   poste     avant React   aujourd'hui
+//   JS             35 %        59 %   363 612 o
+//   polices        38 %        24 %   149 592 o
+//   CSS            17 %        12 %    73 461 o
+//   HTML                        5 %    32 565 o
+//
+// Le poste dominant n'est plus les polices mais le JAVASCRIPT, et c'est la conséquence directe de la
+// refonte : React, la racine unique, les treize modules de vues. Les polices n'ont pas maigri — la
+// coquille a grossi autour d'elles.
+//
+// La marge est reposée à ~6 %, comme aux deux relevés précédents. La prochaine hausse redeviendra une
+// décision à écrire, et c'est tout l'objet de ce test : rendre visible une dérive que rien d'autre ne
+// montre. Ce qui reste à surveiller en priorité, c'est le poste JS : c'est lui qui bouge.
+const PLAFOND_OCTETS = 660_000;  // mesuré à 620 153 le 2026-08-22 (v2 en production)
 const PLAFOND_ENTREES = 24;      // mesuré à 20 — inchangé, React n'ajoute aucun fragment
 
 const dist = join(process.cwd(), "dist");

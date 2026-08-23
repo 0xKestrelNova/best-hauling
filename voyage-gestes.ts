@@ -280,7 +280,12 @@ export function brancherGestesVoyage() {
     if (head) { toggleLegEditor(Number(head.dataset.leg)); return; }
     // Parcours interactif : clic sur une étape (⦿) = « je suis ici » -> recale les vues.
     const step = cible(e).closest(".jstep");
-    if (step) setJourneyStop(Number(step.dataset.i));
+    if (step) { setJourneyStop(Number(step.dataset.i)); return; }
+    // Le MÊME geste depuis le récapitulatif du Plan de vol (#179). Une branche à part et non la
+    // classe `.jstep` : celle-ci porte un style — pastille, `⦿` en `::after` — qui n'a rien à faire
+    // dans une ligne de récapitulatif. Le geste se partage, pas l'apparence.
+    const etape = cible(e).closest(".plan-step[data-i]");
+    if (etape) setJourneyStop(Number(etape.dataset.i));
   });
 
   // L'en-tête d'une jambe est annoncé `role="button"` : Entrée/Espace doivent l'activer comme le
@@ -296,6 +301,16 @@ export function brancherGestesVoyage() {
 
   // Ajout d'arrêt / de commodité à la touche Entrée.
   document.addEventListener("keydown", (e) => {
+    // Une étape du récapitulatif du Plan est annoncée `role="button"` : elle doit s'activer au
+    // clavier comme un bouton (#179). En TÊTE, et avec un `return` : les branches suivantes lisent
+    // `champ(e).id`, ce qu'un `<span>` n'a pas — elles ne matcheraient pas, mais l'ordre dit
+    // l'intention. `preventDefault` sur Espace, qui ferait défiler la page.
+    const etape = cible(e).closest(".plan-step[data-i]");
+    if (etape && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      setJourneyStop(Number(etape.dataset.i));
+      return;
+    }
     if (champ(e).id === "journeyStart" && e.key === "Enter") { e.preventDefault(); beginJourney(champ(e).value); }
     else if (champ(e).id === "journeyAddStop" && e.key === "Enter") { e.preventDefault(); addStopByTerminal(champ(e).value); }
     else if (cible(e).classList && cible(e).classList.contains("jman-add-input") && e.key === "Enter") {
