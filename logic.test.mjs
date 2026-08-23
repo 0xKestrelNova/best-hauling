@@ -2823,18 +2823,55 @@ test("journeyMap : le vaisseau se pose sur l'arrêt courant et vise le suivant",
   assert.notEqual(a.vaisseau.angle, b.vaisseau.angle); // au bout, il regarde d'où il vient
 });
 
-test("journeyMap : une jambe CHARGÉE met le vaisseau en vol, entre les deux escales", () => {
+// La distance d'un point à un segment DESSINÉ, échantillonnée sur sa quadratique. C'est la seule
+// mesure qui dise « le vaisseau est sur le trajet » — comparer à la corde ne le dit pas, et c'est
+// précisément l'erreur que ce test faisait avant #176.
+const distanceAuSegment = (p, s) => {
+  let mini = Infinity;
+  for (let i = 0; i <= 100; i++) {
+    const t = i / 100, u = 1 - t;
+    const x = u * u * s.x1 + 2 * u * t * s.cx + t * t * s.x2;
+    const y = u * u * s.y1 + 2 * u * t * s.cy + t * t * s.y2;
+    mini = Math.min(mini, Math.hypot(p.x - x, p.y - y));
+  }
+  return mini;
+};
+const distanceAuTrajet = (c) => Math.min(...c.jambes.map((s) => distanceAuSegment(c.vaisseau, s)));
+
+test("journeyMap : une jambe CHARGÉE met le vaisseau en vol, SUR le trajet dessiné (#176)", () => {
   const noms = st("Megumi", "Checkmate");
   const quai = journeyMap(noms, 0, STARMAP, infoT, false);
   const vol = journeyMap(noms, 0, STARMAP, infoT, true);
   assert.equal(quai.vaisseau.enVol, false);
   assert.deepEqual([quai.vaisseau.x, quai.vaisseau.y], [quai.arrets[0].x, quai.arrets[0].y]);
   assert.equal(vol.vaisseau.enVol, true);
-  assert.equal(vol.vaisseau.x, (vol.arrets[0].x + vol.arrets[1].x) / 2); // à mi-chemin
-  assert.equal(vol.vaisseau.y, (vol.arrets[0].y + vol.arrets[1].y) / 2);
-  assert.equal(vol.vaisseau.angle, quai.vaisseau.angle);                 // même cap
+
+  // CE TEST EXIGEAIT LE MILIEU DE LA CORDE, et c'est pour ça que le défaut a survécu : il encodait
+  // le bug. Une jambe dessinée est une QUADRATIQUE bombée de `k`, et un saut est en plus routé par
+  // les passerelles — le milieu de la corde n'est sur aucun des deux.
+  assert.ok(distanceAuTrajet(vol) < 1,
+    `vaisseau à ${distanceAuTrajet(vol).toFixed(1)} px du trajet dessiné`);
+  // Non vacuisant : l'ancien point, lui, en était à 4,0 px sur cette même jambe.
+  const corde = { x: (vol.arrets[0].x + vol.arrets[1].x) / 2, y: (vol.arrets[0].y + vol.arrets[1].y) / 2 };
+  assert.ok(Math.min(...vol.jambes.map((s) => distanceAuSegment(corde, s))) > 1,
+    "l'ancien placement était déjà à côté sur une jambe intra-système");
+
   // Au BOUT du parcours il n'y a plus de jambe : chargé ou non, le vaisseau reste à quai.
   assert.equal(journeyMap(noms, 1, STARMAP, infoT, true).vaisseau.enVol, false);
+});
+
+test("journeyMap : sur un SAUT, le vaisseau suit les passerelles et non la corde (#176)", () => {
+  // Le cas de la capture d’écran : Pyro → Stanton. La jambe est une CHAÎNE de segments —
+  // escale → passerelle d'ici, le tunnel, passerelle de là-bas → escale — et le milieu de la corde
+  // tombait dans le vide ENTRE les deux disques de système, à 38,1 px du trajet le plus proche.
+  const vol = journeyMap(st("Checkmate", "New Babbage"), 0, STARMAP, infoT, true);
+  assert.ok(vol.jambes.length > 1, `un saut se dessine en plusieurs segments (${vol.jambes.length})`);
+  assert.ok(distanceAuTrajet(vol) < 1,
+    `vaisseau à ${distanceAuTrajet(vol).toFixed(1)} px du trajet dessiné`);
+
+  const corde = { x: (vol.arrets[0].x + vol.arrets[1].x) / 2, y: (vol.arrets[0].y + vol.arrets[1].y) / 2 };
+  const ecartAvant = Math.min(...vol.jambes.map((s) => distanceAuSegment(corde, s)));
+  assert.ok(ecartAvant > 20, `l'ancien placement était à ${ecartAvant.toFixed(1)} px du trajet`);
 });
 
 test("journeyMap : une position hors bornes est ramenée dans le parcours", () => {
