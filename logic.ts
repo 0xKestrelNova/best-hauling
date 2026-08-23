@@ -2475,15 +2475,61 @@ export function journeyMap(stations: Station[], current: number, starmap: Starma
     };
   };
 
+  // `segmentsDe[i]` = les segments DESSINÉS de la jambe i (celle qui mène à l'arrêt i). Une jambe
+  // inter-systèmes en compte plusieurs : le trajet sort par une passerelle et rentre par l'autre.
+  // C'est cette table qui permet de poser le vaisseau SUR le trajet, et non sur la corde (#176).
   const jambes = [];
+  const segmentsDe = [];
   for (let i = 1; i < arrets.length; i++) {
     const a = arrets[i - 1], b = arrets[i];
     const points = [a, ...passerelles(a, b), b];
+    const miens = [];
     for (let j = 1; j < points.length; j++) {
       const p = points[j - 1], q = points[j];
-      jambes.push(segment(p, q, p.systeme !== q.systeme, i <= current));
+      const seg = segment(p, q, p.systeme !== q.systeme, i <= current);
+      jambes.push(seg);
+      miens.push(seg);
     }
+    segmentsDe[i] = miens;
   }
+
+  /**
+   * Le point à MI-PARCOURS de la jambe qui mène à l'arrêt `i`, sur le chemin réellement dessiné.
+   *
+   * Le vaisseau se posait au milieu de la CORDE — `(ici.x + suiv.x) / 2` — et ça le mettait à côté
+   * du trajet pour deux raisons cumulées (#176) :
+   *   — un saut est ROUTÉ PAR LES PASSERELLES, donc la jambe est une chaîne de segments ; le milieu
+   *     de la corde tombait dans le vide entre les deux disques de système ;
+   *   — chaque segment est une QUADRATIQUE bombée de `k` (jusqu'à 26 px) : même sur une jambe
+   *     intra-système, la corde n'est pas la courbe.
+   *
+   * On mesure donc la longueur de la polyligne (les cordes suffisent : la flèche est bornée à 9 %,
+   * l'écart de paramétrage ne déplace le vaisseau que de quelques pixels le long d'un chemin où il
+   * est de toute façon conventionnellement « à mi-jambe »), on trouve le segment qui porte la
+   * moitié, puis on prend le point de SA quadratique — la même formule que le chevron de sens.
+   */
+  const miJambe = (i) => {
+    const segs = segmentsDe[i];
+    if (!segs || !segs.length) return null;
+    const longueur = (s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    const total = segs.reduce((somme, s) => somme + longueur(s), 0);
+    let reste = total / 2;
+    let s = segs[segs.length - 1];
+    for (const candidat of segs) {
+      const l = longueur(candidat);
+      if (reste <= l) { s = candidat; break; }
+      reste -= l;
+    }
+    // `t` sur CE segment, puis le point de la quadratique et sa tangente. `B'(t) = 2(1-t)(c-p) +
+    // 2t(q-c)` : l'angle suit la courbe, plus la direction escale→escale.
+    const t = Math.min(1, Math.max(0, reste / (longueur(s) || 1)));
+    const u = 1 - t;
+    const x = u * u * s.x1 + 2 * u * t * s.cx + t * t * s.x2;
+    const y = u * u * s.y1 + 2 * u * t * s.cy + t * t * s.y2;
+    const tx = 2 * u * (s.cx - s.x1) + 2 * t * (s.x2 - s.cx);
+    const ty = 2 * u * (s.cy - s.y1) + 2 * t * (s.y2 - s.cy);
+    return { x, y, angle: (Math.atan2(ty, tx) * 180) / Math.PI };
+  };
 
   // Le vaisseau, sur l'arrêt courant, orienté vers le suivant (ou depuis le précédent au bout).
   // `enVol` : la jambe courante est CHARGÉE, donc on n'est plus à quai — on est parti. Le vaisseau
@@ -2494,9 +2540,12 @@ export function journeyMap(stations: Station[], current: number, starmap: Starma
   const vers = suiv || prec || ici;
   const angle = (Math.atan2(vers.y - ici.y, vers.x - ici.x) * 180) / Math.PI + (suiv ? 0 : 180);
   if (enVol && suiv) {
+    // SUR le trajet dessiné, pas sur la corde (#176). Le repli garde l'ancien comportement quand la
+    // jambe n'a aucun segment — géométrie absente, cas déjà prévu par `passerelles`.
+    const mi = miJambe(i + 1) || { x: (ici.x + suiv.x) / 2, y: (ici.y + suiv.y) / 2, angle };
     return {
       largeur, hauteur, systemes, arrets, jambes,
-      vaisseau: { x: (ici.x + suiv.x) / 2, y: (ici.y + suiv.y) / 2, angle, arret: i, enVol: true },
+      vaisseau: { x: mi.x, y: mi.y, angle: mi.angle, arret: i, enVol: true },
     };
   }
   // Un corps qui porte une escale n'a pas besoin de son propre libellé : le nom de l'escale est
