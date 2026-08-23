@@ -127,3 +127,41 @@ test("Déclaration : les QUATRE champs survivent à un geste fait ailleurs (#55)
   await expect(page.locator("#holdAddPaid")).toHaveValue("137");
   await expect(page.locator("#holdWhere")).toHaveValue("Megumi — Pyro");
 });
+
+test("Déclaration : les quatre champs tiennent aussi DEPUIS le Plan de vol (#180)", async ({ page }) => {
+  // La déclaration est la SEULE carte du bandeau que la vue de conclusion garde, et elle y est
+  // rendue dans le MÊME nœud `#holdDeclare` : `navigation.ts` ne masque plus la rangée, `style.css`
+  // en écarte les quatre cartes qui éditent. Focus, délégation et champs non contrôlés doivent donc
+  // s'y comporter à l'identique — et rien ne le regardait, le test ci-dessus ne visitant que des
+  // vues de recherche.
+  //
+  // LE GESTE QUI DÉCLENCHE LE RENDU NE PEUT PAS ÊTRE `#cargo` : les filtres sont masqués ici
+  // (décision 6). On prend `#holdWhere`, dont le débounce appelle `poserPosition` → `rafraichir()`,
+  // soit un cycle COMPLET ; `#origin` reçoit la valeur, et c'est la preuve que le cycle a eu lieu.
+  await page.click("#viewPlan");
+  await expect(page.locator("#plan")).toBeVisible();
+
+  await ouvrirFormulaire(page);
+  await expect(page.locator("#holdAddName")).toBeFocused(); // le contrat flushSync + ?.focus()
+
+  await page.fill("#holdAddName", "Titanium");
+  await page.fill("#holdAddScu", "42");
+  await page.fill("#holdAddPaid", "137");
+  await page.fill("#holdWhere", "Megumi — Pyro");
+  await expect(page.locator("#origin")).toHaveValue("Megumi — Pyro", { timeout: 10_000 });
+
+  await expect(page.locator("#holdAddName")).toHaveValue("Titanium");
+  await expect(page.locator("#holdAddScu")).toHaveValue("42");
+  await expect(page.locator("#holdAddPaid")).toHaveValue("137");
+  await expect(page.locator("#holdWhere")).toHaveValue("Megumi — Pyro");
+  // Le second sens, celui qui casse en silence : déclarer n'a pas fait changer de vue.
+  await expect(page.locator("#plan")).toBeVisible();
+
+  // Et l'aller-retour par une vue de recherche ne démonte plus la carte : `<Carte holdDeclare>`
+  // garde son RANG dans les enfants du bandeau, donc React réconcilie au lieu de remonter. Avant
+  // #180, le bandeau rendait `null` en Plan de vol et la saisie était perdue à l'aller.
+  await page.click("#viewRoutes");
+  await page.click("#viewPlan");
+  await expect(page.locator("#holdAddPaid")).toHaveValue("137");
+  await expect(page.locator("#holdWhere")).toHaveValue("Megumi — Pyro");
+});
