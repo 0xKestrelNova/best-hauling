@@ -95,10 +95,18 @@ export type Filtres = {
   board?: "market" | "loot";
 };
 
-/** Ce qu'UN terminal facture. `k = 0` = ne facture rien, mais le `maxBox` SURVIT : c'est encore
- *  lui qui décide de la taille des caisses (logic.ts:474-482).
- *  `maxBox` optionnel : un instantané de market.json antérieur au build qui l'ajoute n'en a pas. */
-export type PointFrais = { maxBox?: number; k: number };
+/** Ce qu'UN terminal facture. `k = 0` = ne facture rien, mais la `taille` SURVIT : le chargement
+ *  part quand même en caisses, et c'est ce décompte qui explique le montant de l'autre extrémité.
+ *
+ *  `taille` est la taille de caisse EMPLOYÉE, pas un plafond à remplir au plus serré (ADR-014).
+ *  Elle vaut par défaut le `maxBox` du terminal — la plus grosse caisse qu'il accepte, donc la
+ *  moins chère — mais ce n'est plus lui qui DÉCIDE du découpage : le joueur choisit au kiosque, et
+ *  101 achats relevés en jeu emploient une seule taille, 101 fois sur 101 (#193).
+ *
+ *  Optionnelle : un instantané de market.json antérieur au build qui ajoute `maxBox` n'en a pas,
+ *  et `caissesDe` retombe alors sur 32 — un repli qui SOUS-estime les frais au lieu de les
+ *  inventer. */
+export type PointFrais = { taille?: number; k: number };
 
 /** Le contexte de frais d'UN chargement : on charge au terminal d'ACHAT, on décharge au terminal
  *  de VENTE, chacun au tarif de SA station (`haulFee`, logic.ts:491-496).
@@ -329,10 +337,13 @@ export type Terminal = {
   /** Le terminal (dé)charge tout seul — donc il FACTURE. Absent d'un instantané antérieur au
    *  2026-08-11 : `autoloadPoint` retombe alors sur k = 0, aucun frais, pas un crash. */
   autoload?: boolean;
-  /** Plus grosse caisse acceptée (16, 24 ou 32 dans l'instantané) : c'est elle qui décide en combien
-   *  de caisses la cargaison se découpe, donc combien de forfaits l'autoload facture. `undefined`
-   *  traverse volontairement `autoloadPoint` — logic.test.mjs:3444 EXIGE `{ maxBox: undefined, k: 0 }` —
-   *  et `scuBoxes` retombe sur la grille complète. */
+  /** Plus grosse caisse ACCEPTÉE par le comptoir (16, 24 ou 32 dans l'instantané). Ce n'est PAS le
+   *  découpage : le joueur choisit sa taille au kiosque, et ce champ n'en est que le MAJORANT et le
+   *  défaut le moins cher (ADR-014, #193). Vérifié contre UEX : `max(container_sizes)` ne dépasse
+   *  jamais ce plafond sur 2 579 lignes, mais lui est strictement inférieur 597 fois — le vrai
+   *  plafond est par (comptoir, commodité), et il n'est pas encore publié.
+   *  `undefined` traverse volontairement `autoloadPoint` — logic.test.mjs:3720 EXIGE
+   *  `{ taille: undefined, k: 0 }` — et `caissesDe` retombe alors sur 32. */
   maxBox?: number;
   /** Code court UEX (ARCL1, LEVSKI…). Jamais une clé : ni index, ni Map, ni déduplication.
    *  Lu en `t.code || ""` (logic.ts:1353, app.js:3335). */

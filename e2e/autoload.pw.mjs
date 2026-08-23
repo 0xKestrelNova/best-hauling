@@ -521,3 +521,65 @@ test("relevés : « Tout oublier » demande d'abord, et n'emporte QUE les relev�
   await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
   await expect(page.locator("#viewCorrections .rl")).toHaveText(badgeAvant);
 });
+test("relevé : la taille de caisse EMPLOYÉE entre dans le coefficient (#193)", async ({ page }) => {
+  // Le vice que ce champ supprime (ADR-014) : sans lui, `kFromReading` met au dénominateur un
+  // découpage SUPPOSÉ — celui du plafond du comptoir — et le k « relevé » mesure alors la station
+  // MULTIPLIÉE par l'erreur de caissage. Le relevé d'Endgame de la spec le montre à nu : 720 aUEC
+  // pour 24 SCU chargés en TROIS caisses de 8, à la station qui DÉFINIT k = 1. Deviné à 32, il
+  // rendait 1,091 ; à la taille réelle, il rend exactement 1.
+  await enrichMarket(page, "all", 32); // le comptoir accepte des caisses de 32 : c'est le défaut
+  const errors = watchErrors(page);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+
+  await page.click("#viewCorrections");
+  await expect(page.locator("#correctionsControls")).toBeVisible();
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alBox")).toBeVisible();
+
+  // PRÉREMPLI, jamais vide : un champ vide donnerait `Number("") = 0`, donc le repli, et le relevé
+  // se persisterait sous une hypothèse tout en s'affichant « (ton relevé) ».
+  await expect(page.locator("#alBox")).toHaveValue("32");
+
+  // Au découpage supposé : le k de la station d'ancrage sort faux de 9 %.
+  await page.fill("#alAmount", "720");
+  await page.fill("#alScu", "24");
+  await page.click("#alSave");
+  await expect(page.locator(".corr-item.autoload")).toContainText("1,091");
+
+  // À la taille réellement employée : k = 1, exactement. Et la touche Entrée valide depuis ce
+  // troisième champ — la garde ne testait que `alAmount || alScu`.
+  await page.fill("#alBox", "8");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".corr-item.autoload")).toContainText("en caisses de 8 SCU");
+  await expect(page.locator(".corr-item.autoload .loc-sub")).toContainText("k = 1 ·");
+
+  // La note de la station dit la taille retenue ET d'où elle vient : c'est le seul endroit de
+  // l'application où le découpage est écrit en clair.
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("caisses de 8 SCU (ta mesure)");
+
+  expect(errors).toEqual([]);
+});
+
+test("infobulle : la taille de caisse est nommée sans casser le décompte des commodités (#193)", async ({ page }) => {
+  // Piège mesuré : la regex de `feeDetail` capture `caisses?([^·]*)` et lit tout chiffre qui s'y
+  // trouve comme un NOMBRE DE COMMODITÉS. Écrire « en 20 caisses DE 32 SCU, chargement… » lui fait
+  // donc lire 32 commodités, et `feeAttendu` se met à valider un montant faux — SILENCIEUSEMENT.
+  // La taille vit pour cette raison dans un segment qui commence APRÈS le premier « · ».
+  await enrichMarket(page, "all", 32);
+  const errors = watchErrors(page);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+
+  const titre = await page.locator("#rows tr td.profit[title]").first().getAttribute("title");
+  expect(titre).toContain("caisses de 32 SCU");
+  const d = feeDetail(titre);
+  expect(d, `infobulle illisible : ${titre}`).not.toBeNull();
+  // Le décompte de commodités n'a pas bougé, et la formule redonne le montant affiché.
+  expect(d.montant).toBe(feeAttendu(d));
+
+  expect(errors).toEqual([]);
+});

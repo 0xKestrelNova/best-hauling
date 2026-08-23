@@ -32,7 +32,10 @@ import { etat } from "../etat.ts";
 import { fmt } from "../format.ts";
 import { alKey, kFmt, kFor } from "../frais.ts";
 
-type Releve = { k: number; amount: number; scu: number };
+// `taille` est ABSENTE des relevés faits avant l'ADR-014 : ils ont été pris sous le découpage
+// glouton, donc leur k porte l'erreur de caissage. On ne les recalcule pas — on ne sait pas quelle
+// taille était employée — et on l'affiche franchement dans la liste.
+type Releve = { k: number; amount: number; scu: number; taille?: number };
 
 const Panneau = ({ nom, children }: { nom: string; children: React.ReactNode }) => (
   <div className="fee-panel">
@@ -72,6 +75,10 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
   const rec = etat.AUTOLOAD_K[cle] as Releve | undefined;
   const k = kFor(terminal.name);
   const scu = rec ? rec.scu : 32;
+  // Prérempli comme `#alScu` l'est à 32, et pour la même raison : un champ vide donnerait
+  // `Number("") = 0`, et le relevé se persisterait sous l'hypothèse de repli tout en s'affichant
+  // « (ton relevé) » — exactement l'ambiguïté que ce champ existe pour supprimer.
+  const taille = (rec && rec.taille) || terminal.maxBox || 32;
 
   return (
     <Panneau nom={terminal.name}>
@@ -82,6 +89,9 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
         <span>aUEC pour</span>
         <input id="alScu" type="number" min="1" step="1" defaultValue={String(scu)}
                aria-label="Quantité en SCU" />
+        <span>SCU en caisses de</span>
+        <input id="alBox" type="number" min="1" step="1" defaultValue={String(taille)}
+               aria-label="Taille de caisse employée, en SCU" />
         <span>SCU</span>
         {/* Ces trois-là restent pris par la délégation posée sur `#corrections`, le PARENT de ce
             portail : un événement natif y remonte à travers le portail. Leur ajouter un onClick
@@ -94,8 +104,9 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
       </div>
       <div className="fee-note">
         Tarif retenu : <b>k = {kFmt(k)}</b> {rec ? "(ton relevé)" : "(k global)"} — soit ≈{" "}
-        <b>{fmt(autoloadFee(scu, terminal.maxBox, k))}</b> aUEC pour {fmt(scu)} SCU
-        {terminal.maxBox ? `, caisses de ${fmt(terminal.maxBox)} SCU max` : ""}.
+        <b>{fmt(autoloadFee(scu, taille, k))}</b> aUEC pour {fmt(scu)} SCU en caisses de{" "}
+        {fmt(taille)} SCU{rec && rec.taille ? " (ta mesure)" : terminal.maxBox ? " (la plus grosse que ce comptoir accepte)" : " (par défaut)"}.
+        {" "}Charger en plus grosses caisses coûte moins cher : c'est un choix, pas une fatalité du comptoir.
       </div>
     </Panneau>
   );
@@ -124,7 +135,8 @@ export function ListeAutoload() {
           <div className="corr-item autoload" key={cle}>
             <div>
               <b>{terminal}</b> <span className="corr-side">autoload</span>
-              <div className="loc-sub">k = <b>{kFmt(o.k)}</b> · {fmt(o.amount)} aUEC observés pour {fmt(o.scu)} SCU</div>
+              <div className="loc-sub">k = <b>{kFmt(o.k)}</b> · {fmt(o.amount)} aUEC observés pour {fmt(o.scu)} SCU
+                {" "}{o.taille ? `en caisses de ${fmt(o.taille)} SCU` : "— taille de caisse non renseignée"}</div>
             </div>
             <button className="corr-del al-del" data-key={cle} title="Oublier ce relevé">✕</button>
           </div>

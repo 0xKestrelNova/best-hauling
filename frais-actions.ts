@@ -34,7 +34,12 @@ export function enregistrerReleve(): void {
   const t = etat.MARKET!.terminals[S];
   const montant = nombre("alAmount");
   const scu = Math.floor(nombre("alScu"));
-  const k = kFromReading(montant, scu, t.maxBox);
+  // La taille EMPLOYÉE, pas celle qu'on suppose (ADR-014). Devinée au plafond du comptoir, elle met
+  // un découpage supposé au dénominateur : le relevé d'Endgame (720 aUEC, 24 SCU, 3 caisses de 8)
+  // rendait k = 1,091 à la station qui DÉFINIT k = 1. Le champ est prérempli, donc jamais vide ;
+  // le repli sur `t.maxBox` ne couvre que le cas où la vue n'aurait pas rendu le champ.
+  const taille = Math.floor(nombre("alBox")) || t.maxBox;
+  const k = kFromReading(montant, scu, taille);
   if (k == null) { showToast("⚠ Relevé inutilisable — indique le montant payé et la quantité chargée"); return; }
   // Un montant tapé à côté (un zéro de trop) donne un k d'apparence honnête, qu'on persiste et
   // qu'on réaffiche « (relevé) » — il se lit alors comme une mesure fiable tout en multipliant les
@@ -46,7 +51,7 @@ export function enregistrerReleve(): void {
     `${fmt(montant)} aUEC pour ${fmt(scu)} SCU à ${t.name}, c'est ×${kFmt(k)} le tarif d'Endgame.\n` +
     `Les deux seules stations mesurées valent ×1 et ×1,4. Un zéro de trop ?\n\nEnregistrer ce relevé quand même ?`
   )) return;
-  etat.AUTOLOAD_K[alKey(t.name)] = { k, amount: montant, scu };
+  etat.AUTOLOAD_K[alKey(t.name)] = { k, amount: montant, scu, taille };
   saveAutoloadK();
   rafraichir();
 }
