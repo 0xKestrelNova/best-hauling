@@ -450,8 +450,10 @@ test("Plan de vol : l'image du vaisseau accompagne les hypothèses, sans les ren
   expect(await img.evaluate((e) => e.closest("button, a") !== null), "l'image n'est pas activable").toBe(false);
   expect(await img.evaluate((e) => getComputedStyle(e).cursor)).not.toBe("pointer");
 
-  // Et la vue reste une conclusion : le sélecteur n'y est pas revenu.
-  await expect(page.locator("#shipJourneyRow")).toBeHidden();
+  // Et la vue reste une conclusion. Ce n'est PLUS `#shipJourneyRow` qu'on regarde — #180 l'a
+  // démasquée pour y faire tenir la déclaration — mais `#shipCard`, la carte ÉDITABLE du sélecteur :
+  // la vignette montre l'image sans ramener le choix. C'est exactement la frontière de l'ADR-004.
+  await expect(page.locator("#shipCard")).toBeHidden();
 });
 
 // #178, l'autre moitié : 20 vaisseaux sur 128 n'ont pas de photo, et une URL distante peut échouer.

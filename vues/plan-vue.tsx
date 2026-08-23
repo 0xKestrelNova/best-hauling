@@ -70,7 +70,7 @@ export function planData() {
 
 /** L'EN-TÊTE : les quatre hypothèses, reprises en texte et en lecture seule. */
 export function EnTetePlan() {
-  return enTetePlan(planHypotheses(readFilters()), vaisseauChoisi());
+  return enTetePlan({ hypotheses: planHypotheses(readFilters()), vaisseau: vaisseauChoisi() });
 }
 
 /** LE CORPS : le parcours, la soute, les jambes, ce qu'il reste à faire. */

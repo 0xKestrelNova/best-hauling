@@ -48,7 +48,15 @@ export type DonneesPlan = {
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
 
-export function EnTetePlan({ hypotheses, vaisseau }: { hypotheses: string[]; vaisseau: FicheVaisseau | null }) {
+/** Ce que l'en-tête du Plan affiche.
+ *
+ * UN OBJET, et pas une suite de paramètres positionnels : trois lots du même jalon ont voulu ajouter
+ * chacun SA deuxième donnée à cette signature — l'image du vaisseau, les zones à risque, l'indicatif
+ * du convoi — et trois `(hypotheses, X)` incompatibles se seraient écrasés l'un l'autre à la fusion.
+ * Un objet accepte la quatrième sans que personne n'ait à toucher aux trois autres. */
+export type EnTetePlanProps = { hypotheses: string[]; vaisseau: FicheVaisseau | null };
+
+export function EnTetePlan({ hypotheses, vaisseau }: EnTetePlanProps) {
   return (
     <>
       <div className="plan-title">
@@ -218,6 +226,5 @@ export function CorpsPlan({ d }: { d: DonneesPlan }) {
   );
 }
 
-export const enTetePlan = (hypotheses: string[], vaisseau: FicheVaisseau | null) =>
-  <EnTetePlan hypotheses={hypotheses} vaisseau={vaisseau} />;
+export const enTetePlan = (p: EnTetePlanProps) => <EnTetePlan {...p} />;
 export const corpsPlan = (d: DonneesPlan) => <CorpsPlan d={d} />;
