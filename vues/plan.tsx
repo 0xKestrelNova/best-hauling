@@ -71,7 +71,7 @@ function CarteSoute({ d }: { d: DonneesPlan }) {
     return (
       <div className="plan-card" id="planHold">
         <div className="plan-card-head">◈ Soute</div>
-        <p className="plan-muted">Rien à bord. Charge un manifeste depuis une jambe, ou déclare ce que tu transportes depuis le bandeau d'une vue de recherche.</p>
+        <p className="plan-muted">Rien à bord. Charge un manifeste depuis une jambe, ou déclare ce que tu transportes — <b>« + déclarer ce que j'ai à bord »</b>, en haut de cette vue.</p>
       </div>
     );
   }

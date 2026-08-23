@@ -141,7 +141,10 @@ test("Tournée : le bandeau et les filtres restent, seule la vue change (#57)", 
   await declarer(page, "Titanium", 100);
   await page.click("#viewTour");
   await expect(page.locator("#controls")).toBeVisible();
-  await expect(page.locator("#shipJourneyRow")).toBeVisible();
+  // `#journeyCard` et non `#shipJourneyRow` : depuis #180 la rangée n'est masquée NULLE PART — le
+  // Plan de vol en écarte les cartes une à une, en CSS — et l'assertion ne distinguait donc plus
+  // rien. La carte du compagnon, elle, ne paraît toujours que hors conclusion.
+  await expect(page.locator("#journeyCard")).toBeVisible();
   await expect(page.locator("#holdCard")).toBeVisible();
   await expect(page.locator("#journeyMap")).toBeHidden(); // la carte ne vit que dans le Plan de vol
 });
