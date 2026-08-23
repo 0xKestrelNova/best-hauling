@@ -71,7 +71,10 @@ export function carteParcours(c: Carte) {
       {/* Les espaces y sont SIGNIFIANTES et tiennent en DEUX nœuds de texte, « ◈ » et le blanc qui
           suit le titre. Les écrire comme littéraux séparés reproduit exactement le gabarit ; les
           laisser tomber recollerait « ◈Carte du parcoursschéma » (piège n°2, #111 et #116). */}
-      <span className="jm-label">{"◈ "}<b>Carte du parcours</b>{" "}<span className="muted">schéma — rayons compressés</span></span>
+      {/* Le bandeau DIT que les escales s'activent (#179). Le geste existait — `.jm-arret` répond au
+          clic et au clavier — mais rien ne l'annonçait : un contrôle qui marche sans se montrer ne
+          sert personne. Le libellé est épinglé au caractère près par e2e/plan.pw.mjs, qui suit. */}
+      <span className="jm-label">{"◈ "}<b>Carte du parcours</b>{" "}<span className="muted">schéma — rayons compressés · clique une escale pour t’y placer</span></span>
       <svg
         className="jm-svg"
         viewBox={`0 0 ${c.largeur} ${c.hauteur}`}

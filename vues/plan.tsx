@@ -126,7 +126,22 @@ function CarteParcours({ d }: { d: DonneesPlan }) {
           // envelopper ses enfants les en sortirait (mesuré sur `.chain-path`, PR #111).
           <Fragment key={i}>
             {i > 0 ? <span className="plan-sep">→</span> : null}
-            <span className={"plan-step" + (i === d.courante ? " here" : "")}>
+            {/* CLIQUABLE (#179). Le geste existait déjà sur la carte — `.jm-arret` répond au clic
+                et au clavier depuis cette vue — mais ce récapitulatif, qui liste LES MÊMES escales,
+                était totalement inerte : `role` nul, `tabindex` nul, `cursor: auto`. Deux listes,
+                une seule qui répond.
+                `role="button"` et `tabindex` sont posés ICI et non par la délégation : c'est le
+                rendu qui sait qu'une escale est activable, et l'annonce doit exister avant le
+                premier clic. Conséquence assumée : tabuler dessus désarme les raccourcis 1…8
+                (navigation.ts sort sur `role="button"`), exactement comme sur `.jm-arret`. */}
+            <span
+              className={"plan-step" + (i === d.courante ? " here" : "")}
+              data-i={i}
+              role="button"
+              tabIndex={0}
+              aria-label={`Se placer à ${s.name}`}
+              title={`Se placer à ${s.name} — l'escale devient « je suis ici »`}
+            >
               <span className={"sys " + s.system.toLowerCase()}>{s.name}</span>
             </span>
           </Fragment>

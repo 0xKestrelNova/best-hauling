@@ -267,9 +267,9 @@ test("Plan de vol : le bandeau de la carte garde ses espaces et ses trois partie
   await page.click("#viewPlan");
   const bandeau = page.locator("#journeyMap .jm-label");
   await expect(bandeau).toBeVisible({ timeout: 10_000 });
-  await expect(bandeau).toHaveText("◈ Carte du parcours schéma — rayons compressés");
+  await expect(bandeau).toHaveText("◈ Carte du parcours schéma — rayons compressés · clique une escale pour t’y placer");
   await expect(bandeau.locator("b")).toHaveText("Carte du parcours");
-  await expect(bandeau.locator(".muted")).toHaveText("schéma — rayons compressés");
+  await expect(bandeau.locator(".muted")).toHaveText("schéma — rayons compressés · clique une escale pour t’y placer");
 });
 
 test("Plan de vol : les escales restent des boutons annoncés, et effacent le libellé du corps (#61)", async ({ page }) => {
@@ -344,4 +344,37 @@ test("Plan de vol : un presse-papiers REFUSÉ le dit, jamais en silence (#91)", 
   await page.click("#planCopy");
   await expect(page.locator("#toast")).toContainText(/presse-papiers refusé/i);
   await expect(page.locator("#planCopy")).not.toHaveText(/Copié/);
+});
+
+// #179 : le geste EXISTAIT — cliquer une escale de la carte déplace « je suis ici », au clic comme
+// au clavier, et un test l'exerçait déjà sans le dire. Ce qui manquait, c'est que ça se VOIE, et que
+// le récapitulatif d'étapes réponde comme la carte : il listait les mêmes escales en étant
+// totalement inerte (role nul, tabindex nul, cursor auto). Deux listes, une seule qui répondait.
+test("Plan de vol : le récapitulatif d'étapes déplace « je suis ici », comme la carte (#179)", async ({ page }) => {
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  await expect(page.locator("#planBody .plan-step").first()).toBeVisible();
+
+  // 1. L'affordance est ANNONCÉE — avant tout clic, et pour un lecteur d'écran comme pour la souris.
+  const etapes = page.locator("#planBody .plan-step");
+  await expect(etapes.first()).toHaveAttribute("role", "button");
+  await expect(etapes.first()).toHaveAttribute("tabindex", "0");
+  await expect(etapes.first()).toHaveAttribute("aria-label", /Se placer à/);
+  expect(await etapes.first().evaluate((e) => getComputedStyle(e).cursor)).toBe("pointer");
+
+  // 2. Le geste. « je suis ici » est marqué par `.here`, et il doit BOUGER.
+  const ici = () => page.locator("#planBody .plan-step.here");
+  const avant = await ici().first().innerText();
+  await etapes.nth(1).click();
+  await expect(ici()).toHaveCount(1);
+  expect((await ici().first().innerText()).trim(), "l'escale courante a changé").not.toBe(avant.trim());
+
+  // 3. Et la vue NE CHANGE PAS : on constate depuis la conclusion, on ne la quitte pas.
+  await expect(page.locator("#plan")).toBeVisible();
+
+  // 4. Au CLAVIER aussi — c'est ce que `role="button"` promet.
+  await etapes.nth(0).focus();
+  await page.keyboard.press("Enter");
+  await expect(ici()).toHaveCount(1);
+  expect((await ici().first().innerText()).trim()).toBe(avant.trim());
 });
