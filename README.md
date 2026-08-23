@@ -37,7 +37,7 @@ ouvre la vue.
 | **Chaîne ⛓️** | Trajets **multi-sauts A→B→C…** (2 à 4 sauts) : achète, vends, rachète sur place, revends plus loin — recherche par faisceau du circuit le plus rentable. Chaque saut transporte un **manifeste multi-commodités** détaillé sur la carte : quand le stock au départ ou la demande à l'arrivée ne suffit pas à remplir la soute, le reste se comble avec d'autres commodités, exactement comme « En route » |
 | **Commodités 📊** | *Big board* type « salle des marchés », en deux modes. **◈ Marché** : toutes les commodités échangeables avec leur **code officiel UEX** (AGRI, QUAN…), triables (marge / code / catégorie), et au clic **tous leurs points d'achat et de vente** — pratique pour trouver **où écouler** une commodité quand une station n'a plus de demande. La commodité choisie **survit à un filtre qui la masque** : le board affiche autre chose le temps de la recherche, et la retrouve dès que le filtre tombe. **💰 Butin** : le board bascule sur le **prix de revente au SCU** et fait entrer les commodités qu'on **ne peut pas acheter** (minerais raffinés, salvage, drogues de wreck) — la réponse à « j'ai trouvé ça, ça vaut combien et où je l'écoule ? » |
 | **Tournée 📦** | **Vider la soute en un minimum d'arrêts**, l'argent n'arbitrant qu'à nombre d'arrêts égal — un comptoir qui reprend trois commodités à prix moyen bat un comptoir qui n'en reprend qu'une au meilleur prix. C'est l'**inverse** de « où écouler », qui classe par ce que ça rapporte : les deux questions sont différentes, et celle-ci répond à « je ne veux plus porter ça » (le cas d'une sortie butin). La tournée est un **plancher** — un point de vente sur six seulement publie sa capacité — et se recalcule après chaque arrêt réel. La meilleure tournée **à un arrêt de plus** s'affiche à côté, avec son écart chiffré : l'app ne sait pas si tu as le temps ([ADR-007](docs/superpowers/specs/2026-08-15-tournee-ecoulement-adr.md)) |
-| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Un bouton **⧉ Copier le récapitulatif** en sort le texte, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
+| **Plan de vol 🗺️** | La **conclusion** : une fois tout paramétré, le récapitulatif de ce qui est engagé — la **carte du parcours en grand** (elle ne vit plus que là), la soute commodité par commodité avec la place libre et le capital engagé, le parcours étape par étape, la jambe en cours et son manifeste, ce qu'il reste à faire. **On n'y change rien** : la barre de filtres y est masquée, et les quatre réglages qui donnent leur sens aux chiffres (vaisseau, soute, budget, frais d'autoload) y sont **repris en texte, en lecture seule** — une conclusion énonce ses hypothèses au lieu de les offrir à la modification. Le convoi y porte son **indicatif d'appel** — *« Baleine et ses trois Harpons »*. Un bouton **⧉ Copier le récapitulatif** en sort le texte, indicatif compris, à coller dans un salon ([ADR-004](docs/superpowers/specs/2026-08-14-plan-de-vol-adr.md)) |
 | **Corrections ✎** | *Un réglage, pas une vue d'analyse — d'où la dernière place.* Ses corrections locales **rangées par station** (bande de vignettes), et de quoi en créer via un sélecteur groupé `système › zone › station` (voir plus bas) |
 
 Autres éléments :
@@ -287,6 +287,25 @@ transmettre un chargement précis, c'est `⧉ Copier`.
 Un manifeste que tu ajustes avant de l'engager part **tel quel** : la jambe porte alors le badge
 `✎` et cesse de suivre les prix UEX et les filtres, jusqu'à `↺ optimal`. Un manifeste que tu
 n'as pas touché n'est **pas** persisté — la jambe reste branchée sur le marché.
+
+### L'indicatif d'appel du convoi
+
+Un voyage porte un **nom**, pas seulement un vaisseau et une liste d'étapes. Le porteur s'appelle
+**Baleine**, et ses escortes en dérivent : **Harpon 1**, **Harpon 2**, **Harpon 3**. Les paires sont
+**thématiques** — `Ruche / Frelon`, `Buffle / Coyote`, `Coffre-fort / Serrure`, `Tortue / Lièvre`,
+`Fromage / Souris`… — parce que c'est l'accord des deux mots qui dit de lui-même qui est le gros et
+qui sont les rapides. Aucun de ces noms ne désigne un terminal ni une commodité : un convoi appelé
+« Titanium » serait une mauvaise blague, et `node --test` le vérifie contre `data/market.json`.
+
+L'indicatif est **tiré une fois**, à la création du voyage, et **il ne bouge plus** : ajouter une
+escale, retirer un arrêt, avancer d'un cran, taper dans un filtre ou changer de vue ne rebaptisent
+pas le convoi. Il **part avec le permalien** (`j=…,"n":"baleine"`), donc le plan que tu colles dans
+un salon s'appelle pareil chez celui qui l'ouvre. Il s'affiche en tête du **Plan de vol**, et en
+tête de ce que sort `⧉ Copier le récapitulatif`.
+
+Le **nombre d'escortes** se déclare dans la barre de réglages, à côté du vaisseau, et **zéro est le
+cas normal** : le porteur garde son nom, il n'y a simplement pas de Harpon. Une escorte ne
+transporte rien et **ne change aucun chiffre** — ni profit, ni soute, ni itinéraire.
 
 ### La carte du parcours
 

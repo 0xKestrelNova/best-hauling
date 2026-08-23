@@ -45,7 +45,7 @@ export type DonneesPlan = {
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
 
-export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
+export function EnTetePlan({ hypotheses, convoi }: { hypotheses: string[]; convoi: string }) {
   return (
     <>
       <div className="plan-title">
@@ -54,6 +54,17 @@ export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
           ⧉ Copier le récapitulatif
         </button>
       </div>
+      {/* L'INDICATIF D'APPEL DU CONVOI (#68). Un `<div>` et jamais un bouton : `#planHead` en compte
+          exactement UN (`#planCopy`), et la conclusion n'accepte pas de second geste. Le nom est
+          tiré à la création du voyage et persisté avec lui — il ne se règle pas ici, et le nombre
+          d'escortes se déclare dans la barre de réglages. Absent tant qu'aucun voyage n'est engagé :
+          pas de parcours, pas de convoi. */}
+      {convoi ? (
+        <div className="plan-convoi" id="planConvoi"
+             title="L'indicatif de ce convoi. Il est tiré une fois, à la création du voyage, et il part avec le lien de partage. Le nombre d'escortes se règle dans une vue de recherche.">
+          {convoi}
+        </div>
+      ) : null}
       {/* Les quatre réglages qui ne FILTRENT pas mais changent le SENS des chiffres (ADR-004 §6),
           repris ici en lecture seule : une conclusion énonce ses hypothèses au lieu de les offrir
           à la modification. Les taire la rendrait silencieusement ambiguë — on lirait un profit
@@ -193,5 +204,5 @@ export function CorpsPlan({ d }: { d: DonneesPlan }) {
   );
 }
 
-export const enTetePlan = (hypotheses: string[]) => <EnTetePlan hypotheses={hypotheses} />;
+export const enTetePlan = (hypotheses: string[], convoi: string) => <EnTetePlan hypotheses={hypotheses} convoi={convoi} />;
 export const corpsPlan = (d: DonneesPlan) => <CorpsPlan d={d} />;

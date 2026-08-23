@@ -863,7 +863,21 @@ export type ArcChaine = {
 };
 export type ChaineChiffree = { path: number[]; legs: ArcChaine[]; profit?: number };
 
-export type Parcours = { legs: Jambe[]; current: number; start?: Station };
+export type Parcours = { legs: Jambe[]; current: number; start?: Station; convoi?: string };
+
+/**
+ * Une PAIRE thématique d'indicatifs d'appel (#68) : le gros porteur, et le mot dont ses escortes
+ * dérivent. On tire une paire et jamais deux listes indépendantes, parce que c'est l'accord des deux
+ * mots qui dit de lui-même qui est le gros et qui sont les rapides — « Baleine » avec
+ * « Tournevis 1/2/3 » ne raconterait rien.
+ *
+ * `cle` est ce qui se PERSISTE : ni l'index (il périmerait au premier réordonnancement de la table),
+ * ni le libellé (il interdirait d'en corriger l'orthographe sans renommer les voyages en cours).
+ * `genre` ne sert qu'au cas d'une escorte unique — « et SON Harpon », « et SA Souris ».
+ */
+export type PaireConvoi = { cle: string; porteur: string; escorte: string; genre: "m" | "f"; registre: string };
+/** La paire résolue, ses escortes NUMÉROTÉES — `Harpon 1`, `Harpon 2`… */
+export type IndicatifConvoi = PaireConvoi & { escortes: string[] };
 
 export type RetraitArret = Parcours & { removedFrom: number; removedCount: number; insertedCount: number };
 

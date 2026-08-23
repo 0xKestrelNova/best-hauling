@@ -49,7 +49,11 @@ const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 /** Branche les cinq barres de réglages. Appelé une fois, à l'amorçage. */
 export function brancherControles() {
   // La barre de filtres, partagée par toutes les vues.
-  ["cargo", "budget", "search", "alk"].forEach((id) => $(id).addEventListener("input", rafraichirDifferee));
+  // `escortes` n'entre dans aucun calcul (#68), mais il passe quand même par le CYCLE et non par un
+  // rendu ciblé : c'est `saveState()` qui doit le voir, sinon le compte ne survivrait ni au
+  // rechargement ni au lien partagé. Débouncé comme les autres champs à saisie libre — il partage
+  // le timer commun, une frappe de plus ne fait pas un rendu de plus.
+  ["cargo", "budget", "search", "alk", "escortes"].forEach((id) => $(id).addEventListener("input", rafraichirDifferee));
   ["system", "freshness", "sameSystem", "noOutpost", "legalOnly", "capStock", "multiMode"].forEach((id) =>
     $(id).addEventListener("input", rafraichir)
   );

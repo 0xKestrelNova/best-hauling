@@ -17,7 +17,7 @@ import { lineProfitText } from "./frais.ts";
 import { showToast } from "./messages.ts";
 import { saveState, shareURL } from "./persistance.ts";
 import { manifesteCourant } from "./manifeste-donnees.ts";
-import { planData, planHypotheses } from "./vues/plan-vue.tsx";
+import { planConvoi, planData, planHypotheses } from "./vues/plan-vue.tsx";
 
 import type { Noeud } from "./types.ts";
 // La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
@@ -66,7 +66,12 @@ export function copierEntrepots() {
 
 export function copierPlan() {
   const d = planData();
-  const lignes = [`Plan de vol — ${planHypotheses(d.f).join(" · ")}`];
+  // L'indicatif EN TÊTE : c'est ce qu'on retient d'un plan collé dans un salon — « Baleine et ses
+  // trois Harpons » (#68). Même source que la vue (`planConvoi`), jamais un second gabarit : le
+  // texte collé doit dire exactement ce que son auteur avait sous les yeux.
+  const convoi = planConvoi();
+  const lignes = convoi ? [convoi] : [];
+  lignes.push(`Plan de vol — ${planHypotheses(d.f).join(" · ")}`);
   if (d.stations.length) {
     lignes.push(`Parcours : ${d.stations.map((s) => `${s.name} (${s.system})`).join(" → ")}`);
     d.jambes.forEach((j) => {

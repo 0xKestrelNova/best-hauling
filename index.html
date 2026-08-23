@@ -150,6 +150,18 @@
             <input id="ship" type="text" placeholder="Tape un nom (ex : Railen)" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="shipList" />
             <ul id="shipList" class="autocomplete" role="listbox" hidden></ul>
           </div>
+          <!-- Les ESCORTES (#68) : combien de vaisseaux accompagnent le porteur. Le compte ne change
+               AUCUN chiffre — ni profit, ni soute, ni itinéraire — il NOMME le convoi dans le Plan
+               de vol (« Baleine et ses 3 Harpons »). Il est ici et non dans la conclusion pour la
+               raison de l'ADR-004 §6 : ce qu'on RÈGLE se règle dans les vues de recherche, et ne
+               paraît là-bas qu'en texte. Zéro est le cas normal, d'où le champ laissé vide.
+               `sub-field` réutilise le gabarit étroit de « coef. k » : un compte de 0 à 8 n'a pas
+               besoin des 168 px d'un champ plein, et ça n'ajoute aucune règle CSS. -->
+          <div class="field sub-field">
+            <label for="escortes">escortes</label>
+            <input id="escortes" type="number" min="0" max="8" step="1" placeholder="0"
+                   title="Nombre de vaisseaux qui accompagnent le porteur. Ne change aucun chiffre : il nomme le convoi dans le Plan de vol." />
+          </div>
           <div class="field">
             <label class="toggle" for="useCargo"><input id="useCargo" type="checkbox" checked /> Soute (SCU)</label>
             <input id="cargo" type="number" min="1" step="1" value="96" aria-label="Capacité de soute en SCU" />

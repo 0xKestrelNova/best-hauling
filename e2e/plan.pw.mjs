@@ -378,3 +378,61 @@ test("Plan de vol : le récapitulatif d'étapes déplace « je suis ici », comm
   await expect(ici()).toHaveCount(1);
   expect((await ici().first().innerText()).trim()).toBe(avant.trim());
 });
+
+// À AJOUTER À LA FIN de e2e/plan.pw.mjs. `voyageSimple` (l. 27) est déjà défini dans ce fichier.
+
+test("Plan de vol : le convoi porte un indicatif, et RIEN ne le rebaptise (#68)", async ({ page }) => {
+  await voyageSimple(page);
+  await page.click("#viewPlan");
+  const indicatif = page.locator("#planConvoi");
+  await expect(indicatif).toBeVisible();
+  const nom = (await indicatif.textContent()).trim();
+  expect(nom.length).toBeGreaterThan(2);
+
+  // LE test qui compte (#68, contrainte 1) : cette app re-rend beaucoup, et un nom tiré au rendu
+  // renommerait le convoi à chaque frappe. Quatre occasions, dont deux hors de la vue.
+  await page.click("#viewRoutes");
+  await page.fill("#search", "Titanium"); // une frappe dans un filtre
+  await page.click("#viewPlan");
+  await expect(indicatif).toHaveText(nom);
+
+  // « Je suis ici » depuis la carte : le geste le plus coûteux de la vue (il vend la soute).
+  await page.locator("#journeyMap .jm-arret").nth(1).locator(".jm-cible").click();
+  await expect(page.locator("#journeyMap .jm-arret").nth(1)).toHaveClass(/ici/);
+  await expect(indicatif).toHaveText(nom);
+
+  // Et il part avec le lien : c'est ce qui fait qu'un plan collé dans un salon s'appelle pareil
+  // chez celui qui l'ouvre.
+  expect(decodeURIComponent(page.url())).toMatch(/"n":"[a-z]+"/);
+  await page.reload();
+  await expect(indicatif).toHaveText(nom);
+});
+
+// À AJOUTER JUSTE APRÈS le test précédent, à la fin de e2e/plan.pw.mjs.
+
+test("Plan de vol : les escortes se déclarent ailleurs, l'indicatif se lit et se copie ici (#68)", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await voyageSimple(page);
+  // Le compte se déclare dans la barre de réglages, JAMAIS dans la conclusion : ADR-004 §6 tient,
+  // ce qu'on règle se règle dans une vue de recherche et ne paraît là-bas qu'en texte.
+  await page.fill("#escortes", "3");
+  await page.click("#viewPlan");
+  const indicatif = page.locator("#planConvoi");
+  await expect(indicatif).toHaveText(/ et ses 3 \S/); // « … et ses 3 Harpons »
+  const nom = (await indicatif.textContent()).trim();
+  const porteur = nom.split(" et ")[0];
+
+  // Les deux gardes de la vue ne bougent pas : l'indicatif est du TEXTE, pas un geste de plus.
+  expect(await page.locator("#planHead button").count()).toBe(1); // #planCopy, et lui seul
+  expect(await page.locator("#planHold button").count()).toBe(0); // cf. le test de la soute
+
+  await page.click("#planCopy");
+  await expect(page.locator("#planCopy")).toHaveText(/Copié/);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(nom);
+
+  // Zéro escorte est le cas NORMAL : le porteur garde son nom, il n'y a simplement pas de Harpon.
+  await page.click("#viewRoutes");
+  await page.fill("#escortes", "");
+  await page.click("#viewPlan");
+  await expect(indicatif).toHaveText(porteur);
+});

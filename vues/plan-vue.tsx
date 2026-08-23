@@ -6,7 +6,7 @@
 //
 // Elle ne reçoit AUCUNE prop : elle lit l'état, les filtres, les manifestes de jambe et le marché.
 // `plan.tsx` garde la présentation ; ce fichier porte le calcul et la décision.
-import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals } from "../logic.ts";
+import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals, texteConvoi } from "../logic.ts";
 import { etat, notifier } from "../etat.ts";
 import { readFilters } from "../filtres.ts";
 import { fmt, fmtFee } from "../format.ts";
@@ -67,9 +67,21 @@ export function planData() {
 // Le parcours étape par étape, la jambe en cours et son manifeste, et ce qu'il reste à faire.
 // `planRouteHTML` a été remplacé par vues/plan.tsx.
 
-/** L'EN-TÊTE : les quatre hypothèses, reprises en texte et en lecture seule. */
+/**
+ * L'INDICATIF du convoi, tel qu'il s'affiche ET tel qu'il se colle (#68).
+ *
+ * Vide sans voyage : il n'y a pas de convoi sans parcours. La CLÉ vient du parcours (elle est tirée
+ * une fois et persistée avec lui) ; le COMPTE vient du champ `#escortes` de la barre de réglages,
+ * lu comme `#ship` l'est déjà dans `planHypotheses` — la vue de conclusion RÉCAPITULE ce qui a été
+ * réglé ailleurs, elle ne l'offre pas à la modification.
+ */
+export function planConvoi(): string {
+  return etat.JOURNEY ? texteConvoi(etat.JOURNEY.convoi, Number(champ("escortes")) || 0) : "";
+}
+
+/** L'EN-TÊTE : l'indicatif du convoi, puis les quatre hypothèses, en texte et en lecture seule. */
 export function EnTetePlan() {
-  return enTetePlan(planHypotheses(readFilters()));
+  return enTetePlan(planHypotheses(readFilters()), planConvoi());
 }
 
 /** LE CORPS : le parcours, la soute, les jambes, ce qu'il reste à faire. */

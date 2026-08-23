@@ -13,7 +13,7 @@
 // `apresChamps`, à l'intérieur du verrou `restoring` — c'est ce qui garantit qu'aucune d'elles ne
 // puisse resauver au milieu d'une restauration.
 
-import { decodeJourney, decodeState, encodeJourney, encodeState, safeKey } from "./logic.ts";
+import { decodeJourney, decodeState, encodeJourney, encodeState, nommerConvoi, safeKey } from "./logic.ts";
 import type { EtatDecode } from "./types.ts";
 import { etat } from "./etat.ts";
 
@@ -21,7 +21,10 @@ const STATE_KEY = "best-hauling-state";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement | null;
 
-const STATE_FIELDS = ["cargo", "budget", "search", "system", "freshness", "ship", "origin", "destSystem", "destTerminal", "chainOrigin", "hops", "station", "alk", "multiMode", "tourFrom", "tourScope"];
+// `escortes` (#68) suit `ship` parce qu'il décrit la même chose : avec quoi on part. Il n'entre dans
+// AUCUN calcul — `readFilters()` ne le lit pas — il nomme le convoi. Vide vaut zéro, et `encodeState`
+// omet les vides : l'URL de qui ne s'en sert pas ne grossit pas d'un caractère.
+const STATE_FIELDS = ["cargo", "budget", "search", "system", "freshness", "ship", "escortes", "origin", "destSystem", "destTerminal", "chainOrigin", "hops", "station", "alk", "multiMode", "tourFrom", "tourScope"];
 const STATE_CHECKS = ["useCargo", "useBudget", "sameSystem", "noOutpost", "legalOnly", "capStock", "multiCommodity", "autoload"];
 // Champs qui gardent leur défaut HTML quand la clé est absente de l'état. #system, #freshness et
 // #destSystem ont chacun une option VIDE (« Tous », « Toutes », « N'importe où ») : leur poser ""
@@ -120,7 +123,10 @@ export function applyState(s: EtatDecode | null, apresChamps: () => void): void 
   // l'oubli ne se voit qu'au rechargement suivant.
   if (["routes", "loops", "enroute", "chain", "corrections", "commodities", "plan", "tour"].includes(s.v)) etat.view = s.v;
   if (s.cb === "loot") etat.commBoard = "loot";
-  if (s.j) etat.JOURNEY = decodeJourney(s.j); // compagnon de voyage restauré (les champs sont déjà repris ci-dessus)
+  // Le convoi est nommé ICI aussi, et pas seulement aux deux gestes qui créent un voyage : un lien
+  // d'AVANT #68 — ou un `n` refusé parce qu'inconnu — rendrait sinon un parcours sans indicatif, et
+  // le Plan de vol n'aurait rien à afficher. `nommerConvoi` ne rebaptise jamais ce qui a un nom.
+  if (s.j) etat.JOURNEY = nommerConvoi(decodeJourney(s.j)); // compagnon de voyage restauré (les champs sont déjà repris ci-dessus)
   apresChamps();
   restoring = false;
 }

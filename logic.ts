@@ -13,10 +13,10 @@ import type {
   ContexteManifeste, Correction, CorrectionRelue, Cote, CoteMarche, CoteResolu, Destination,
   DetailCommodite, EnteteExport, Entrepots, EtatDecode, EtatVoyageManifeste, ExportCorrections,
   ExtremitesFrais, Filtres, FiltresBoard, FiltresListe, FiltresVolume, GrilleAutoload,
-  GroupeCorrections, GroupeSoute, InfoTerminal, IntentionLigne, ItemChargeable, Jambe,
+  GroupeCorrections, GroupeSoute, IndicatifConvoi, InfoTerminal, IntentionLigne, ItemChargeable, Jambe,
   JambeChaine, LigneChargement, LigneManifeste, Lot, Marche, MargeNette, MetriquesBoucle,
   MetriquesRoute, MetriquesTrajet, NoeudSysteme, OptionsChaine, OptionsEcoulement,
-  OptionsTournee, PaireFrais, PalierValeur, Parcours, PointFrais, PointMarche, PointVente,
+  OptionsTournee, PaireConvoi, PaireFrais, PalierValeur, Parcours, PointFrais, PointMarche, PointVente,
   PorteursDeRang, Prise, Releves, Resolveur, ResolveurCorrections, ResolveurFrais,
   RestantManifeste, ResumeCommodite, Retrait, RetraitArret, Route, RouteFiltrable, RouteResolue,
   SansDebouche, SegmentResolu, Starmap, Station, StoreCorrections, SuggestionArret,
@@ -1548,9 +1548,105 @@ export function journeyConnects(journey: Parcours | null, legs: { from: string }
   return !!(end && legs.length && legs[0].from === end.name);
 }
 // Politique produit : ÉTENDRE si ça s'enchaîne (ajoute à la fin, garde la position), sinon REMPLACER.
+//
+// L'INDICATIF suit l'extension : « un convoi garde son nom quand on lui ajoute une escale » (#68).
+// Il est recopié À LA MAIN et non par un `{ ...journey }` — l'étalement ramènerait `start`
+// (inoffensif) mais AUSSI les trois compteurs d'un `RetraitArret`, que `removeJourneyStop` rend et
+// que des appelants repassent tels quels. REMPLACER, en revanche, c'est un AUTRE voyage : il
+// n'hérite pas du nom de celui qu'il chasse, et `pickJourney` lui en tirera un neuf.
 export function addToJourney(journey: Parcours | null, legs: Jambe[]): Parcours {
-  if (journeyConnects(journey, legs)) return { legs: journey.legs.concat(legs), current: journey.current };
-  return startJourney(legs);
+  if (!journeyConnects(journey, legs)) return startJourney(legs);
+  const suite: Parcours = { legs: journey.legs.concat(legs), current: journey.current };
+  if (journey.convoi) suite.convoi = journey.convoi;
+  return suite;
+}
+
+// ---------- L'INDICATIF D'APPEL DU CONVOI (#68) ----------
+// Un voyage porte un NOM, pas seulement un vaisseau et une liste d'étapes. Le porteur s'appelle
+// « Baleine », ses escortes en dérivent : « Harpon 1 / 2 / 3 ». C'est de la saveur, et c'est le but —
+// un plan qui s'appelle Baleine se raconte, se colle dans un salon, se retient.
+//
+// La table est ÉCRITE, pas générée : tout l'intérêt du dispositif tient à sa qualité. AUCUN de ces
+// mots ne doit nommer un terminal ou une commodité — un convoi appelé « Titanium » serait une
+// mauvaise blague. C'est vérifié contre `data/market.json` par `node --test`, dans les deux sens
+// (égalité et inclusion), sur les 227 noms réels.
+export const CONVOIS: PaireConvoi[] = [
+  { cle: "baleine",      porteur: "Baleine",      escorte: "Harpon",        genre: "m", registre: "chasse en mer" },
+  { cle: "ruche",        porteur: "Ruche",        escorte: "Frelon",        genre: "m", registre: "insectes" },
+  { cle: "buffle",       porteur: "Buffle",       escorte: "Coyote",        genre: "m", registre: "plaine" },
+  { cle: "coffre",       porteur: "Coffre-fort",  escorte: "Serrure",       genre: "f", registre: "casse" },
+  { cle: "tortue",       porteur: "Tortue",       escorte: "Lièvre",        genre: "m", registre: "fable" },
+  { cle: "mammouth",     porteur: "Mammouth",     escorte: "Silex",         genre: "m", registre: "préhistoire" },
+  { cle: "banquise",     porteur: "Banquise",     escorte: "Manchot",       genre: "m", registre: "pôle" },
+  { cle: "fromage",      porteur: "Fromage",      escorte: "Souris",        genre: "f", registre: "garde-manger" },
+  { cle: "cathedrale",   porteur: "Cathédrale",   escorte: "Gargouille",    genre: "f", registre: "pierre" },
+  { cle: "marmite",      porteur: "Marmite",      escorte: "Louche",        genre: "f", registre: "cuisine" },
+  { cle: "montgolfiere", porteur: "Montgolfière", escorte: "Moineau",       genre: "m", registre: "ciel léger" },
+  { cle: "orage",        porteur: "Orage",        escorte: "Éclair",        genre: "m", registre: "météo" },
+  { cle: "pyramide",     porteur: "Pyramide",     escorte: "Scarabée",      genre: "m", registre: "désert" },
+  { cle: "grotte",       porteur: "Grotte",       escorte: "Chauve-souris", genre: "f", registre: "souterrain" },
+];
+
+/** Au-delà, ce n'est plus un convoi mais une flotte — et la ligne du Plan de vol déborde. */
+export const CONVOI_ESCORTES_MAX = 8;
+
+/**
+ * Tire une paire au hasard et rend sa CLÉ. `alea` est INJECTÉ : c'est ce qui rend le tirage pur et
+ * testable — deux appels avec la même graine rendent la même paire.
+ *
+ * Une graine hors [0, 1[ ou non finie ne doit JAMAIS rendre `undefined` : le nom finirait persisté,
+ * et un convoi sans indicatif ne se voit pas — il se lit « rien ». On la borne donc.
+ */
+export function tirerConvoi(alea: () => number = Math.random): string {
+  const x = Number(alea());
+  const t = Number.isFinite(x) ? Math.min(0.999999999, Math.max(0, x)) : 0;
+  return CONVOIS[Math.floor(t * CONVOIS.length)].cle;
+}
+
+/**
+ * La paire désignée par `cle`, escortes numérotées. Porteur et escortes viennent du MÊME
+ * enregistrement : le critère « toujours la même paire thématique » est structurel, pas vérifié
+ * après coup.
+ *
+ * `null` sur une clé inconnue — le `n` du hash est partageable, il peut venir d'un tiers, et une clé
+ * inventée n'affiche rien plutôt que de s'afficher elle-même.
+ */
+export function indicatifConvoi(cle: string | null | undefined, escortes: number = 0): IndicatifConvoi | null {
+  const p = CONVOIS.find((c) => c.cle === cle);
+  if (!p) return null;
+  const n = Math.min(CONVOI_ESCORTES_MAX, Math.max(0, Math.trunc(Number(escortes)) || 0));
+  return { ...p, escortes: Array.from({ length: n }, (_, i) => `${p.escorte} ${i + 1}`) };
+}
+
+/**
+ * L'indicatif EN UNE PHRASE — ce que la vue affiche ET ce que la copie colle, calculé une seule fois
+ * pour les deux : deux gabarits dériveraient, et le texte collé dans un salon ne dirait plus ce que
+ * son auteur avait sous les yeux (même raison que `planData`).
+ *
+ * Zéro escorte est le cas NORMAL : le porteur garde son nom, il n'y a simplement pas de Harpon.
+ */
+export function texteConvoi(cle: string | null | undefined, escortes: number = 0): string {
+  const ind = indicatifConvoi(cle, escortes);
+  if (!ind) return "";
+  const n = ind.escortes.length;
+  if (!n) return ind.porteur;
+  if (n === 1) return `${ind.porteur} et ${ind.genre === "f" ? "sa" : "son"} ${ind.escorte}`;
+  // Pluriel : « Harpons », mais « Souris » et « Chauve-souris » ne bougent pas.
+  const pluriel = /[sxz]$/.test(ind.escorte) ? ind.escorte : ind.escorte + "s";
+  return `${ind.porteur} et ses ${n} ${pluriel}`;
+}
+
+/**
+ * Le parcours, nommé s'il ne l'est pas encore — et JAMAIS rebaptisé.
+ *
+ * C'est LA garantie de stabilité de #68, et c'est le point qui tuerait la fonctionnalité s'il était
+ * raté : cette app re-rend beaucoup (une frappe dans un filtre, une correction de prix, un
+ * changement de vue), et un nom tiré au rendu renommerait le convoi à chaque fois. Le tirage a donc
+ * lieu aux TROIS seuls points où un parcours entre dans l'état — `pickJourney`, `beginJourney`, la
+ * restauration — et nulle part ailleurs. Un parcours déjà nommé ressort en MÊME OBJET.
+ */
+export function nommerConvoi(journey: Parcours | null, alea: () => number = Math.random): Parcours | null {
+  return !journey || journey.convoi ? journey : { ...journey, convoi: tirerConvoi(alea) };
 }
 // Que peut-on faire d'un chargement (origine -> destination) vis-à-vis du parcours en cours ?
 // Renvoie { etat: "ajouter" | "deja" | "conflit", leg, fin }.
@@ -2564,11 +2660,15 @@ export function journeyMap(stations: Station[], current: number, starmap: Starma
 export function encodeJourney(journey: Parcours | null): string {
   if (!journey) return "";
   // Parcours « de zéro » : encode juste le point de départ.
-  if (!journey.legs.length) return journey.start ? JSON.stringify({ c: 0, s: [journey.start.name, journey.start.system] }) : "";
-  return JSON.stringify({
-    c: journey.current,
-    l: journey.legs.map((g) => [g.from, g.fromSystem, g.to, g.toSystem, g.commodity, g.buyPrice, g.sellPrice, g.margin]),
-  });
+  if (!journey.legs.length && !journey.start) return "";
+  const o: Record<string, unknown> = journey.legs.length
+    ? { c: journey.current, l: journey.legs.map((g) => [g.from, g.fromSystem, g.to, g.toSystem, g.commodity, g.buyPrice, g.sellPrice, g.margin]) }
+    : { c: 0, s: [journey.start.name, journey.start.system] };
+  // L'indicatif voyage AVEC le lien : « Baleine » se raconte, donc il se partage (#68). Posé EN
+  // QUEUE, et seulement s'il existe : la sortie d'un parcours anonyme reste octet pour octet celle
+  // d'avant, et les liens déjà partagés gardent leur préfixe `{"c":…,"l":[[…]]`.
+  if (journey.convoi) o.n = journey.convoi;
+  return JSON.stringify(o);
 }
 // Reconstruit un parcours depuis la chaîne (null si vide/invalide). Robuste aux entrées malformées.
 export function decodeJourney(str: string | null): Parcours | null {
@@ -2576,9 +2676,15 @@ export function decodeJourney(str: string | null): Parcours | null {
   try {
     const p = JSON.parse(str);
     if (!p) return null;
+    // L'indicatif (#68). Le hash est PARTAGEABLE : `n` peut venir d'un tiers, donc seule une clé
+    // PRÉSENTE dans la table est retenue. Une clé inventée n'est pas nettoyée, elle est refusée —
+    // ce qui règle la question de l'échappement avant qu'elle se pose.
+    const convoi = CONVOIS.some((c) => c.cle === p.n) ? p.n : null;
     // Parcours « de zéro » : juste un point de départ.
     if (Array.isArray(p.s) && typeof p.s[0] === "string" && p.s[0]) {
-      return { legs: [], current: 0, start: { name: p.s[0], system: String(p.s[1] ?? "") } };
+      const zero: Parcours = { legs: [], current: 0, start: { name: p.s[0], system: String(p.s[1] ?? "") } };
+      if (convoi) zero.convoi = convoi;
+      return zero;
     }
     // Le hash est PARTAGEABLE : son contenu vient donc potentiellement d'un tiers. On ne validait
     // que la forme du conteneur, si bien qu'un tuple vide ou mal typé produisait une jambe dont
@@ -2593,7 +2699,9 @@ export function decodeJourney(str: string | null): Parcours | null {
     }));
     // `| 0` tronquait sur 32 bits : un `c` géant devenait négatif au lieu d'être borné.
     const c = Math.trunc(Number(p.c)) || 0;
-    return { legs, current: Math.max(0, Math.min(legs.length, c)) };
+    const out: Parcours = { legs, current: Math.max(0, Math.min(legs.length, c)) };
+    if (convoi) out.convoi = convoi;
+    return out;
   } catch {
     return null;
   }
