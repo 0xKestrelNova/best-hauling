@@ -17,6 +17,7 @@ import {
   legFromRoute, legsFromLoop, legsFromChain, legFromManifest, stopSuggestions, bestLegBetween,
   manifestJourneyState, manifestIntent, sameIntent, manifestIntentSurvives, legsToPin,
   journeyMap, nameAngle, CARTE, nomPasserelle,
+  risquesDuParcours, niveauDeRisque, RISQUE_SYSTEME, NIVEAUX_RISQUE, RISQUE_ETABLI, RISQUE_SOURCE,
   loadHold, declarerLot, holdScu, freeCargo, holdByCommodity, repartirVente, sellFromHold, storeFromHold, takeFromStore,
   refusActif, migrerRefus, DUREE_VOL,
   refuseHere, sellableAt, sellAllAt, offloadPlan, tourneeEcoulement, tourneesEcoulement, stockApres,
@@ -2946,6 +2947,128 @@ test("carte : sur les VRAIES données, tout arrêt reste dans le cadre", () => {
     }
   }
   assert.ok(vus > 10, `échantillon trop petit (${vus})`);
+});
+
+// ---------- Zones à risque (#69) ----------
+// Le jugement est ÉDITORIAL : `data/market.json` n'a aucun champ de sécurité. Ces tests ne valident
+// donc pas le jugement — ils valident qu'il est COMPLET, DATÉ, et qu'il ne se répète pas à l'écran.
+const stZ = (...paires) => paires.map(([name, system]) => ({ name, system }));
+
+test("risquesDuParcours : un parcours qui ne quitte pas Stanton n'avertit de RIEN (#69)", () => {
+  // Pas de bandeau « zone sûre » : l'absence d'avertissement est déjà l'information.
+  const r = risquesDuParcours(stZ(["Everus Harbor", "Stanton"], ["Baijini Point", "Stanton"]));
+  assert.deepEqual(r.zones, []);
+  assert.equal(r.niveau, 0);
+  // Et un avant-poste de Stanton n'y change rien : 44 des 80 terminaux du système en sont.
+  const p = risquesDuParcours(stZ(["Shubin SM0-18", "Stanton"]), () => true);
+  assert.deepEqual(p.zones, []);
+  assert.equal(p.niveau, 0);
+});
+
+test("risquesDuParcours : trois escales dans Pyro ne font qu'UN avertissement (#69)", () => {
+  // C'est ici, dans le calcul, que « l'avertissement ne se répète pas » est garanti — pas dans le
+  // rendu, qui n'aurait alors qu'à s'en souvenir.
+  const r = risquesDuParcours(stZ(["Megumi", "Pyro"], ["Ruin Station", "Pyro"], ["Gaslight", "Pyro"]));
+  assert.equal(r.zones.length, 1);
+  assert.equal(r.zones[0].systeme, "Pyro");
+  assert.equal(r.zones[0].niveau, 2);
+  assert.equal(r.zones[0].etiquette, "hostile");
+  assert.match(r.zones[0].nature, /sans loi/);
+  assert.equal(r.niveau, 2);
+});
+
+test("risquesDuParcours : Nyx monte d'un palier hors des stations (#69)", () => {
+  // « Risqué aussi, mais moins, et surtout moins près des stations. » Le booléen `outpost` est la
+  // seule nuance sous le système que la donnée permette — et il n'y a PAS d'avant-poste à Nyx
+  // aujourd'hui (mesuré : 0 sur 7 terminaux), donc ce palier ne se prouve que sur fixture.
+  const station = risquesDuParcours(stZ(["Levski", "Nyx"]));
+  assert.equal(station.niveau, 1);
+  assert.equal(station.zones[0].etiquette, "à surveiller");
+  assert.equal(station.zones[0].avantPoste, false);
+
+  const poste = risquesDuParcours(stZ(["Levski", "Nyx"], ["Trou Perdu", "Nyx"]), (nom) => nom === "Trou Perdu");
+  assert.equal(poste.zones.length, 1);           // toujours UNE zone, pas deux
+  assert.equal(poste.niveau, 2);                 // le pire palier du système l'emporte
+  assert.equal(poste.zones[0].avantPoste, true); // et la vue peut le dire en toutes lettres
+});
+
+test("risquesDuParcours : l'ordre est celui du PARCOURS, et Stanton n'y figure pas (#69)", () => {
+  const r = risquesDuParcours(stZ(["Levski", "Nyx"], ["Baijini Point", "Stanton"], ["Megumi", "Pyro"]));
+  assert.deepEqual(r.zones.map((z) => z.systeme), ["Nyx", "Pyro"]);
+  assert.equal(r.niveau, 2);
+});
+
+test("risquesDuParcours : un système SANS nom ne produit aucun avertissement (#69)", () => {
+  // Un parcours « de zéro » posé sur un libellé sans « — » rend system:"" (parseStationLabel).
+  // Ce n'est pas un système inconnu, c'est une absence : on n'invente pas d'avertissement dessus.
+  assert.deepEqual(risquesDuParcours(stZ(["Quelque part", ""])).zones, []);
+  assert.deepEqual(risquesDuParcours(null).zones, []);
+});
+
+test("risquesDuParcours : un système HORS TABLE n'est jamais « sûr » par défaut (#69)", () => {
+  // Le filet, pas la permission : le test de couverture ci-dessous refuse par ailleurs qu'un
+  // système apparaisse dans les données sans que la table bouge.
+  const r = risquesDuParcours(stZ(["Ailleurs", "Odin"]));
+  assert.equal(r.niveau, 1);
+  assert.match(r.zones[0].nature, /jugement non porté/);
+});
+
+test("niveauDeRisque : la table se lit aussi système par système (#69)", () => {
+  assert.equal(niveauDeRisque("Stanton"), 0);
+  assert.equal(niveauDeRisque("Nyx"), 1);
+  assert.equal(niveauDeRisque("Nyx", true), 2);
+  assert.equal(niveauDeRisque("Pyro"), 2);
+  assert.equal(niveauDeRisque("Pyro", true), 2);
+});
+
+test("RISQUE_SYSTEME : la table couvre EXACTEMENT les systèmes de data/market.json (#69)", () => {
+  // LE test qui empêche la table de périmer sans un mot : un quatrième système publié par UEX doit
+  // faire ÉCHOUER ici, pas passer en silence pour « sûr ». L'égalité va dans les DEUX sens — une
+  // entrée qu'aucun terminal ne peuple est un jugement porté sur rien.
+  const marche = JSON.parse(readFileSync(new URL("./data/market.json", import.meta.url), "utf8"));
+  const dansLesDonnees = [...new Set(marche.terminals.map((t) => t.system))].sort();
+  assert.deepEqual(
+    Object.keys(RISQUE_SYSTEME).sort(),
+    dansLesDonnees,
+    "la table de risque et data/market.json ont divergé — juger le système neuf, ou retirer l'entrée morte"
+  );
+  // Chaque entrée est complète, et son palier existe vraiment.
+  for (const [nom, f] of Object.entries(RISQUE_SYSTEME)) {
+    assert.ok(NIVEAUX_RISQUE[f.niveau], `${nom} : palier inconnu`);
+    assert.ok(NIVEAUX_RISQUE[f.niveauAvantPoste], `${nom} : palier d'avant-poste inconnu`);
+    assert.ok(f.niveauAvantPoste >= f.niveau, `${nom} : un avant-poste ne peut pas être plus SÛR que le système`);
+    assert.ok(f.nature.length > 10, `${nom} : la nature du risque doit se lire, pas se deviner`);
+  }
+});
+
+test("RISQUE_SYSTEME : le jugement est DATÉ et dit d'où il vient (#69)", () => {
+  // Une table éditoriale périme, et rien ne le signalera : elle porte donc sa date, comme une
+  // correction locale porte la sienne.
+  assert.match(RISQUE_ETABLI, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Number.isFinite(Date.parse(RISQUE_ETABLI)), "RISQUE_ETABLI doit être une date lisible");
+  assert.match(RISQUE_SOURCE, /UEX/);
+});
+
+test("journeyMap : le disque d'un système à risque porte SA zone, une seule fois (#69)", () => {
+  // La carte reçoit la zone du calcul PUR, comme tout le reste : dans la vue on n'émet que du SVG.
+  const c = journeyMap(st("Megumi", "Checkmate", "Stanton Gateway (Pyro)", "Pyro Gateway (Stanton)", "New Babbage"), 0, STARMAP, infoT);
+  const pyro = c.systemes.find((s) => s.nom === "Pyro");
+  const stanton = c.systemes.find((s) => s.nom === "Stanton");
+  assert.equal(pyro.risque.niveau, 2);
+  assert.equal(pyro.risque.etiquette, "hostile");
+  assert.equal(stanton.risque, undefined); // palier 0 : rien à dessiner, rien à nommer
+});
+
+test("journeyMap : un avant-poste relève la zone de SON système, pas des autres (#69)", () => {
+  // `infoTerminal` porte déjà `outpost` en production (c'est le terminal d'UEX) ; les fixtures qui
+  // l'ignorent retombent sur « pas un avant-poste », ce qui est le repli voulu.
+  const terms = { ...TERMS, "Poste Nyx": { system: "Nyx", planet: "", outpost: true } };
+  const stations = [{ name: "Levski", system: "Nyx" }, { name: "Poste Nyx", system: "Nyx" }, { name: "New Babbage", system: "Stanton" }];
+  const c = journeyMap(stations, 0, STARMAP, (n) => terms[n] || null);
+  const nyx = c.systemes.find((s) => s.nom === "Nyx");
+  assert.equal(nyx.risque.niveau, 2);
+  assert.equal(nyx.risque.avantPoste, true);
+  assert.equal(c.systemes.find((s) => s.nom === "Stanton").risque, undefined);
 });
 
 // ---------- Board Commodités : les corrections locales s'y appliquent aussi ----------

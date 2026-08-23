@@ -25,3 +25,4 @@ Thumbs.db
 /playwright/.cache/
 dist/
 .tmp-audit/
+spec*.tmp.json

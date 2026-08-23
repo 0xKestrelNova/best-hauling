@@ -965,15 +965,41 @@ export type Tournee = {
   ecart?: number; ecartPct?: number | null;
 };
 
+/** Le jugement porté sur UN système par `RISQUE_SYSTEME` (logic.ts). ÉDITORIAL et daté : aucun
+ *  champ de sécurité n'existe dans `data/market.json`, UEX n'en publie pas. `niveauAvantPoste` est
+ *  la seule nuance sous le système, et elle tient au seul booléen que la donnée offre. */
+export type RisqueSysteme = { niveau: number; niveauAvantPoste: number; nature: string };
+
+/** Le booléen `outpost` d'un terminal, tel que l'appelant sait le résoudre (`termByName`, ou
+ *  l'`infoTerminal` de la carte). Par défaut « non » : on ne suppose pas l'avant-poste. */
+export type EstAvantPoste = (nom: string, systeme: string) => boolean;
+
+/** Une zone traversée par le parcours : UNE par système, jamais une par escale — c'est ce qui fait
+ *  qu'un parcours à trois escales dans Pyro n'affiche qu'un avertissement. */
+export type ZoneRisque = {
+  systeme: string; niveau: number; etiquette: string; nature: string; avantPoste: boolean;
+};
+
+/** Ce que rend `risquesDuParcours` : les zones dans l'ordre de la RENCONTRE, et le pire palier
+ *  atteint. `zones: []` et `niveau: 0` pour un parcours qui ne quitte pas Stanton. */
+export type RisquesParcours = { zones: ZoneRisque[]; niveau: number };
+
 export type Ancre = { au: number; lon: number };
 
 export type Starmap = Record<string, { ancres: Record<string, Ancre> }>;
 
-export type InfoTerminal = (nom: string) => { planet?: string } | null;
+/** `outpost` s'ajoute à `planet` pour la ZONE À RISQUE (#69) : la carte le lit sur le même
+ *  résolveur que la géométrie, plutôt que d'en réclamer un second. Absent d'une fixture de test =
+ *  « pas un avant-poste », ce qui est le repli voulu. */
+export type InfoTerminal = (nom: string) => { planet?: string; outpost?: boolean } | null;
 
 export type CorpsCarte = { nom: string; orbite: number; x: number; y: number; occupe?: boolean };
 
-export type SystemeCarte = { nom: string; cx: number; cy: number; r: number; auMax?: number; corps: CorpsCarte[] };
+export type SystemeCarte = {
+  nom: string; cx: number; cy: number; r: number; auMax?: number; corps: CorpsCarte[];
+  /** La zone à risque du système, quand il en a une (#69). Absente = palier 0, rien à dessiner. */
+  risque?: ZoneRisque;
+};
 
 export type ArretCarte = { nom: string; systeme: string; orphelin: boolean; parent?: string; x: number; y: number };
 
@@ -1028,6 +1054,8 @@ export type DisqueSysteme = {
   cx: number; cy: number; r: number;
   corps: CorpsCarte[];
   auMax?: number;
+  /** Posée en TROISIÈME temps, après les arrêts : la zone dépend des escales, pas de la géométrie. */
+  risque?: ZoneRisque;
 };
 
 /**

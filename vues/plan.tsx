@@ -16,6 +16,7 @@ import { Fragment } from "react";
 /** Ce que la vue lit d'un vaisseau : de quoi le MONTRER, rien pour le changer. */
 export type FicheVaisseau = { name: string; scu: number; photo?: string; concept?: boolean };
 import { IconeCommodite } from "./communs.tsx";
+import type { ZoneRisque } from "../types.ts";
 
 type Fmt = (n: number) => string;
 
@@ -54,9 +55,13 @@ const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
  * chacun SA deuxième donnée à cette signature — l'image du vaisseau, les zones à risque, l'indicatif
  * du convoi — et trois `(hypotheses, X)` incompatibles se seraient écrasés l'un l'autre à la fusion.
  * Un objet accepte la quatrième sans que personne n'ait à toucher aux trois autres. */
-export type EnTetePlanProps = { hypotheses: string[]; vaisseau: FicheVaisseau | null };
+export type EnTetePlanProps = {
+  hypotheses: string[];
+  vaisseau: FicheVaisseau | null;
+  zones: ZoneRisque[];
+};
 
-export function EnTetePlan({ hypotheses, vaisseau }: EnTetePlanProps) {
+export function EnTetePlan({ hypotheses, vaisseau, zones }: EnTetePlanProps) {
   return (
     <>
       <div className="plan-title">
@@ -95,6 +100,22 @@ export function EnTetePlan({ hypotheses, vaisseau }: EnTetePlanProps) {
           <span className="ship-opt-concept" title="Vaisseau annoncé par CIG, pas encore volable en jeu : sa soute est une promesse, pas une capacité.">⚠ concept</span>
         ) : null}
       </div>
+      {/* Les ZONES À RISQUE (#69) : UNE ligne par système traversé, pas une par jambe qui y passe —
+          un bandeau qu'on voit trois fois, on ne le voit plus. Le calcul le garantit
+          (`risquesDuParcours` groupe par système), le rendu ne fait que le suivre.
+          Ce n'est pas un contrôle et ça n'en devient pas un : le risque ne pondère aucun chiffre de
+          la vue, il ne réordonne rien, il n'écarte aucune route. Et rien ne s'affiche quand le
+          parcours ne quitte pas Stanton : l'absence d'avertissement est déjà l'information. */}
+      {zones.length ? (
+        <ul className="plan-risques" id="planRisques">
+          {zones.map((z) => (
+            <li className={"plan-risque n" + z.niveau} key={z.systeme}>
+              <b>⚠ {z.systeme}</b> — {z.etiquette} : {z.nature}
+              {z.avantPoste ? " · avant-poste sur le parcours" : ""}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </>
   );
 }

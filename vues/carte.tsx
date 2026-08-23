@@ -20,6 +20,13 @@ import type { Carte, SystemeCarte } from "../types.ts";
 const SYS_TEINTE: Record<string, string> = { Stanton: "var(--stanton)", Pyro: "var(--pyro)", Nyx: "var(--nyx)" };
 const teinte = (nom: string) => SYS_TEINTE[nom] || "var(--acc)";
 
+// La ZONE À RISQUE (#69) emprunte les jetons d'ALERTE déjà là — `--warn` et `--bad` — au lieu d'en
+// créer. Deux raisons, et la seconde est mesurée : une seconde palette est très exactement la
+// dérive que `scripts/jetons.test.mjs` existe pour attraper ; et ce fichier est le SEUL du dépôt
+// que ce test relise comme du texte, si bien qu'un jeton neuf lu ici et nulle part ailleurs
+// passerait pour mort au premier inventaire de `:root`.
+const teinteRisque = (niveau: number) => (niveau >= 2 ? "var(--bad)" : "var(--warn)");
+
 // Les coordonnées restent des CHAÎNES à une décimale. Passer les nombres bruts à React écrirait
 // `cx="510"` là où le gabarit écrivait `cx="510.0"` : même dessin, mais le relevé attribut par
 // attribut ne pourrait plus servir de preuve d'identité.
@@ -46,8 +53,14 @@ function etoiles(n: number, w: number, h: number) {
 
 function Systeme({ sys }: { sys: SystemeCarte }) {
   const t = teinte(sys.nom);
+  const z = sys.risque;
   return (
     <g className="jm-sys">
+      {/* Le VOILE de la zone à risque, sous tout le reste : une teinte de fond, et rien de plus —
+          la carte porte déjà les systèmes, les passerelles, les escales et l'étape courante, et un
+          halo qui bat tuerait ce qu'on est venu regarder. Il ne se suffit jamais à lui-même : le
+          nom, juste dessous, porte l'information (un état ne tient pas à la seule couleur). */}
+      {z ? <circle className="jm-zone" cx={nf(sys.cx)} cy={nf(sys.cy)} r={nf(sys.r * 1.1)} fill={teinteRisque(z.niveau)} /> : null}
       <circle cx={nf(sys.cx)} cy={nf(sys.cy)} r={nf(sys.r * 1.1)} fill="none" stroke={t} strokeOpacity="0.13" strokeDasharray="2 5" />
       {sys.corps.map((b, i) => (
         <Fragment key={i}>
@@ -60,6 +73,13 @@ function Systeme({ sys }: { sys: SystemeCarte }) {
       <circle cx={nf(sys.cx)} cy={nf(sys.cy)} r="6.5" fill={t} fillOpacity="0.18" />
       <circle cx={nf(sys.cx)} cy={nf(sys.cy)} r="3" fill={t} />
       <text className="jm-sysnom" x={nf(sys.cx)} y={nf(Math.max(13, sys.cy - sys.r * 1.22))} fill={t}>{sys.nom.toUpperCase()}</text>
+      {/* La zone est NOMMÉE, pas seulement teintée. Sous le nom du système et jamais dessus : au
+          plus étroit des trois disques, la ligne du haut est déjà collée au bord du cadre. */}
+      {z ? (
+        <text className="jm-zonenom" x={nf(sys.cx)} y={nf(Math.max(13, sys.cy - sys.r * 1.22) + 10)} fill={teinteRisque(z.niveau)}>
+          {`⚠ ${z.etiquette.toUpperCase()}`}
+        </text>
+      ) : null}
     </g>
   );
 }

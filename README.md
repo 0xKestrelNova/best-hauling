@@ -320,6 +320,35 @@ script de collecte se lance **à la main** et jamais depuis la CI — l'endpoint
 interne et non documenté, le site ne doit pas en dépendre. On ne dessine que ce qui porte un
 terminal chez UEX, ce qui tient les systèmes du lore (Castra, Terra…) hors de la carte.
 
+### Signaler les zones à risque
+
+Un plan de vol dit ce qu'il rapporte ; il devrait aussi dire **ce qu'il coûte en risque**. Quand le
+parcours traverse un système à risque, le Plan de vol l'écrit **une fois** — pas une fois par jambe
+qui y passe — juste sous les hypothèses, et la carte **nomme** la zone sous le nom du système
+(`⚠ HOSTILE`, `⚠ À SURVEILLER`) en plus de la teinter. La teinte redouble le mot, elle ne le
+remplace jamais : un état ne doit pas dépendre de la seule couleur. Un parcours qui ne quitte pas
+Stanton n'affiche **rien** — l'absence d'avertissement est déjà l'information.
+
+**Le jugement est ÉDITORIAL, et c'est à savoir avant de s'y fier.** Un terminal de
+`data/market.json` porte `name`, `system`, `planet`, `outpost`, `autoload`, `maxBox`, `code`,
+`shot`, `shotBy` : aucun champ de sécurité, de risque ou de juridiction — UEX n'en publie pas, il
+n'y a rien à brancher. La table est donc écrite à la main dans `logic.ts` (`RISQUE_SYSTEME`), datée
+par `RISQUE_ETABLI`, et elle **périmera** sans que rien ne le signale : Pyro évolue à chaque patch.
+
+Trois systèmes, trois paliers — *sûr*, *à surveiller*, *hostile* — et une seule nuance sous le
+système : le booléen `outpost`, celui-là même que filtre « Exclure les avant-postes ». Il ne relève
+aujourd'hui que **Nyx**, calme à ses stations et désert ailleurs. Rien de plus fin ne serait
+honnête : les 17 ancres de `data/starmap.json` sont au niveau du **corps**, pas du secteur, et une
+échelle à sept niveaux serait inventée de toutes pièces.
+
+Un système qu'UEX publierait en plus n'est **jamais** rangé parmi les sûrs : il ressort
+« à surveiller — hors de la table », et `node --test` échoue tant que le jugement n'a pas été porté
+(*« RISQUE_SYSTEME : la table couvre EXACTEMENT les systèmes de data/market.json »*).
+
+Enfin, le risque **ne pondère rien** : aucun profit, aucun classement, aucune route écartée. C'est
+une information affichée, un point. Un « profit ajusté du risque » serait une décision de
+conception majeure — un ADR, pas un ajout discret.
+
 ### La soute : ce qui est à bord, et ce que ça a coûté
 
 Le bouton **`✓ chargé`** sur une jambe dit à l'app « j'ai payé ce manifeste, il est en soute ». Elle

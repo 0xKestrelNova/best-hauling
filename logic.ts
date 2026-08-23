@@ -18,11 +18,12 @@ import type {
   MetriquesRoute, MetriquesTrajet, NoeudSysteme, OptionsChaine, OptionsEcoulement,
   OptionsTournee, PaireFrais, PalierValeur, Parcours, PointFrais, PointMarche, PointVente,
   PorteursDeRang, Prise, Releves, Resolveur, ResolveurCorrections, ResolveurFrais,
-  RestantManifeste, ResumeCommodite, Retrait, RetraitArret, Route, RouteFiltrable, RouteResolue,
+  RestantManifeste, ResumeCommodite, Retrait, RetraitArret, RisqueSysteme, RisquesParcours,
+  Route, RouteFiltrable, RouteResolue,
   SansDebouche, SegmentResolu, Starmap, Station, StoreCorrections, SuggestionArret,
   SystemeCarte, TarifTerminal, Terminal, TotauxManifeste, Tournee, Trajet, ValeurEffective,
   ValeursEffectives, VenteEtape, VenteSoute, VueManifeste,
-  VenteAuTerminal, DisqueSysteme,
+  VenteAuTerminal, DisqueSysteme, EstAvantPoste, ZoneRisque,
 } from "./types.ts";
 
 export const HANDLING = 3, PER_DIST = 0.06, JUMP = 4;
@@ -2303,6 +2304,86 @@ export function takeFromStore(hold: Lot[], entrepots: Entrepots, name: string, u
   return { hold: hold.concat(r.lots), entrepots: suivant };
 }
 
+// ---------- Zones à risque du parcours (#69) ----------
+// UN JUGEMENT ÉDITORIAL, PAS UNE DONNÉE — et c'est la première chose à savoir en relisant ceci.
+// Un terminal de `data/market.json` porte `name`, `system`, `planet`, `outpost`, `autoload`,
+// `maxBox`, `code`, `shot`, `shotBy` : AUCUN champ de sécurité, de risque ou de juridiction. UEX
+// n'en publie pas, il n'y a rien à brancher. La table ci-dessous est donc écrite à la main.
+//
+// Deux corollaires, écrits ici plutôt que découverts plus tard :
+//   — elle PÉRIMERA, et rien ne le signalera : Pyro évolue à chaque patch. D'où `RISQUE_ETABLI`,
+//     qui la date comme une correction locale porte la sienne ;
+//   — elle reste MINUSCULE : trois systèmes, deux paliers, et l'unique nuance que la donnée permet
+//     honnêtement — le booléen `outpost`, déjà en usage comme filtre (`#noOutpost`). Une échelle à
+//     sept niveaux serait inventée de toutes pièces, et « ce secteur-ci de Pyro » n'est pas
+//     dessinable : les 17 ancres de `data/starmap.json` sont au niveau du CORPS.
+//
+// Elle ne pondère RIEN : aucun profit, aucun classement, aucune route écartée. C'est une
+// information affichée, un point. Un « profit ajusté du risque » serait une décision de conception
+// majeure, donc un ADR — pas un ajout discret (#69, hors périmètre).
+export const RISQUE_ETABLI = "2026-08-23";
+export const RISQUE_SOURCE =
+  "jugement du dépôt (lore et pratique de jeu) — UEX ne publie aucune donnée de sécurité";
+
+/** Les trois paliers, et il n'y en aura pas un quatrième sans une raison écrite. Le palier 0 ne
+ *  s'affiche JAMAIS : l'absence d'avertissement est déjà l'information. */
+export const NIVEAUX_RISQUE = ["sûr", "à surveiller", "hostile"];
+
+/** Le jugement, système par système. `niveauAvantPoste` est la seule nuance sous le système :
+ *  Nyx est calme aux stations et désert ailleurs, ce que le booléen `outpost` approche. */
+export const RISQUE_SYSTEME: Record<string, RisqueSysteme> = {
+  Stanton: { niveau: 0, niveauAvantPoste: 0, nature: "patrouillé — sécurisé pour l'essentiel" },
+  Nyx: { niveau: 1, niveauAvantPoste: 2, nature: "hors juridiction : calme aux stations, désert ailleurs" },
+  Pyro: { niveau: 2, niveauAvantPoste: 2, nature: "sans loi — zone pirate" },
+};
+
+/** Le repli d'un système ABSENT de la table. Surtout pas 0 : un quatrième système publié par UEX
+ *  passerait pour sûr en silence. Ce n'est qu'un filet — `logic.test.mjs` refuse par ailleurs qu'un
+ *  système apparaisse dans `data/market.json` sans que la table bouge. */
+const RISQUE_INCONNU: RisqueSysteme = { niveau: 1, niveauAvantPoste: 1, nature: "hors de la table : jugement non porté" };
+
+/** Le palier atteint dans `systeme`, à une station ou à un avant-poste. */
+export function niveauDeRisque(systeme: string, avantPoste: boolean = false): number {
+  const fiche = RISQUE_SYSTEME[systeme] || RISQUE_INCONNU;
+  return avantPoste ? fiche.niveauAvantPoste : fiche.niveau;
+}
+
+/**
+ * Les zones à risque d'un parcours : UNE entrée par système traversé, jamais une par escale.
+ * « L'avertissement ne se répète pas » est donc garanti ICI, dans le calcul, et non dans le rendu —
+ * trois escales dans Pyro rendent une seule zone, et aucune vue n'a à s'en souvenir.
+ *
+ * `estAvantPoste(nom, systeme)` rend le booléen `outpost` du terminal. Par défaut « non » : sans
+ * marché chargé on ne le sait pas, et supposer l'avant-poste gonflerait le risque sans preuve.
+ *
+ * Les systèmes de palier 0 SORTENT du résultat. Un parcours qui ne quitte pas Stanton rend
+ * `{ zones: [], niveau: 0 }`, et l'écran n'affiche rien : pas de bandeau « zone sûre ».
+ *
+ * L'ordre des zones est celui de la RENCONTRE le long du parcours — la liste se lit comme le
+ * trajet. `niveau` porte, lui, le pire palier atteint.
+ */
+export function risquesDuParcours(stations: Station[], estAvantPoste: EstAvantPoste = () => false): RisquesParcours {
+  const parSysteme = new Map<string, ZoneRisque>();
+  for (const st of stations || []) {
+    // Système vide : un parcours « de zéro » posé sur un libellé sans « — » (parseStationLabel).
+    // Ce n'est pas un système inconnu, c'est une absence — on n'invente pas d'avertissement dessus.
+    if (!st || !st.system) continue;
+    const avantPoste = !!estAvantPoste(st.name, st.system);
+    const fiche = RISQUE_SYSTEME[st.system] || RISQUE_INCONNU;
+    const niveau = avantPoste ? fiche.niveauAvantPoste : fiche.niveau;
+    const deja = parSysteme.get(st.system);
+    // `Map.set` sur une clé existante garde sa place : le pire palier remplace le précédent sans
+    // que le système ne saute en fin de liste.
+    if (deja && deja.niveau >= niveau) { deja.avantPoste = deja.avantPoste || avantPoste; continue; }
+    parSysteme.set(st.system, {
+      systeme: st.system, niveau, etiquette: NIVEAUX_RISQUE[niveau], nature: fiche.nature,
+      avantPoste: (deja ? deja.avantPoste : false) || avantPoste,
+    });
+  }
+  const zones = [...parSysteme.values()].filter((z) => z.niveau > 0);
+  return { zones, niveau: zones.reduce((m, z) => Math.max(m, z.niveau), 0) };
+}
+
 // ---------- Carte 2D du parcours (cf. ADR-001) ----------
 // Projection PURE d'un parcours en coordonnées de dessin. app.js n'a plus qu'à émettre du SVG.
 // La géométrie vient de data/starmap.json : `au` (distance à l'étoile) et `lon` (degrés), relevés
@@ -2399,8 +2480,19 @@ export function journeyMap(stations: Station[], current: number, starmap: Starma
     const info = infoTerminal(st.name) || {};
     const ancres = (starmap[st.system] && starmap[st.system].ancres) || {};
     const parent = ancres[st.name] ? st.name : (info.planet && ancres[info.planet] ? info.planet : null);
-    return { nom: st.name, systeme: st.system, parent, sys: parSysteme.get(st.system) };
+    // `outpost` sert à la ZONE À RISQUE (#69), pas à la géométrie : il approche le « moins à risque
+    // près des stations » de Nyx, et c'est la seule nuance sous le système que la donnée permette.
+    return { nom: st.name, systeme: st.system, parent, avantPoste: !!info.outpost, sys: parSysteme.get(st.system) };
   });
+
+  // La zone à risque se pose sur le DISQUE de son système : une par système traversé, jamais une
+  // par escale. Le jugement est éditorial (voir RISQUE_SYSTEME plus haut) et ne pondère rien —
+  // la carte le montre, elle n'en tire aucun chiffre.
+  const avantPostes = new Set(rattache.filter((a) => a.avantPoste).map((a) => a.nom));
+  for (const z of risquesDuParcours(stations, (nom) => avantPostes.has(nom)).zones) {
+    const disque = parSysteme.get(z.systeme);
+    if (disque) disque.risque = z;
+  }
 
   // Deux terminaux d'une MÊME planète (Rod's Fuel et Rat's Nest sont tous deux sur Pyro V) se
   // superposaient : un décalage tiré du nom ne garantit aucune distance minimale, et deux escales
