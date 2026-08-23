@@ -26,7 +26,7 @@
 // laisserait ses chiffres dans les champs, prêts à être ressuscités par « Enregistrer ».
 // La clé porte donc le relevé lui-même. Le store ne change que sur un geste délibéré (Enregistrer,
 // Oublier), jamais au milieu d'une saisie : le remontage ne peut pas tomber sur une frappe.
-import { autoloadFee } from "../logic.ts";
+import { autoloadFee, tailleRetenue } from "../logic.ts";
 import type { Terminal } from "../types.ts";
 import { etat } from "../etat.ts";
 import { fmt } from "../format.ts";
@@ -78,7 +78,12 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
   // Prérempli comme `#alScu` l'est à 32, et pour la même raison : un champ vide donnerait
   // `Number("") = 0`, et le relevé se persisterait sous l'hypothèse de repli tout en s'affichant
   // « (ton relevé) » — exactement l'ambiguïté que ce champ existe pour supprimer.
-  const taille = (rec && rec.taille) || terminal.maxBox || 32;
+  const taille = tailleRetenue((rec && rec.taille) || terminal.maxBox);
+  // Ce que le MOTEUR facture ailleurs dans l'app : `autoloadPoint` pose `taille: terminal.maxBox`,
+  // et l'ADR-014 a écarté d'exposer un choix de taille. Le montant illustré ci-dessous doit donc
+  // être celui-là, sinon ce panneau annonce un tarif que le tableau ne pratique pas. La taille du
+  // RELEVÉ, elle, décrit la mesure — pas la facturation — et se dit à part quand les deux diffèrent.
+  const tailleMoteur = tailleRetenue(terminal.maxBox);
 
   return (
     <Panneau nom={terminal.name}>
@@ -104,8 +109,11 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
       </div>
       <div className="fee-note">
         Tarif retenu : <b>k = {kFmt(k)}</b> {rec ? "(ton relevé)" : "(k global)"} — soit ≈{" "}
-        <b>{fmt(autoloadFee(scu, taille, k))}</b> aUEC pour {fmt(scu)} SCU en caisses de{" "}
-        {fmt(taille)} SCU{rec && rec.taille ? " (ta mesure)" : terminal.maxBox ? " (la plus grosse que ce comptoir accepte)" : " (par défaut)"}.
+        <b>{fmt(autoloadFee(scu, tailleMoteur, k))}</b> aUEC pour {fmt(scu)} SCU en caisses de{" "}
+        {fmt(tailleMoteur)} SCU{terminal.maxBox ? " (la plus grosse que ce comptoir accepte — c'est ce que l'app suppose partout)" : " (par défaut)"}.
+        {rec && rec.taille && rec.taille !== tailleMoteur
+          ? " Ta mesure, elle, a été faite en caisses de " + fmt(rec.taille) + " SCU : c'est elle qui a donné k, pas la supposition."
+          : ""}
         {" "}Charger en plus grosses caisses coûte moins cher : c'est un choix, pas une fatalité du comptoir.
       </div>
     </Panneau>

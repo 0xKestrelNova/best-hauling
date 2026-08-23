@@ -430,9 +430,9 @@ export function hydrateManifestLine(market: Marche, fromIdx: number, toIdx: numb
 // (31 SCU coûtaient 70 aUEC de PLUS que 32). Voir ADR-014 pour la démonstration complète.
 //
 // L'invariant a changé de nature, et c'est le point à retenir : « la somme des caisses redonne N »
-// est FAUX dès qu'une caisse est partielle. Ce qui tient désormais, c'est la CAPACITÉ :
-// `taille × count >= n` et `taille × count - n < taille` — on couvre le volume sans gaspiller
-// une caisse entière.
+// est FAUX dès qu'une caisse est partielle. Ce qui tient désormais, c'est la CAPACITÉ, énoncée sur
+// la taille RETENUE (`tailleRetenue(taille)`, pas le paramètre brut) : `size × count >= n` et
+// `size × count - n < size` — on couvre le volume sans gaspiller une caisse entière.
 //
 // Repli OPTIMISTE quand la taille est inconnue, nulle, négative ou non finie : on retombe sur 32,
 // la plus grosse caisse de la grille. Elle SOUS-estime les frais au lieu de les inventer — c'est le
@@ -464,11 +464,17 @@ export const nombreDeCaisses = (boxes: { count: number }[]): number =>
   boxes.reduce((a, b) => a + b.count, 0);
 
 // Caisses d'un chargement à PLUSIEURS commodités. Une caisse n'en contient qu'une seule : le
-// décompte se fait donc ligne par ligne, jamais sur le total des SCU. Décomposer le total
+// décompte se fait donc ligne par ligne, jamais sur le total des SCU. Décompter sur le total
 // inventerait des caisses pleines qui n'existent pas (quatre commodités de 8 SCU font quatre
-// caisses de 8, pas une de 32) — et ce décompte sert à EXPLIQUER un montant que manifestTotals
-// facture, lui, une ligne à la fois. Un « 📦 1×32 » à côté d'un montant calculé sur quatre caisses
-// serait l'incohérence la plus visible qui soit.
+// caisses, pas une) — et ce décompte sert à EXPLIQUER un montant que manifestTotals facture, lui,
+// une ligne à la fois. Un « 📦 1×32 » à côté d'un montant calculé sur quatre caisses serait
+// l'incohérence la plus visible qui soit.
+//
+// CONSÉQUENCE ASSUMÉE du caissage uniforme (ADR-014) : ces quatre lignes de 8 SCU rendent
+// « 4×32 », soit quatre caisses de 32 SCU aux trois quarts vides. La CONTENANCE annoncée (128 SCU)
+// dépasse donc le volume chargé (32) — c'est exact au sens de la facture, qui compte des caisses
+// et non des SCU, mais le libellé se lit comme un volume. Les vues qui l'affichent ajoutent le
+// volume réel dans leur infobulle pour que les deux chiffres ne se contredisent pas.
 export function cargoBoxes(lines: Partial<LigneManifeste>[], taille?: number | null): Caisse[] {
   const parTaille = new Map();
   for (const l of lines) {
@@ -561,10 +567,12 @@ export function autoloadPoint(terminal: Terminal | null | undefined, k: number):
 export function haulFee(scu: number, pair?: PaireFrais | null): number {
   if (!pair) return 0;
   const { buy, sell } = pair;
-  // « La seule taille connue » : `buy.taille` est optionnelle et peut manquer là où le point
-  // existe (autoloadPoint d'un terminal sans maxBox). Tester le POINT et non la TAILLE retombait
-  // alors sur undefined en ignorant le côté vente, qui l'avait peut-être.
-  const taille = (buy && buy.taille) || (sell && sell.taille);
+  // On teste le POINT, jamais la TAILLE. Basculer sur `buy.taille || sell.taille` paraît plus
+  // complet, mais quand le terminal d'achat existe SANS taille connue, ça emprunte celle de la
+  // vente : un plafond plus bas y ferait MONTER la facture, contre la décision 5 de l'ADR-014 (le
+  // repli sous-estime, il n'invente pas), et le badge 📦 de la ligne — qui lit l'ORIGINE — cesserait
+  // de redonner le montant qu'il explique.
+  const taille = buy ? buy.taille : sell && sell.taille;
   return (buy ? autoloadFee(scu, taille, buy.k) : 0) + (sell ? autoloadFee(scu, taille, sell.k) : 0);
 }
 
@@ -998,8 +1006,8 @@ export function manifestsFrom(market: Marche, origin: number, destSystem: string
     // et recommence, parce que le retrait rend de la place et que les suivantes chargent davantage,
     // ce qui peut à son tour rendre déficitaire une ligne qui tenait à plus petit volume.
     // Ce verdict-là ne vaut QUE pour le chargement qui vient d'être bâti : il dépend du volume
-    // attribué, donc de qui d'autre est à bord. 126 SCU de Human Food Bars perdent 60 aUEC là où
-    // 128 en gagnent 200 — deux SCU de moins et la cargaison ne tient plus en caisses de 32. Le
+    // attribué, donc de qui d'autre est à bord. 100 SCU de Human Food Bars perdent 80 aUEC là où
+    // 128 en gagnent 200 : la base de 150 par opération ne se couvre pas à ce volume-là. Le
     // rejet reste donc LOCAL à cet appel, et `evalue` repart toujours des candidates au complet.
     const remplir = (liste) => {
       let restantes = liste;

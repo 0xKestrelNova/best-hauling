@@ -556,9 +556,11 @@ test("relevé : la taille de caisse EMPLOYÉE entre dans le coefficient (#193)",
   await expect(page.locator(".corr-item.autoload")).toContainText("en caisses de 8 SCU");
   await expect(page.locator(".corr-item.autoload .loc-sub")).toContainText("k = 1 ·");
 
-  // La note de la station dit la taille retenue ET d'où elle vient : c'est le seul endroit de
-  // l'application où le découpage est écrit en clair.
-  await expect(page.locator("#correctionsFees .fee-note")).toContainText("caisses de 8 SCU (ta mesure)");
+  // La note chiffre ce que le MOTEUR facture — à la taille supposée, 32 — et dit à part que la
+  // mesure, elle, a été faite en caisses de 8. Annoncer le tarif à la taille du relevé ferait dire
+  // à ce panneau un montant que le tableau ne pratique pas (ADR-014 : le choix n'est pas exposé).
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("caisses de 32 SCU (la plus grosse que ce comptoir accepte");
+  await expect(page.locator("#correctionsFees .fee-note")).toContainText("Ta mesure, elle, a été faite en caisses de 8 SCU");
 
   expect(errors).toEqual([]);
 });
@@ -574,7 +576,11 @@ test("infobulle : la taille de caisse est nommée sans casser le décompte des c
   await expect(page.locator("#rows tr").first()).toBeVisible();
   await page.check("#autoload");
 
-  const titre = await page.locator("#rows tr td.profit[title]").first().getAttribute("title");
+  // Attendre le « ≈ » AVANT de lire le title, et viser `td.profit` sans `[title]` : c'est le patron
+  // des quatre tests voisins. Le `[title]` attrapait la colonne PROFIT/HEURE, dont l'infobulle dit
+  // « Estimation 18 min/voyage » — vert seul, rouge dès que la suite tourne à huit ouvriers.
+  await expect(page.locator("#rows tr td.profit").first()).toContainText("≈");
+  const titre = await page.locator("#rows tr td.profit").first().getAttribute("title");
   expect(titre).toContain("caisses de 32 SCU");
   const d = feeDetail(titre);
   expect(d, `infobulle illisible : ${titre}`).not.toBeNull();

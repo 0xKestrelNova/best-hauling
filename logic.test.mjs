@@ -438,13 +438,18 @@ test("caissesDe : une cargaison part en caisses d'UNE SEULE taille", () => {
 test("caissesDe : la capacité couvre N sans gaspiller une caisse entière", () => {
   // L'invariant de REMPLACEMENT. « La somme des caisses redonne N » est faux par construction dès
   // qu'une caisse est partielle : ce qui tient, c'est la capacité (ADR-014, décision 2).
+  //
+  // Il porte sur la taille RETENUE, jamais sur celle qu'on a demandée — et la nuance n'est pas
+  // rhétorique : `caissesDe(95, 20)` rend six caisses de 16, où `20 × 6 − 95 = 25` n'est PAS
+  // inférieur à 20. La boucle inclut donc des tailles HORS grille, sans quoi elle n'exercerait
+  // jamais le cas où `tailleRetenue` substitue.
   for (const n of [1, 7, 40, 95, 96, 123, 624, 1000, 4608]) {
-    for (const taille of [1, 2, 4, 8, 16, 24, 32]) {
+    for (const taille of [1, 2, 4, 8, 16, 24, 32, 5, 12, 20, 33, 100]) {
       const [c] = caissesDe(n, taille);
       const capacite = c.size * c.count;
+      assert.equal(c.size, tailleRetenue(taille), `taille demandée ${taille}`);
       assert.ok(capacite >= n, `${n} SCU en ${c.count}×${c.size} ne tiennent pas`);
       assert.ok(capacite - n < c.size, `${n} SCU en ${c.count}×${c.size} : une caisse pour rien`);
-      assert.equal(c.size, taille, `la taille demandée n'a pas été employée`);
     }
   }
 });
@@ -485,7 +490,12 @@ test("nombreDeCaisses : un seul compteur, celui qui explique le montant facturé
 test("caissesDe : une taille plus petite fait strictement plus de caisses", () => {
   // Le LEVIER que l'application ne disait nulle part : choisir de plus grosses caisses coûte moins
   // cher. C'est la seule raison pour laquelle la taille mérite d'être une entrée.
-  const comptes = [32, 24, 16, 8, 4, 2, 1].map((taille) => nombreDeCaisses(caissesDe(96, taille)));
+  //
+  // Le volume est 95 et non 96, et les comptes sont EN DUR : à 96 SCU — un multiple de toutes les
+  // tailles de la grille — les deux modèles rendent la même suite [3,4,6,12,24,48,96], et le test
+  // passerait tel quel sur le code d'avant. À 95, le glouton rendait [6,7,9,14,25,48,95].
+  const comptes = [32, 24, 16, 8, 4, 2, 1].map((taille) => nombreDeCaisses(caissesDe(95, taille)));
+  assert.deepEqual(comptes, [3, 4, 6, 12, 24, 48, 95]);
   for (let i = 1; i < comptes.length; i++) {
     assert.ok(comptes[i] > comptes[i - 1], `tailles décroissantes : ${comptes.join(" < ")}`);
   }
@@ -540,11 +550,18 @@ test("autoloadFee : un reste ne se re-caisse pas en petites caisses (#193)", () 
   // 95 SCU en caisses de 32, c'est TROIS caisses dont la dernière est à moitié pleine. Le glouton
   // en fabrique six (2×32, 1×24, 1×4, 1×2, 1×1) et facture 90 aUEC de trop.
   assert.equal(autoloadFee(95, 32, 1), AUTOLOAD.base + AUTOLOAD.perBox * 3 + AUTOLOAD.perScu * 95);
-  // Et le contre-exemple mesuré de l'issue : 624 SCU en caisses de 16, c'est 39 caisses.
-  assert.equal(autoloadFee(624, 16, 1), AUTOLOAD.base + AUTOLOAD.perBox * 39 + AUTOLOAD.perScu * 624);
-  // À 32, les mêmes 624 SCU font 20 caisses ET PAS UN ASSORTIMENT : 19×32 + 1×16 est un découpage
-  // que le joueur n'a jamais demandé. L'écart entre les deux est un vrai levier, pas un artefact.
-  assert.equal(autoloadFee(624, 32, 1), AUTOLOAD.base + AUTOLOAD.perBox * 20 + AUTOLOAD.perScu * 624);
+  // Le contre-exemple des 624 SCU de l'issue est ici en FORME, pas en montant, et c'est délibéré :
+  // le glouton rendait 19×32 + 1×16, soit VINGT caisses — le même COMPTE que ceil(624/32), donc le
+  // même montant. Mesuré : autoloadFee(624, 32, 1) vaut 13 230 avant comme après, et
+  // autoloadFee(624, 16, 1) vaut 13 800 des deux côtés. Une assertion sur ces montants passerait
+  // sous l'ancien code : elle ne prouverait rien. C'est l'assortiment qui disparaît.
+  assert.deepEqual(caissesDe(624, 32), [{ size: 32, count: 20 }]);   // et non [{32,19},{16,1}]
+  assert.deepEqual(caissesDe(624, 16), [{ size: 16, count: 39 }]);
+  // L'écart de 4,31 % que l'issue mesure (13 230 contre 13 800) oppose la taille SUPPOSÉE par
+  // l'app — le plafond du comptoir — à celle que le joueur a EMPLOYÉE. Ce lot ne le referme pas :
+  // autoloadPoint pose toujours `taille: terminal.maxBox`. Il reste ouvert avec #193.
+  assert.equal(autoloadFee(624, 32, 1), 13_230);
+  assert.equal(autoloadFee(624, 16, 1), 13_800);
 });
 
 test("autoloadFee : retirer un SCU ne peut pas faire monter la facture (#193)", () => {

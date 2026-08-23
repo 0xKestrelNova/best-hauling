@@ -9,7 +9,7 @@
 // On persiste le montant et la quantité OBSERVÉS en plus du coefficient `k` qu'on en tire. C'est
 // la mesure qui fait foi ; `k` n'en est que la lecture. Si la grille de tarifs change à un patch,
 // un relevé conservé reste réinterprétable — un `k` seul serait devenu illisible.
-import { kFromReading, kPlausible } from "./logic.ts";
+import { kFromReading, kPlausible, tailleRetenue } from "./logic.ts";
 import { etat } from "./etat.ts";
 import { fmt } from "./format.ts";
 import { alKey, kFmt, saveAutoloadK } from "./frais.ts";
@@ -38,7 +38,12 @@ export function enregistrerReleve(): void {
   // un découpage supposé au dénominateur : le relevé d'Endgame (720 aUEC, 24 SCU, 3 caisses de 8)
   // rendait k = 1,091 à la station qui DÉFINIT k = 1. Le champ est prérempli, donc jamais vide ;
   // le repli sur `t.maxBox` ne couvre que le cas où la vue n'aurait pas rendu le champ.
-  const taille = Math.floor(nombre("alBox")) || t.maxBox;
+  //
+  // Passée par `tailleRetenue` AVANT d'être persistée : le calcul, lui, y passe de toute façon
+  // (`caissesDe`). Persister la saisie brute ferait qu'un « 20 » tapé à la main s'afficherait
+  // « caisses de 20 SCU » sous un k calculé sur des caisses de 16 — le relevé mentirait sur sa
+  // propre mesure, ce que ce champ existe précisément pour empêcher.
+  const taille = tailleRetenue(Math.floor(nombre("alBox")) || t.maxBox);
   const k = kFromReading(montant, scu, taille);
   if (k == null) { showToast("⚠ Relevé inutilisable — indique le montant payé et la quantité chargée"); return; }
   // Un montant tapé à côté (un zéro de trop) donne un k d'apparence honnête, qu'on persiste et

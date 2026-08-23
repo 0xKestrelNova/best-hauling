@@ -290,7 +290,7 @@ function Ligne({ p, l, i }: { p: ProprietesManifeste; l: LigneManifeste; i: numb
       >
         {texteProfit}
       </span>
-      <span className="mboxes" title="Caisses SCU standard à charger">{`📦 ${p.libelleCaisses(l.units)}`}</span>
+      <span className="mboxes" title={`Caisses à charger pour ${l.units} SCU — une seule taille, la dernière éventuellement partielle`}>{`📦 ${p.libelleCaisses(l.units)}`}</span>
     </div>
   );
 }

@@ -41,9 +41,21 @@ donc la grille tarifaire **à nombre de caisses connu**, jamais le remplissage g
 
 Relevés dans les `Game.log` du propriétaire (13 sessions, mai à août 2026, 10 comptoirs, #192) :
 **101 achats sur 101 emploient une seule taille de caisse.** Jamais un assortiment. Et le même
-comptoir en voit passer sept (32, 24, 16, 8, 4, 2, 1). Contre-exemple le plus net : **624 SCU en
-39 caisses de 16**, là où le glouton en prédit 20 — **+4,31 %** sur la facture (13 230 → 13 800 aUEC
-à k = 1), sur un modèle annoncé juste à 3 % près.
+comptoir en voit passer sept (32, 24, 16, 8, 4, 2, 1).
+
+Le plus net de ces achats — **624 SCU en 39 caisses de 16**, quand l'app suppose 20 caisses de 32 —
+mesure un écart de **+4,31 %** (13 230 contre 13 800 aUEC à k = 1). **Cet écart-là n'est PAS celui
+que la présente décision referme**, et il faut le dire précisément, parce que les deux se
+confondent facilement :
+
+- il oppose la taille **supposée** (le plafond du comptoir) à la taille **employée** (le choix du
+  joueur) — donc il persiste tant qu'aucun réglage n'expose ce choix ;
+- le remplissage glouton, lui, rendait pour 624 SCU à taille 32 un assortiment 19×32 + 1×16, soit
+  **vingt** caisses : le même COMPTE que `ceil(624/32)`, donc **le même montant**. Vérifié en
+  réimplémentant l'ancien code : 13 230 avant comme après.
+
+Ce que la décision referme, c'est l'autre moitié — les volumes où le glouton comptait **plus** de
+caisses que nécessaire (95 SCU : six au lieu de trois) et la non-monotonie qui en découlait.
 
 ### Ce qui reste vrai, et qu'on ne touche pas
 
@@ -62,8 +74,13 @@ au plus **une** entrée, quelle que soit `n`.
 ### 2. L'invariant change de nature, et il faut le dire
 
 « La somme des caisses redonne N » devient **faux par construction** dès qu'une caisse est
-partielle. Il est remplacé par un invariant de **capacité** : `taille × count ≥ n`, et
-`taille × count − n < taille` — on couvre le volume sans gaspiller une caisse entière.
+partielle. Il est remplacé par un invariant de **capacité**, énoncé sur la taille **retenue**
+(`tailleRetenue(taille)`) et non sur le paramètre brut : `size × count ≥ n`, et
+`size × count − n < size` — on couvre le volume sans gaspiller une caisse entière.
+
+La nuance n'est pas rhétorique : un comptoir peut annoncer un plafond hors grille, et `caissesDe(95, 20)`
+rend six caisses de **16**, où `20 × 6 − 95 = 25` ne serait pas inférieur à 20. On ne fabrique pas de
+conteneur qui n'existe pas.
 
 ### 3. `Terminal.maxBox` est conservé, et requalifié
 
@@ -110,10 +127,22 @@ donc ça vit dans sa propre PR, précédée d'une mesure de performance.
 - **Huit assertions sont des photographies du glouton** et sont réécrites délibérément, dont
   `logic.test.mjs:614` qui gravait la non-monotonie comme une règle du jeu. Elles sont énumérées
   dans la PR, une par une, avec ce qu'elles disaient et ce qu'elles disent.
-- **Les frais baissent** pour tout volume qui n'est pas un multiple exact de la taille, et **montent**
-  pour un volume qui tenait dans un assortiment plus fin. Deux compteurs d'instantané
-  (`logic.test.mjs:4135` et `:4328`) mesurent le classement des routes : s'ils bougent, c'est une
-  information sur l'ampleur du changement — à rapporter, jamais à ajuster à la main.
+- **Les frais baissent ou restent égaux ; ils ne montent JAMAIS.** Une première rédaction de cet ADR
+  affirmait qu'ils pouvaient monter « pour un volume qui tenait dans un assortiment plus fin » :
+  c'est faux, et la relecture l'a mesuré — sur 2 800 couples (1 à 400 SCU × les sept tailles),
+  **0 hausse, 1 185 baisses, 1 615 inchangés**. La raison est structurelle : un remplissage glouton
+  plafonné à *T* ne peut pas produire moins de `ceil(n/T)` caisses. C'est ce qui rend les deux
+  compteurs d'instantané lisibles — ils ne peuvent bouger que dans un sens.
+- **Deux compteurs d'instantané ont bougé** (`logic.test.mjs:4135` et `:4328`) : 4 219 → **4 220**
+  arcs rentables, 136 → **135** arcs sans manifeste. Le même mouvement vu des deux côtés. Ces
+  chiffres sont RE-MESURÉS, jamais ajustés à la main : c'est leur seule utilité.
+- **Le libellé de caisses annonce désormais plus de contenance que de cargaison, en
+  multi-commodité.** Quatre lignes de 8 SCU rendent « 4×32 » : quatre caisses de 32 SCU aux trois
+  quarts vides, soit 128 SCU de contenance annoncée pour 32 chargés. C'est exact au sens de la
+  FACTURE, qui compte des caisses et non des SCU — et le décompte, lui, est inchangé (quatre
+  caisses des deux côtés, `logic.test.mjs:499` reste vert). Mais le libellé se lit comme un volume.
+  L'infobulle du manifeste nomme donc désormais le volume réel à côté. La forme « n×t » elle-même
+  reste à revoir, et c'est laissé ouvert.
 - **Une hypothèse assumée, non mesurée** : une caisse partielle se facture plein tarif. Les 18
   relevés de la spec et le contre-exemple des 624 SCU sont tous des multiples exacts de leur taille ;
   aucune donnée disponible ne tranche. Elle rejoint les hypothèses 1 et 2 de la spec du 2026-08-10,
@@ -122,6 +151,9 @@ donc ça vit dans sa propre PR, précédée d'une mesure de performance.
 ## Ce que cet ADR ne tranche pas
 
 - **L'exposition d'un choix de taille à l'utilisateur** — question de produit, laissée ouverte (#193).
+  Conséquence directe et mesurée : l'écart de **+4,31 %** du plus gros achat relevé (624 SCU en
+  caisses de 16, facturés par l'app comme 20 caisses de 32) **reste entier**. Le seul endroit où la
+  taille employée agit aujourd'hui est le calcul du coefficient dans le panneau de relevé.
 - **Le recalcul des coefficients déjà persistés** : ils ont été relevés sous l'ancien découpage, donc
   possiblement faux. On ne les touche pas sans savoir quelle taille était employée.
 - **L'appariement des `shopName` du jeu (`SCShop_Admin_lt_base_g`) avec les noms UEX**, explicitement

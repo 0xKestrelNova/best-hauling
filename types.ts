@@ -342,7 +342,7 @@ export type Terminal = {
    *  défaut le moins cher (ADR-014, #193). Vérifié contre UEX : `max(container_sizes)` ne dépasse
    *  jamais ce plafond sur 2 579 lignes, mais lui est strictement inférieur 597 fois — le vrai
    *  plafond est par (comptoir, commodité), et il n'est pas encore publié.
-   *  `undefined` traverse volontairement `autoloadPoint` — logic.test.mjs:3720 EXIGE
+   *  `undefined` traverse volontairement `autoloadPoint` — logic.test.mjs:3780 EXIGE
    *  `{ taille: undefined, k: 0 }` — et `caissesDe` retombe alors sur 32. */
   maxBox?: number;
   /** Code court UEX (ARCL1, LEVSKI…). Jamais une clé : ni index, ni Map, ni déduplication.

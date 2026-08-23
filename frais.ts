@@ -62,7 +62,6 @@ function feeEnd(name: string, terminal: Terminal | null | undefined) {
     name, k, point: autoloadPoint(t, k),
     known: !!t && t.autoload != null, // champ absent = instantané de market.json antérieur au build
     available: !!t && t.autoload === true,
-    maxBox: t ? t.maxBox : undefined,
     measured: !!etat.AUTOLOAD_K[alKey(name)],
   };
 }
