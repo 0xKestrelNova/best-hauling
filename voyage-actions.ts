@@ -11,7 +11,7 @@
 // manifeste d'« En route » et le déplacement d'arrêt. Aucune d'elles ne peut emménager dans l'arbre
 // tant qu'il vit dans un fichier qui n'exporte rien.
 
-import { addToJourney, currentLeg, journeyStations, stationLabel } from "./logic.ts";
+import { addToJourney, currentLeg, journeyStations, nommerConvoi, stationLabel } from "./logic.ts";
 import type { Jambe } from "./types.ts";
 import { etat } from "./etat.ts";
 import { rafraichir } from "./rendu.ts";
@@ -57,7 +57,10 @@ export function syncViewsToJourney(): void {
  */
 export function pickJourney(legs: Jambe[] | null | undefined, apresAjout?: () => void): void {
   if (!legs || !legs.length) return;
-  etat.JOURNEY = addToJourney(etat.JOURNEY, legs);
+  // Le convoi est nommé ICI, une fois, et jamais au rendu (#68) : `addToJourney` reporte le nom
+  // quand il ÉTEND, et n'en rend aucun quand il REMPLACE — c'est alors un autre voyage.
+  // `nommerConvoi` ne rebaptise jamais ce qui a déjà un nom.
+  etat.JOURNEY = nommerConvoi(addToJourney(etat.JOURNEY, legs));
   if (apresAjout) apresAjout();
   syncViewsToJourney();
   rafraichir();

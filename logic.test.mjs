@@ -29,6 +29,7 @@ import {
   stationTree, groupOverridesByTerminal,
   isoUTC, secDepuisISO, FORMAT_EXPORT, migrerCorrections,
   exporterCorrections, relireCorrections, exporterEntrepots,
+  tirerConvoi, indicatifConvoi, texteConvoi, nommerConvoi, CONVOIS, CONVOI_ESCORTES_MAX,
 } from "./logic.ts";
 
 // ---------- Temps de trajet ----------
@@ -4944,4 +4945,114 @@ test("les deux exports partagent le même en-tête daté et le même numéro de 
   const entr = exporterEntrepots({}, MAINTENANT);
   assert.equal(corr.emis, isoUTC(MAINTENANT));
   assert.ok(entr.startsWith(`# Best Hauling — entrepôts · format v${corr.v} · émis ${corr.emis}`));
+});
+
+// (1) AJOUTER à la liste d'imports, juste après la ligne
+//     `  journeyConnects, addToJourney, setJourneyPosition, currentLeg, journeyMargin,` :
+//
+//   CONVOIS, CONVOI_ESCORTES_MAX, tirerConvoi, indicatifConvoi, texteConvoi, nommerConvoi,
+//
+// (2) AJOUTER le bloc ci-dessous À LA FIN du fichier. `REAL` (l. 3093) et `jambe` (l. 3117) sont
+//     déjà définis au niveau module : ils sont lisibles depuis ici.
+
+// ---------- L'indicatif d'appel du convoi (#68) ----------
+test("tirerConvoi : PURE et injectable — même graine, même paire (#68)", () => {
+  assert.equal(tirerConvoi(() => 0.42), tirerConvoi(() => 0.42));
+  // Toute la table est atteignable, et rien d'autre : chaque tranche tombe sur SA paire.
+  CONVOIS.forEach((p, i) => assert.equal(tirerConvoi(() => i / CONVOIS.length), p.cle));
+  // Une graine mal formée ne doit JAMAIS rendre `undefined` : le nom finirait persisté, et un
+  // convoi sans indicatif ne se voit pas — il se lit « rien ».
+  const cles = CONVOIS.map((c) => c.cle);
+  for (const graine of [0, 1, -1, 1e9, NaN, Infinity]) assert.ok(cles.includes(tirerConvoi(() => graine)), String(graine));
+});
+
+test("indicatifConvoi : porteur et escortes viennent TOUJOURS de la même paire (#68)", () => {
+  // C'est la trouvaille de l'issue : « Baleine » avec « Tournevis 1/2/3 » raterait tout l'effet.
+  // La garantie est STRUCTURELLE — on tire une paire, jamais deux listes indépendantes.
+  for (const p of CONVOIS) {
+    const ind = indicatifConvoi(p.cle, 3);
+    assert.equal(ind.porteur, p.porteur);
+    assert.deepEqual(ind.escortes, [`${p.escorte} 1`, `${p.escorte} 2`, `${p.escorte} 3`]);
+  }
+});
+
+test("indicatifConvoi : zéro escorte est le cas NORMAL, et le compte est borné (#68)", () => {
+  assert.deepEqual(indicatifConvoi("baleine").escortes, []);      // défaut
+  assert.equal(indicatifConvoi("baleine").porteur, "Baleine");    // le porteur garde son nom
+  assert.deepEqual(indicatifConvoi("baleine", 0).escortes, []);
+  assert.deepEqual(indicatifConvoi("baleine", -3).escortes, []);
+  assert.equal(indicatifConvoi("baleine", 99).escortes.length, CONVOI_ESCORTES_MAX);
+  assert.equal(indicatifConvoi("baleine", NaN).escortes.length, 0);
+  // Clé inconnue -> null : le `n` du hash est partageable, il peut venir d'un tiers.
+  assert.equal(indicatifConvoi("pas-une-cle", 3), null);
+  assert.equal(indicatifConvoi(null), null);
+  assert.equal(indicatifConvoi(undefined), null);
+});
+
+test("texteConvoi : la phrase se lit d'un trait, singulier et genre compris (#68)", () => {
+  assert.equal(texteConvoi("baleine", 0), "Baleine");
+  assert.equal(texteConvoi("baleine", 1), "Baleine et son Harpon");
+  assert.equal(texteConvoi("baleine", 3), "Baleine et ses 3 Harpons");
+  assert.equal(texteConvoi("fromage", 1), "Fromage et sa Souris");    // féminin
+  assert.equal(texteConvoi("fromage", 2), "Fromage et ses 2 Souris"); // pluriel invariable
+  assert.equal(texteConvoi("grotte", 4), "Grotte et ses 4 Chauve-souris");
+  assert.equal(texteConvoi(null, 3), "");                             // pas de voyage, pas de convoi
+});
+
+test("les indicatifs ne collisionnent avec AUCUN nom réel de market.json (#68)", () => {
+  // Un convoi appelé « Titanium » serait une mauvaise blague. 114 terminaux, 113 commodités.
+  const noms = [...REAL.terminals.map((t) => t.name), ...REAL.commodities.map((c) => c.name)].map((s) => s.toLowerCase());
+  const codes = new Set([...REAL.terminals, ...REAL.commodities].map((x) => (x.code || "").toLowerCase()).filter(Boolean));
+  assert.ok(noms.length > 200, `instantané trop petit (${noms.length})`);
+  for (const p of CONVOIS) {
+    for (const mot of [p.porteur, p.escorte]) {
+      const l = mot.toLowerCase();
+      assert.ok(!codes.has(l), `« ${mot} » est un code de market.json`);
+      const collision = noms.find((n) => n === l || n.includes(l));
+      assert.equal(collision, undefined, `« ${mot} » se confond avec « ${collision} »`);
+    }
+  }
+  assert.equal(new Set(CONVOIS.map((c) => c.cle)).size, CONVOIS.length);     // aucune clé en double
+  assert.equal(new Set(CONVOIS.map((c) => c.porteur)).size, CONVOIS.length); // aucun porteur en double
+});
+
+test("nommerConvoi : nomme UNE fois, et ne rebaptise JAMAIS (#68)", () => {
+  // C'est la garantie de stabilité : l'app re-rend beaucoup, le nom ne se tire pas au rendu.
+  const anonyme = startJourney([jambe("A", "B")]);
+  const nomme = nommerConvoi(anonyme, () => 0);
+  assert.equal(nomme.convoi, CONVOIS[0].cle);
+  assert.equal(nommerConvoi(nomme, () => 0.99), nomme); // déjà nommé -> MÊME objet, aucun tirage
+  assert.equal(nommerConvoi(null), null);
+  assert.equal(anonyme.convoi, undefined);              // pure : l'entrée n'est pas mutée
+  // Un voyage « de zéro » garde son point de départ en passant par là.
+  assert.equal(nommerConvoi(startJourneyAt({ name: "A", system: "S" }), () => 0).start.name, "A");
+});
+
+test("addToJourney : le convoi SURVIT à l'extension, pas au remplacement (#68)", () => {
+  const j = { ...startJourney([jambe("A", "B")]), convoi: "baleine" };
+  const ext = addToJourney(j, [jambe("B", "C")]);
+  assert.equal(ext.convoi, "baleine"); // « un convoi garde son nom quand on lui ajoute une escale »
+  assert.equal(ext.legs.length, 2);
+  const repl = addToJourney(j, [jambe("X", "Y")]); // ne s'enchaîne pas -> AUTRE voyage
+  assert.equal(repl.convoi, undefined);
+  // Aucune clé posée à `undefined` sur un parcours anonyme : `deepEqual` y est sensible, et un
+  // `{ ...journey }` ramènerait en plus les trois compteurs d'un RetraitArret.
+  assert.deepEqual(Object.keys(addToJourney(startJourney([jambe("A", "B")]), [jambe("B", "C")])), ["legs", "current"]);
+});
+
+test("encodeJourney / decodeJourney : l'indicatif voyage AVEC le lien (#68)", () => {
+  const j = { ...startJourney([jambe("A", "B")]), convoi: "baleine" };
+  const s = encodeJourney(j);
+  assert.match(s, /^\{"c":0,"l":\[\[.*\]\],"n":"baleine"\}$/); // `n` en QUEUE : les liens d'avant #68 gardent leur préfixe
+  assert.equal(decodeJourney(s).convoi, "baleine");
+  const zero = { ...startJourneyAt({ name: "A", system: "S" }), convoi: "tortue" };
+  assert.equal(decodeJourney(encodeJourney(zero)).convoi, "tortue");
+  assert.equal(decodeJourney(encodeJourney(zero)).start.name, "A");
+  // Un parcours anonyme n'encode aucune clé de trop.
+  assert.equal(encodeJourney(startJourney([jambe("A", "B")])).includes('"n"'), false);
+  assert.equal(decodeJourney(encodeJourney(startJourney([jambe("A", "B")]))).convoi, undefined);
+  // Le hash vient potentiellement d'un tiers : une clé inconnue est REFUSÉE, jamais affichée.
+  assert.equal(decodeJourney('{"c":0,"l":[["A","S","B","S","x",1,2,1]],"n":"<script>"}').convoi, undefined);
+  assert.equal(decodeJourney('{"c":0,"l":[["A","S","B","S","x",1,2,1]],"n":42}').convoi, undefined);
+  assert.equal(decodeJourney('{"c":0,"s":["A","S"],"n":"pas-une-cle"}').convoi, undefined);
 });

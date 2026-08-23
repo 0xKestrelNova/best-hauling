@@ -1619,6 +1619,13 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 }
 .plan-copy:hover { color: var(--acc); border-color: var(--acc); }
 .plan-copy.copied { color: var(--good); border-color: var(--good); }
+/* L'INDICATIF D'APPEL du convoi (#68) : le NOM de ce voyage, et pas un réglage. Il se lit avant les
+   hypothèses parce que c'est ce qu'on retient et ce qu'on répète — « Baleine et ses trois Harpons ».
+   Accentué et en chasse fixe : c'est un identifiant, il se recopie à la voix. */
+.plan-convoi {
+  margin-top: 7px; font-family: var(--mono); font-size: 15px; font-weight: 700;
+  color: var(--acc); letter-spacing: 0.6px;
+}
 /* La ligne d'hypothèses : une conclusion ÉNONCE ce sur quoi elle repose au lieu de l'offrir à la
    modification. C'est du texte, pas des contrôles — les changer se fait dans une vue de recherche. */
 .plan-hyp {

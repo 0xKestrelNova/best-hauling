@@ -11,7 +11,7 @@
 
 import {
   addableUnits, bestLegBetween, bestManifest, detacherLotsDeJambe, freeManifestLine,
-  legFromManifest, manifestIntent, manifestJourneyState, reindexerRangsJambe,
+  legFromManifest, manifestIntent, manifestJourneyState, nommerConvoi, reindexerRangsJambe,
   removeJourneyStop as removeStopPure, sameIntent, setJourneyPosition, startJourneyAt,
   stationLabel,
 } from "./logic.ts";
@@ -32,7 +32,7 @@ import {
 import { pickJourney, syncViewsToJourney } from "./voyage-actions.ts";
 import { listesPretes, peuplerListes } from "./listes.ts";
 
-import type { Noeud } from "./types.ts";
+import type { Noeud, Parcours } from "./types.ts";
 // La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
 // `classList`, ni `id`. Le cast est posé UNE fois par module, comme `$` — pas dans un module
 // partagé : c'est une expression d'une ligne, et six modules couplés à un alias ne valent pas
@@ -204,7 +204,8 @@ export function beginJourney(label) {
   const startIdx = resolveStationLabel(v);
   if (startIdx == null) return; // terminal inconnu
   const t = etat.MARKET.terminals[startIdx];
-  etat.JOURNEY = startJourneyAt({ name: t.name, system: t.system });
+  // Un voyage « de zéro » est un voyage : il porte un indicatif dès son point de départ posé (#68).
+  etat.JOURNEY = nommerConvoi(startJourneyAt({ name: t.name, system: t.system }));
   syncViewsToJourney();
   rafraichir();
 }
@@ -218,6 +219,9 @@ export function reindexerApresRetrait(retrait) {
 
 export function removeJourneyStop(stopIndex) {
   if (!etat.JOURNEY) return;
+  // Retirer une escale ne rebaptise pas le convoi (#68). Capturé AVANT la reconstruction ci-dessous,
+  // qui repart d'un `RetraitArret` — lequel ne porte pas l'indicatif.
+  const convoi = etat.JOURNEY.convoi;
   const legs = etat.JOURNEY.legs;
   let bridge = null;
   if (stopIndex > 0 && stopIndex < legs.length) {
@@ -234,7 +238,9 @@ export function removeJourneyStop(stopIndex) {
   // `start` n'est présent que sur le parcours réduit à un seul arrêt : le reporter tel quel, sinon
   // la station survivante n'a plus rien pour se décrire (journeyStations la lit là) et le voyage
   // s'affiche vide alors qu'il reste un point de départ.
-  etat.JOURNEY = r.start ? { legs: [], current: 0, start: r.start } : { legs: r.legs, current: r.current };
+  const suite: Parcours = r.start ? { legs: [], current: 0, start: r.start } : { legs: r.legs, current: r.current };
+  if (convoi) suite.convoi = convoi;
+  etat.JOURNEY = suite;
   syncViewsToJourney();
   rafraichir();
 }

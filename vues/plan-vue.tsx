@@ -6,7 +6,7 @@
 //
 // Elle ne reçoit AUCUNE prop : elle lit l'état, les filtres, les manifestes de jambe et le marché.
 // `plan.tsx` garde la présentation ; ce fichier porte le calcul et la décision.
-import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals, risquesDuParcours } from "../logic.ts";
+import { freeCargo, holdByCommodity, holdScu, journeyStations, manifestTotals, risquesDuParcours, texteConvoi } from "../logic.ts";
 import { etat, notifier } from "../etat.ts";
 import { readFilters } from "../filtres.ts";
 import { fmt, fmtFee } from "../format.ts";
@@ -69,6 +69,18 @@ export function planData() {
 // `planRouteHTML` a été remplacé par vues/plan.tsx.
 
 /**
+ * L'INDICATIF du convoi, tel qu'il s'affiche ET tel qu'il se colle (#68).
+ *
+ * Vide sans voyage : il n'y a pas de convoi sans parcours. La CLÉ vient du parcours (elle est tirée
+ * une fois et persistée avec lui) ; le COMPTE vient du champ `#escortes` de la barre de réglages,
+ * lu comme `#ship` l'est déjà dans `planHypotheses` — la vue de conclusion RÉCAPITULE ce qui a été
+ * réglé ailleurs, elle ne l'offre pas à la modification.
+ */
+export function planConvoi(): string {
+  return etat.JOURNEY ? texteConvoi(etat.JOURNEY.convoi, Number(champ("escortes")) || 0) : "";
+}
+
+/**
  * Les ZONES À RISQUE du parcours courant (#69). `termByName` porte le booléen `outpost` ; tant que
  * le marché n'est pas là, la table est vide et `estAvantPoste` rend faux — on ne suppose pas
  * l'avant-poste, on se contente du palier du système.
@@ -81,12 +93,13 @@ export function planZonesRisque() {
   return risquesDuParcours(stations, (nom) => !!termByName.get(nom)?.outpost).zones;
 }
 
-/** L'EN-TÊTE : les quatre hypothèses, reprises en texte et en lecture seule, et les zones à risque. */
+/** L'EN-TÊTE : l'indicatif du convoi, les quatre hypothèses en lecture seule, les zones à risque. */
 export function EnTetePlan() {
   return enTetePlan({
     hypotheses: planHypotheses(readFilters()),
     vaisseau: vaisseauChoisi(),
     zones: planZonesRisque(),
+    convoi: planConvoi(),
   });
 }
 
