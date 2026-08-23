@@ -13,6 +13,7 @@
 import { fmt, signe } from "../format.ts";
 import { Fragment } from "react";
 import { IconeCommodite } from "./communs.tsx";
+import type { ZoneRisque } from "../types.ts";
 
 type Fmt = (n: number) => string;
 
@@ -45,7 +46,7 @@ export type DonneesPlan = {
 
 const classeProfit = (n: number) => (n < 0 ? "perte" : "profit");
 
-export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
+export function EnTetePlan({ hypotheses, zones }: { hypotheses: string[]; zones: ZoneRisque[] }) {
   return (
     <>
       <div className="plan-title">
@@ -62,6 +63,22 @@ export function EnTetePlan({ hypotheses }: { hypotheses: string[] }) {
            title="Ces quatre réglages changent le sens des chiffres ci-dessous. Pour les modifier, retourne dans une vue de recherche.">
         {hypotheses.join(" · ")}
       </div>
+      {/* Les ZONES À RISQUE (#69) : UNE ligne par système traversé, pas une par jambe qui y passe —
+          un bandeau qu'on voit trois fois, on ne le voit plus. Le calcul le garantit
+          (`risquesDuParcours` groupe par système), le rendu ne fait que le suivre.
+          Ce n'est pas un contrôle et ça n'en devient pas un : le risque ne pondère aucun chiffre de
+          la vue, il ne réordonne rien, il n'écarte aucune route. Et rien ne s'affiche quand le
+          parcours ne quitte pas Stanton : l'absence d'avertissement est déjà l'information. */}
+      {zones.length ? (
+        <ul className="plan-risques" id="planRisques">
+          {zones.map((z) => (
+            <li className={"plan-risque n" + z.niveau} key={z.systeme}>
+              <b>⚠ {z.systeme}</b> — {z.etiquette} : {z.nature}
+              {z.avantPoste ? " · avant-poste sur le parcours" : ""}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </>
   );
 }
@@ -193,5 +210,5 @@ export function CorpsPlan({ d }: { d: DonneesPlan }) {
   );
 }
 
-export const enTetePlan = (hypotheses: string[]) => <EnTetePlan hypotheses={hypotheses} />;
+export const enTetePlan = (hypotheses: string[], zones: ZoneRisque[]) => <EnTetePlan hypotheses={hypotheses} zones={zones} />;
 export const corpsPlan = (d: DonneesPlan) => <CorpsPlan d={d} />;

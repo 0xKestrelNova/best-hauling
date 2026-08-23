@@ -17,7 +17,7 @@ import { lineProfitText } from "./frais.ts";
 import { showToast } from "./messages.ts";
 import { saveState, shareURL } from "./persistance.ts";
 import { manifesteCourant } from "./manifeste-donnees.ts";
-import { planData, planHypotheses } from "./vues/plan-vue.tsx";
+import { planData, planHypotheses, planZonesRisque } from "./vues/plan-vue.tsx";
 
 import type { Noeud } from "./types.ts";
 // La CIBLE d'un événement, typée. `e.target` est un `EventTarget` : il n'a ni `closest`, ni
@@ -75,6 +75,12 @@ export function copierPlan() {
     });
   } else {
     lignes.push("Parcours : aucun voyage engagé.");
+  }
+  // Les zones à risque voyagent avec le récapitulatif : collé dans un salon, un plan qui traverse
+  // Pyro sans le dire perd très exactement ce que #69 est venu ajouter.
+  const zones = planZonesRisque();
+  if (zones.length) {
+    lignes.push(`Zones à risque : ${zones.map((z) => `⚠ ${z.systeme} — ${z.etiquette} : ${z.nature}`).join(" · ")}`);
   }
   if (d.groupes.length) {
     lignes.push(`Soute : ${d.groupes.map((g) => `${fmt(g.units)} SCU ${g.name}`).join(" · ")}`);
