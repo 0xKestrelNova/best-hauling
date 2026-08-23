@@ -1616,6 +1616,14 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
   margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--text);
   letter-spacing: 0.3px;
 }
+/* La vignette du vaisseau (#178). Elle ACCOMPAGNE le texte des hypothèses, elle ne le remplace pas :
+   sans photo — 20 vaisseaux sur 128 n'en ont pas, et une URL peut échouer — le nom seul reste, déjà
+   première hypothèse. Elle n'est pas activable : afficher n'est pas régler (ADR-004, amendement). */
+.plan-hyp { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.plan-vaisseau {
+  flex: 0 0 auto; width: 64px; height: 36px; object-fit: cover; border-radius: 3px;
+  border: 1px solid var(--line); background: rgb(var(--text-fort-rgb) / 0.04);
+}
 /* La carte reprend TOUTE la largeur, contrairement à sa colonne de 460 px d'avant : c'est l'objet
    qu'on vient voir en grand. Le dessin garde un plafond (un disque étiré ne gagne rien) mais bien
    plus haut que les 760 px du bandeau. */

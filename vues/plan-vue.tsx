@@ -14,6 +14,7 @@ import { globalK } from "../frais.ts";
 import { findCommodity } from "../marche.ts";
 import { withMarket } from "../donnees.ts";
 import { jambeChargee, legEffectiveLines, legFeeCtx } from "../voyage-donnees.ts";
+import { vaisseauChoisi } from "../selecteur.ts";
 import { corpsPlan, enTetePlan } from "./plan.tsx";
 
 const champ = (id: string): string =>
@@ -69,7 +70,7 @@ export function planData() {
 
 /** L'EN-TÊTE : les quatre hypothèses, reprises en texte et en lecture seule. */
 export function EnTetePlan() {
-  return enTetePlan(planHypotheses(readFilters()));
+  return enTetePlan({ hypotheses: planHypotheses(readFilters()), vaisseau: vaisseauChoisi() });
 }
 
 /** LE CORPS : le parcours, la soute, les jambes, ce qu'il reste à faire. */

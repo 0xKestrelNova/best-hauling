@@ -426,3 +426,45 @@ test("Plan de vol : le récapitulatif d'étapes déplace « je suis ici », comm
   await expect(ici()).toHaveCount(1);
   expect((await ici().first().innerText()).trim()).toBe(avant.trim());
 });
+
+// #178 : la vue qui récapitule les hypothèses montrait le NOM du vaisseau, jamais son image — alors
+// que l'image existe, chargée par le sélecteur, et qu'elle ne s'édite pas. L'ADR-004 a dit « on n'y
+// change rien », jamais « on n'y montre rien » : afficher n'est pas un geste (amendement, #182).
+test("Plan de vol : l'image du vaisseau accompagne les hypothèses, sans les rendre modifiables (#178)", async ({ page }) => {
+  // Un vaisseau AVEC photo, choisi par le sélecteur — donc par le même chemin qu'un utilisateur.
+  await page.click("#ship");
+  await expect(page.locator("#shipList li").first()).toBeVisible();
+  const avecPhoto = page.locator("#shipList li").first();
+  const nom = (await avecPhoto.locator("span").first().innerText()).trim();
+  await avecPhoto.click();
+
+  await page.click("#viewPlan");
+  const hyp = page.locator("#planHypotheses");
+  await expect(hyp).toContainText(nom);
+
+  // L'image est là, elle a une source https, et elle N'EST PAS activable : pas de bouton, pas de
+  // rôle, pas de curseur de main — la rendre cliquable la ferait basculer du côté interdit.
+  const img = hyp.locator(".plan-vaisseau");
+  await expect(img).toBeVisible();
+  await expect(img).toHaveAttribute("src", /^https:\/\//);
+  expect(await img.evaluate((e) => e.closest("button, a") !== null), "l'image n'est pas activable").toBe(false);
+  expect(await img.evaluate((e) => getComputedStyle(e).cursor)).not.toBe("pointer");
+
+  // Et la vue reste une conclusion. Ce n'est PLUS `#shipJourneyRow` qu'on regarde — #180 l'a
+  // démasquée pour y faire tenir la déclaration — mais `#shipCard`, la carte ÉDITABLE du sélecteur :
+  // la vignette montre l'image sans ramener le choix. C'est exactement la frontière de l'ADR-004.
+  await expect(page.locator("#shipCard")).toBeHidden();
+});
+
+// #178, l'autre moitié : 20 vaisseaux sur 128 n'ont pas de photo, et une URL distante peut échouer.
+// Le repli n'est pas un trou — c'est le NOM SEUL, qui est déjà la première hypothèse.
+test("Plan de vol : sans photo, le nom du vaisseau suffit — aucun trou (#178)", async ({ page }) => {
+  const sansPhoto = await page.evaluate(() =>
+    fetch("data/ships.json").then((r) => r.json()).then((l) => (l.find((s) => !s.photo) || {}).name || null));
+  test.skip(!sansPhoto, "tous les vaisseaux de l'instantané ont une photo");
+
+  await page.fill("#ship", sansPhoto);
+  await page.click("#viewPlan");
+  await expect(page.locator("#planHypotheses")).toContainText(sansPhoto);
+  await expect(page.locator("#planHypotheses .plan-vaisseau")).toHaveCount(0);
+});
