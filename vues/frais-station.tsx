@@ -27,10 +27,13 @@
 // La clé porte donc le relevé lui-même. Le store ne change que sur un geste délibéré (Enregistrer,
 // Oublier), jamais au milieu d'une saisie : le remontage ne peut pas tomber sur une frappe.
 import { autoloadFee, tailleRetenue } from "../logic.ts";
-import type { Terminal } from "../types.ts";
+import type { ReleveTemps, Terminal } from "../types.ts";
 import { etat } from "../etat.ts";
-import { fmt } from "../format.ts";
-import { alKey, kFmt, kFor } from "../frais.ts";
+import { dureeTexte, fmt } from "../format.ts";
+import { alKey, kFmt, kFor, tempsDe, tempsPour } from "../frais.ts";
+
+const heure = (ms: number): string =>
+  new Date(ms).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
 // `taille` est ABSENTE des relevés faits avant l'ADR-014 : ils ont été pris sous le découpage
 // glouton, donc leur k porte l'erreur de caissage. On ne les recalcule pas — on ne sait pas quelle
@@ -87,6 +90,9 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
   // La taille du RELEVÉ, elle, décrit la mesure — pas la facturation — et se dit à part quand les
   // deux diffèrent.
   const tailleMoteur = tailleRetenue(terminal.maxBox);
+  // Le chronomètre appartient à UNE station : celle où le chargement a commencé. Affiché ailleurs,
+  // il laisserait croire qu'on peut l'arrêter d'où l'on veut — or `arreterChrono` refuse.
+  const chrono = etat.CHRONO && etat.CHRONO.terminal === terminal.name ? etat.CHRONO : null;
 
   return (
     <Panneau nom={terminal.name}>
@@ -120,7 +126,72 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
           : ""}
         {" "}Charger en plus grosses caisses coûte moins cher : c'est un choix, pas une fatalité du comptoir.
       </div>
+
+      {/* ── Le CHRONOMÈTRE (#192) ──────────────────────────────────────────────────────────────
+          Pas de champ de quantité en propre : ce panneau décrit UN chargement observé, et `#alScu`
+          / `#alBox` le décrivent déjà. Deux champs de plus les dupliqueraient, et rien ne
+          garantirait qu'ils disent la même chose que la ligne du dessus.
+          Le chrono ne TIQUE PAS. Il n'a rien à afficher qui bouge : la mesure est la différence
+          entre deux instants, et une horloge qui s'anime coûterait un minuteur dans une
+          application qui re-rend déjà beaucoup — pour zéro précision de plus. */}
+      <div className="fee-row">
+        <span>Temps de chargement</span>
+        <input id="alSec" type="number" min="1" step="1" defaultValue=""
+               placeholder="ex : 145" aria-label="Durée observée, en secondes" />
+        <span>s</span>
+        <button id="alTSave" type="button" className="copy-btn">Enregistrer</button>
+        {chrono ? (
+          <>
+            <button id="alChronoStop" type="button" className="copy-btn">⏹ Arrêter et enregistrer</button>
+            <button id="alChronoCancel" type="button" className="corr-del"
+                    title="Abandonner ce chronométrage" aria-label="Abandonner ce chronométrage">✕</button>
+          </>
+        ) : (
+          <button id="alChronoStart" type="button" className="copy-btn">▶ Chronométrer</button>
+        )}
+      </div>
+      {/* Classe DISTINCTE de `.fee-note`, et pas seulement pour le style : quatre tests e2e
+          ciblent `#correctionsFees .fee-note` en supposant un seul élément, et un second le
+          ferait basculer en violation de mode strict — vert en local tant que le panneau ne
+          rend qu une note, rouge dès qu il en rend deux. */}
+      <div className="fee-temps">{noteTemps(terminal, chrono)}</div>
     </Panneau>
+  );
+}
+
+/** Ce que les chronométrages de cette station disent — et RIEN si on n'en a aucun.
+ *
+ *  C'est la règle du ticket, et elle n'est pas cosmétique : le jeu ne publie aucune durée (mesuré
+ *  sur 158 journaux), donc tout temps affiché sans mesure serait une invention. Le dépôt met déjà
+ *  un « ≈ » sur des montants calibrés à 2,8 % près ; un temps est bien plus incertain que ça.
+ */
+function noteTemps(terminal: Terminal, chrono: { debut: number } | null): React.ReactNode {
+  if (chrono) {
+    return (
+      <>Chronomètre en marche depuis <b>{heure(chrono.debut)}</b> — reviens l'arrêter quand la soute
+      est pleine. La quantité et la taille de caisse seront celles des champs ci-dessus.</>
+    );
+  }
+  const t = tempsPour(terminal.name);
+  if (!t) {
+    return (
+      <>Aucun temps relevé ici. Le jeu n'en publie aucun — ni début, ni fin, ni progression de
+      chargement au journal —, donc rien ne peut être estimé tant que tu n'as pas mesuré.</>
+    );
+  }
+  return (
+    <>
+      Temps relevé : <b>{dureeTexte(t.moyenne)}</b> sur {t.n} relevé{t.n > 1 ? "s" : ""}
+      {/* À un seul relevé la dispersion n'existe PAS. Écrire « ±0 s » ferait passer une mesure
+          unique pour une certitude, ce qui est l'inverse de ce qu'on veut dire. */}
+      {t.dispersion == null
+        ? " — une seule mesure, donc aucune dispersion : à confirmer."
+        : ` (±${dureeTexte(t.dispersion)}, de ${dureeTexte(t.min)} à ${dureeTexte(t.max)})`}
+      {t.parScu != null && t.parCaisse != null
+        ? ` — soit ${t.parScu.toFixed(1)} s par SCU et ${t.parCaisse.toFixed(0)} s par caisse, sur l'ensemble des relevés.`
+        : ""}
+      {" "}Un temps dépend aussi de la charge du shard : il est plus bruité qu'un tarif.
+    </>
   );
 }
 
@@ -159,6 +230,40 @@ export function ListeAutoload() {
 }
 
 /**
+ * La liste des chronométrages, station par station. Chaque MESURE y figure — jamais leur moyenne :
+ * c'est le relevé qui fait foi, et une moyenne pré-digérée serait illisible le jour où la grille de
+ * temps du jeu changerait.
+ */
+export function ListeTemps() {
+  const cles = Object.keys(etat.AUTOLOAD_T).sort();
+  if (!cles.length) return null;
+  const total = cles.reduce((a, c) => a + ((etat.AUTOLOAD_T[c] as ReleveTemps[]) || []).length, 0);
+  return (
+    <>
+      <div className="corr-list-head">
+        <span>{total} chronométrage{total > 1 ? "s" : ""} d'autoload</span>
+        <button id="resetAllT" className="reset-ov">Tout oublier</button>
+      </div>
+      {cles.map((cle) => {
+        const liste = (etat.AUTOLOAD_T[cle] as ReleveTemps[]) || [];
+        const terminal = cle.slice(cle.indexOf("|") + 1);
+        return liste.map((o, i) => (
+          <div className="corr-item autoload" key={`${cle}#${i}`}>
+            <div>
+              <b>{terminal}</b> <span className="corr-side">chrono</span>
+              <div className="loc-sub"><b>{dureeTexte(o.s)}</b> pour {fmt(o.scu)} SCU
+                {" "}en {fmt(o.caisses)} caisse{o.caisses > 1 ? "s" : ""} de {fmt(o.taille)} SCU</div>
+            </div>
+            <button className="corr-del al-tdel" data-key={cle} data-rang={String(i)}
+                    title="Oublier ce chronométrage">✕</button>
+          </div>
+        ));
+      })}
+    </>
+  );
+}
+
+/**
  * Le conteneur `#correctionsFees` en entier : le panneau de la station affichée, puis les relevés.
  *
  * `key` porte l'IDENTITÉ DU RELEVÉ et pas seulement la station — voir l'en-tête. Sans elle, les
@@ -167,12 +272,23 @@ export function ListeAutoload() {
  */
 export function PanneauFrais({ terminal }: { terminal: Terminal | null }) {
   const rec = terminal ? (etat.AUTOLOAD_K[alKey(terminal.name)] as Releve | undefined) : undefined;
+  // La `key` porte AUSSI le nombre de chronométrages : `#alSec` est un champ non contrôlé, donc
+  // sans remontage il garderait à l'écran la durée qu'on vient d'enregistrer — prête à être
+  // enregistrée une seconde fois. Même raison que pour le relevé de tarif, en-tête.
+  //
+  // Le CHRONO EN COURS, lui, n'y est PAS, et c'est le contraire d'un oubli. L'y mettre remonte le
+  // panneau au démarrage du chronomètre, et les trois champs non contrôlés repartent à leur
+  // `defaultValue` : on tape 64 SCU, on presse ▶, on charge, on presse ⏹ — et la mesure se persiste
+  // pour 32 SCU, sans que rien à l'écran ne le démente. Le ▶ qui devient ⏹ n'a besoin d'aucun
+  // remontage : React réconcilie ces boutons comme n'importe quels enfants. Trouvé par l'e2e.
+  const nTemps = terminal ? tempsDe(terminal.name).length : 0;
   return (
     <>
       {terminal ? (
-        <FraisStation key={`${terminal.name}|${rec ? `${rec.amount}/${rec.scu}` : ""}`} terminal={terminal} />
+        <FraisStation key={`${terminal.name}|${rec ? `${rec.amount}/${rec.scu}` : ""}|${nTemps}`} terminal={terminal} />
       ) : null}
       <ListeAutoload />
+      <ListeTemps />
     </>
   );
 }

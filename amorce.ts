@@ -38,7 +38,7 @@ import type { Boucle, Meta, Route } from "./types.ts";
 import { loadOverrides } from "./corrections.ts";
 import { updateOvBadge } from "./corrections-actions.ts";
 import { showToast } from "./messages.ts";
-import { loadAutoloadK } from "./frais.ts";
+import { loadAutoloadK, loadAutoloadT } from "./frais.ts";
 import { applyState, loadState } from "./persistance.ts";
 import { brancher } from "./donnees.ts";
 import { basculerVue, brancherNavigation } from "./navigation.ts";
@@ -103,6 +103,7 @@ async function init() {
 
   loadOverrides();
   loadAutoloadK();
+  loadAutoloadT();
   loadJourneyEdits();
   loadJourneyPins();
   loadManifestEdit();

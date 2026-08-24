@@ -35,6 +35,20 @@ export const fmtFee = (n: number, fees: number): string => (fees > 0 ? "≈ " + 
  */
 export const signe = (n: number, texte: string): string => (n < 0 ? texte : "+" + texte);
 
+// ── Les DURÉES ─────────────────────────────────────────────────────────────────────────────────
+// Un chargement se compte en minutes, pas en secondes : « 145 s » demande une division mentale à
+// chaque lecture. On garde les secondes sous la minute, où elles se lisent seules.
+// L'arrondi porte sur les SECONDES, jamais sur les minutes : « 2 min » pour 149 s effacerait
+// 29 secondes, soit 20 % d'un relevé — sur une mesure déjà bruitée, c'est le genre de perte qui
+// se déguise en précision.
+export const dureeTexte = (s: number | null | undefined): string => {
+  const n = Math.round(Number(s) || 0);
+  if (!(n > 0)) return "—";
+  if (n < 60) return `${n} s`;
+  const min = Math.floor(n / 60), rest = n % 60;
+  return rest ? `${min} min ${rest} s` : `${min} min`;
+};
+
 // ── Les libellés de CAISSES ────────────────────────────────────────────────────────────────────
 // Ex. « 3×32 ». Le second paramètre est la taille EMPLOYÉE, et depuis #194 elle vaut par couple
 // (comptoir, COMMODITÉ) : chaque appelant passe donc celle de sa LIGNE, et retombe sur le plafond

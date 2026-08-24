@@ -61,6 +61,13 @@ export interface Etat {
   CHARGEMENTS: Chargements;
   DEPOTS: Entrepots;
   AUTOLOAD_K: Record<string, unknown>;
+  /** Les chronométrages d'autoload (#192), par station : une LISTE par clé, pas une mesure unique.
+   *  Un temps est bruité par le shard — un seul relevé ne dit presque rien, et c'est la dispersion
+   *  de plusieurs qui porte l'information. */
+  AUTOLOAD_T: Record<string, unknown>;
+  /** Le chronomètre EN COURS, ou null. Persisté pour survivre à un rechargement : perdre trois
+   *  minutes de mesure parce qu'on a rafraîchi la page rendrait l'outil inutilisable. */
+  CHRONO: { terminal: string; debut: number } | null;
   MANIFEST_EDIT: CompositionManifeste | null; // { from, fromSystem, to, toSystem, lines[] } ou null
   OVERRIDES: StoreCorrections;
 
@@ -103,6 +110,8 @@ export const etat: Etat = {
   CHARGEMENTS: {},
   DEPOTS: {},
   AUTOLOAD_K: {},
+  AUTOLOAD_T: {},
+  CHRONO: null,
   MANIFEST_EDIT: null,
   OVERRIDES: {},
 

@@ -636,6 +636,123 @@ test("relevé : la taille de caisse EMPLOYÉE entre dans le coefficient (#193)",
   expect(errors).toEqual([]);
 });
 
+// ══ #192 : chronométrer l'autoload ════════════════════════════════════════════════════════════
+// Le jeu ne publie AUCUNE durée — mesuré sur 158 journaux, `autoLoading` n'y est qu'un drapeau de
+// requête d'achat. Le temps se chronomètre donc à la main, et la règle du ticket est stricte : ne
+// RIEN afficher tant que rien n'est mesuré.
+
+/** Ouvre le panneau de frais d'une station et rend son libellé. */
+async function panneauStation(page) {
+  await page.click("#viewCorrections");
+  await expect(page.locator("#correctionsControls")).toBeVisible();
+  const label = await page.locator("#stationList option").first().getAttribute("value");
+  await page.fill("#station", label);
+  await expect(page.locator("#alSec")).toBeVisible();
+  return label;
+}
+
+test("chrono : sans mesure, la station ne prétend RIEN estimer (#192)", async ({ page }) => {
+  const errors = watchErrors(page);
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await panneauStation(page);
+
+  // C'est LE garde-fou du ticket : pas de temps inventé, et la raison est dite.
+  await expect(page.locator(".fee-temps")).toContainText("Aucun temps relevé ici");
+  await expect(page.locator(".fee-temps")).toContainText("Le jeu n'en publie aucun");
+  // Non vacuisant : aucune durée ne doit s'afficher, pas même un « 0 s ».
+  await expect(page.locator(".fee-temps")).not.toContainText(" s sur ");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("chrono : une mesure SEULE n'a pas de dispersion, deux en ont une (#192)", async ({ page }) => {
+  const errors = watchErrors(page);
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await panneauStation(page);
+
+  // Premier relevé, saisi à la main : 145 s pour 32 SCU en caisses de 32 -> UNE caisse.
+  await page.fill("#alScu", "32");
+  await page.fill("#alSec", "145");
+  await page.click("#alTSave");
+  await expect(page.locator(".fee-temps")).toContainText("2 min 25 s");
+  await expect(page.locator(".fee-temps")).toContainText("sur 1 relevé");
+  // Le point du test : « ±0 s » ferait passer une mesure unique pour une certitude.
+  await expect(page.locator(".fee-temps")).toContainText("aucune dispersion");
+  await expect(page.locator(".fee-temps")).not.toContainText("±");
+  await expect(page.locator(".corr-item.autoload")).toContainText("2 min 25 s pour 32 SCU");
+
+  // Le champ est REVENU À VIDE : sans remontage, la durée déjà enregistrée resterait à l'écran,
+  // prête à être enregistrée une seconde fois.
+  await expect(page.locator("#alSec")).toHaveValue("");
+
+  // Deuxième relevé, à la touche Entrée — la garde distingue `#alSec` des trois champs de tarif.
+  await page.fill("#alSec", "245");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".fee-temps")).toContainText("sur 2 relevés");
+  await expect(page.locator(".fee-temps")).toContainText("±");
+  await expect(page.locator(".fee-temps")).toContainText("de 2 min 25 s à 4 min 5 s");
+  // La moyenne de 145 et 245 vaut 195 s, soit 3 min 15 s. Non vacuisant : ni l'un ni l'autre.
+  await expect(page.locator(".fee-temps")).toContainText("3 min 15 s");
+  expect(errors).toEqual([]);
+});
+
+test("chrono : ▶ puis ⏹ enregistre la mesure, et le ✕ l'oublie (#192)", async ({ page }) => {
+  const errors = watchErrors(page);
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await panneauStation(page);
+
+  await page.fill("#alScu", "64");
+  await page.click("#alChronoStart");
+  await expect(page.locator(".fee-temps")).toContainText("Chronomètre en marche depuis");
+  await expect(page.locator("#alChronoStop")).toBeVisible();
+  // Le bouton de démarrage a cédé la place : on ne peut pas lancer deux chronos.
+  await expect(page.locator("#alChronoStart")).toHaveCount(0);
+
+  // Une seconde pleine, sinon la mesure est nulle et le geste refusé — ce qui est correct : un
+  // chargement de zéro seconde n'est pas une mesure.
+  await page.waitForTimeout(1100);
+  await page.click("#alChronoStop");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(1);
+  // La quantité tapée AVANT le démarrage doit survivre au chronométrage : si le panneau remonte
+  // entre ▶ et ⏹, elle repart à 32 et la mesure se range sous une quantité qu'on n'a pas chargée.
+  await expect(page.locator(".corr-item.autoload")).toContainText("pour 64 SCU");
+  await expect(page.locator(".corr-item.autoload")).toContainText("2 caisses de 32 SCU");
+  await expect(page.locator("#alChronoStart")).toBeVisible();
+
+  // Le ✕ n'oublie QUE ce chronométrage — il porte aussi la classe des ✕ de correction, donc il
+  // tomberait sinon dans la branche qui écrit dans les corrections de prix.
+  await page.click(".corr-item.autoload .al-tdel");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
+  await expect(page.locator(".fee-temps")).toContainText("Aucun temps relevé ici");
+  expect(errors).toEqual([]);
+});
+
+test("chrono : le ✕ du chronomètre en cours n'enregistre rien (#192)", async ({ page }) => {
+  const errors = watchErrors(page);
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await panneauStation(page);
+
+  await page.click("#alChronoStart");
+  await expect(page.locator(".fee-temps")).toContainText("Chronomètre en marche");
+  await page.waitForTimeout(1100);
+  await page.click("#alChronoCancel");
+  await expect(page.locator(".fee-temps")).toContainText("Aucun temps relevé ici");
+  await expect(page.locator(".corr-item.autoload")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("infobulle : la taille de caisse est nommée sans casser le décompte des commodités (#193)", async ({ page }) => {
   // Piège mesuré : la regex de `feeDetail` capture `caisses?([^·]*)` et lit tout chiffre qui s'y
   // trouve comme un NOMBRE DE COMMODITÉS. Écrire « en 20 caisses DE 32 SCU, chargement… » lui fait

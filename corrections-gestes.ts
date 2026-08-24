@@ -7,8 +7,10 @@
 //
 // ── L'ORDRE DES BRANCHES EST UN CONTRAT, ET AUCUN TEST NE LE TESTE ────────────────────────────
 // Les tests exercent chaque bouton isolément ; c'est l'enchaînement qui porte les deux règles :
-//   1. `.al-del` en PREMIER. Le ✕ d'un relevé d'autoload porte AUSSI `.corr-del` (c'est le même
-//      bouton à l'écran) et tomberait sinon dans une branche qui écrit dans `OVERRIDES` ;
+//   1. `.al-del`, `.al-tdel` et `#alChronoCancel` en PREMIER. Ces trois ✕ portent AUSSI `.corr-del`
+//      (c'est le même bouton à l'écran) et tomberaient sinon dans une branche qui écrit dans
+//      `OVERRIDES`. `.al-tdel` (#192) est distinct de `.al-del` : il oublie UN chronométrage, repéré
+//      par sa clé ET son rang, là où un relevé de tarif est unique par station ;
 //   2. `#exportCorrections` AVANT `#resetAll` — rien ne s'efface sans qu'on ait pu l'emporter.
 //
 // La branche `.corr-del` générique a disparu : elle était MORTE. Les deux seuls producteurs de
@@ -18,7 +20,10 @@
 import { stationLabel } from "./logic.ts";
 import { debounce, rafraichir } from "./rendu.ts";
 import { effacerStation, effacerToutesLesCorrections, revenirAUEX } from "./corrections-actions.ts";
-import { enregistrerReleve, oublierReleve, oublierTousLesReleves } from "./frais-actions.ts";
+import {
+  annulerChrono, arreterChrono, demarrerChrono, enregistrerReleve, enregistrerTemps,
+  oublierReleve, oublierTemps, oublierTousLesReleves, oublierTousLesTemps,
+} from "./frais-actions.ts";
 import { copierCorrections } from "./presse-papiers.ts";
 import { termByName } from "./marche.ts";
 import { saveState } from "./persistance.ts";
@@ -54,6 +59,12 @@ export function brancherGestesCorrections() {
     const relDel = cible(e).closest(".al-del"); // EN PREMIER : voir l'en-tête
     if (relDel) { oublierReleve(relDel.dataset.key); return; }
 
+    // Un chronométrage s'oublie par sa clé ET son rang : une station en porte plusieurs (#192).
+    const tpsDel = cible(e).closest(".al-tdel") as HTMLElement | null;
+    if (tpsDel) { oublierTemps(tpsDel.dataset.key, Number(tpsDel.dataset.rang)); return; }
+    // Le ✕ du chrono en cours porte lui aussi `.corr-del` : il passe donc avant tout le reste.
+    if (cible(e).closest("#alChronoCancel")) { annulerChrono(); return; }
+
     // Vignette de la bande : recharge sa station. Écrit le LIBELLÉ CANONIQUE, comme le sélecteur —
     // la résolution est exacte, et c'est ce libellé-là que le permalien transporte.
     const tuile = cible(e).closest(".stn-tile") as HTMLButtonElement | null;
@@ -76,18 +87,27 @@ export function brancherGestesCorrections() {
     if (cible(e).closest("#stnClear")) { effacerStation(); return; }
     if (cible(e).closest("#alSave")) { enregistrerReleve(); return; }
     if (cible(e).closest("#resetAllK")) { oublierTousLesReleves(); return; }
+    if (cible(e).closest("#alTSave")) { enregistrerTemps(); return; }
+    if (cible(e).closest("#alChronoStart")) { demarrerChrono(); return; }
+    if (cible(e).closest("#alChronoStop")) { arreterChrono(); return; }
+    if (cible(e).closest("#resetAllT")) { oublierTousLesTemps(); return; }
     if (cible(e).closest("#exportCorrections")) { copierCorrections(); return; } // AVANT #resetAll
     if (cible(e).closest("#resetAll")) effacerToutesLesCorrections();
   });
 
-  // Validation du relevé d'autoload à la touche Entrée. Testé par `champ(e).id` et non par
-  // `closest()` : les deux `<input>` sont rendus NON CONTRÔLÉS (`defaultValue`) par
-  // `vues/frais-station.tsx`, dont la `key` porte le relevé lui-même. Les passer à `value=` les
-  // gèlerait — c'est écrit en toutes lettres dans l'en-tête de ce composant.
+  // Validation à la touche Entrée. Testé par `champ(e).id` et non par `closest()` : les `<input>`
+  // sont rendus NON CONTRÔLÉS (`defaultValue`) par `vues/frais-station.tsx`, dont la `key` porte le
+  // relevé lui-même. Les passer à `value=` les gèlerait — c'est écrit en toutes lettres dans
+  // l'en-tête de ce composant.
+  //
+  // DEUX gestes, pas un : `#alSec` (#192) partage la quantité et la taille de caisse avec la ligne
+  // du tarif, mais il enregistre un CHRONOMÉTRAGE. Le faire tomber dans `enregistrerReleve`
+  // persisterait un tarif là où l'utilisateur croit poser un temps — et sans rien afficher qui le
+  // démente, puisque les deux relevés vivent dans le même panneau.
   $("corrections").addEventListener("keydown", (e) => {
-    if (["alAmount", "alScu", "alBox"].includes(champ(e).id) && e.key === "Enter") {
-      e.preventDefault();
-      enregistrerReleve();
-    }
+    if (e.key !== "Enter") return;
+    const id = champ(e).id;
+    if (["alAmount", "alScu", "alBox"].includes(id)) { e.preventDefault(); enregistrerReleve(); return; }
+    if (id === "alSec") { e.preventDefault(); enregistrerTemps(); }
   });
 }

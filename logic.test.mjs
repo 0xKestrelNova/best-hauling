@@ -7,6 +7,7 @@ import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, tighterVolume,
   scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, caissesDe, tailleRetenue, nombreDeCaisses, TAILLE_CAISSE_DEFAUT, cargoBoxes, bestChain, chainLegNet,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
+  tempsStation, TEMPS_MIN_DISPERSION, tempsPlausible, TEMPS_PLAUSIBLE_MAX,
   tailleOfferte, pointPourCommodite,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
@@ -32,7 +33,7 @@ import {
   exporterCorrections, relireCorrections, exporterEntrepots,
   tirerConvoi, indicatifConvoi, texteConvoi, nommerConvoi, CONVOIS, CONVOI_ESCORTES_MAX,
 } from "./logic.ts";
-import { scuBoxesLabel } from "./format.ts";
+import { dureeTexte, scuBoxesLabel } from "./format.ts";
 
 // ---------- Temps de trajet ----------
 test("tripMinutes : manutention + distance + saut inter-système", () => {
@@ -690,6 +691,108 @@ test("autoloadFee : à taille de caisse constante, le coût croît avec le volum
   assert.ok(autoloadFee(31, 32, 1) < autoloadFee(32, 32, 1), "31 SCU coûtent moins que 32");
   assert.equal(autoloadFee(31, 32, 1), 800);
   assert.equal(autoloadFee(32, 32, 1), 820);
+});
+
+// ---------- #192 : chronométrer l'autoload ----------
+// Le jeu ne publie AUCUNE durée — mesuré sur 158 journaux, `autoLoading` n'est qu'un drapeau de
+// requête. Ces nombres sont donc chronométrés à la main, et ils n'ont pas la nature d'un tarif :
+// un tarif est une grille qu'on retrouve à l'aUEC près, un temps est une performance bruitée par
+// le shard. D'où une moyenne ET une dispersion, et rien du tout sans mesure.
+const relT = (s, scu, caisses) => ({ s, scu, taille: 32, caisses, at: 1787571730 });
+
+test("tempsStation : sans relevé, on n'invente RIEN (#192)", () => {
+  // `null` et pas un objet à zéro : une station non mesurée n'a pas un temps de zéro seconde, elle
+  // n'a pas de temps. C'est ce que l'appelant doit pouvoir distinguer pour ne rien afficher.
+  assert.equal(tempsStation([]), null);
+  assert.equal(tempsStation(null), null);
+  assert.equal(tempsStation(undefined), null);
+});
+
+test("tempsStation : à UN relevé, la dispersion n'existe pas — elle vaut null, jamais 0 (#192)", () => {
+  const t = tempsStation([relT(145, 96, 3)]);
+  assert.equal(t.n, 1);
+  assert.equal(t.moyenne, 145);
+  assert.equal(t.min, 145);
+  assert.equal(t.max, 145);
+  // LE point du test : un « ±0 s » ferait passer une mesure unique pour une certitude, ce qui est
+  // l'inverse de ce que ce champ existe pour dire.
+  assert.equal(t.dispersion, null);
+  assert.equal(TEMPS_MIN_DISPERSION, 2);
+});
+
+test("tempsStation : la dispersion est celle d'un ÉCHANTILLON (n−1), pas d'une population (#192)", () => {
+  const t = tempsStation([relT(100, 32, 1), relT(200, 32, 1)]);
+  assert.equal(t.n, 2);
+  assert.equal(t.moyenne, 150);
+  // NON VACUISANT, et c'est tout l'intérêt de ces deux valeurs : l'écart-type de POPULATION vaudrait
+  // exactement 50 sur ce jeu-là. Le nôtre vaut √5000 ≈ 70,71. Les deux sont discernables, donc une
+  // implémentation en n au lieu de n−1 tombe ici.
+  assert.equal(Math.round(t.dispersion * 100) / 100, 70.71);
+  assert.notEqual(Math.round(t.dispersion), 50);
+  // Nos relevés sont un ÉCHANTILLON d'une population bruitée par le shard, jamais la population.
+  assert.equal(t.min, 100);
+  assert.equal(t.max, 200);
+});
+
+test("tempsStation : le débit est un TOTAL SUR TOTAL, pas une moyenne de rapports (#192)", () => {
+  // Un petit chargement et un gros. Moyenner leurs débits donnerait le même poids à 10 SCU qu'à
+  // 200, alors que le second en dit vingt fois plus.
+  const t = tempsStation([relT(60, 10, 1), relT(600, 200, 7)]);
+  //   total sur total : 660 s / 210 SCU = 3,143 s par SCU
+  //   moyenne des rapports : (6 + 3) / 2 = 4,5 — franchement différent, donc le test discrimine.
+  assert.equal(Math.round(t.parScu * 1000) / 1000, 3.143);
+  assert.notEqual(Math.round(t.parScu * 10) / 10, 4.5);
+  //   total sur total : 660 s / 8 caisses = 82,5 s par caisse
+  //   moyenne des rapports : (60 + 85,71) / 2 = 72,86
+  assert.equal(t.parCaisse, 82.5);
+  assert.notEqual(Math.round(t.parCaisse * 100) / 100, 72.86);
+});
+
+test("tempsStation : un relevé sans durée est écarté du CALCUL, jamais du store (#192)", () => {
+  // Une saisie ratée n'est pas une durée nulle. On ne la compte pas — elle tirerait la moyenne vers
+  // le bas sans rien mesurer — mais c'est l'utilisateur qui décide de l'oublier, pas nous : la
+  // fonction est PURE et ne touche à rien.
+  const releves = [relT(120, 32, 1), relT(0, 32, 1), relT(NaN, 32, 1), relT(-5, 32, 1)];
+  const t = tempsStation(releves);
+  assert.equal(t.n, 1);
+  assert.equal(t.moyenne, 120);
+  assert.equal(releves.length, 4, "tempsStation ne doit RIEN retirer de ce qu'on lui donne");
+});
+
+test("tempsStation : un dénominateur nul ne fabrique pas un débit (#192)", () => {
+  const t = tempsStation([{ s: 90, scu: 0, taille: 32, caisses: 0, at: 0 }]);
+  assert.equal(t.moyenne, 90);
+  assert.equal(t.parScu, null);
+  assert.equal(t.parCaisse, null);
+});
+
+test("tempsPlausible : la borne attrape le chrono oublié, pas un chargement lent (#192)", () => {
+  assert.equal(TEMPS_PLAUSIBLE_MAX, 3600);
+  assert.equal(tempsPlausible(145), true);
+  assert.equal(tempsPlausible(TEMPS_PLAUSIBLE_MAX), true);       // la borne est INCLUSE
+  assert.equal(tempsPlausible(TEMPS_PLAUSIBLE_MAX + 1), false);
+  // « 20 minutes pour un Carrack » est la seule anecdote trouvée sur le sujet : elle reste très en
+  // deçà de la borne, qui ne peut donc pas perdre une mesure réelle.
+  assert.equal(tempsPlausible(20 * 60), true);
+  // Une durée nulle ou négative n'est pas un chargement instantané, c'est une saisie ratée.
+  assert.equal(tempsPlausible(0), false);
+  assert.equal(tempsPlausible(-5), false);
+});
+
+test("dureeTexte : une durée se lit en minutes dès qu'elle en fait une (#192)", () => {
+  assert.equal(dureeTexte(45), "45 s");
+  assert.equal(dureeTexte(60), "1 min");
+  assert.equal(dureeTexte(145), "2 min 25 s");
+  assert.equal(dureeTexte(600), "10 min");
+  // L'arrondi porte sur les SECONDES : « 2 min » pour 149 s effacerait 29 secondes, soit 20 % d'un
+  // relevé — une perte qui se déguiserait en précision sur une mesure déjà bruitée.
+  assert.equal(dureeTexte(149), "2 min 29 s");
+  assert.equal(dureeTexte(149.4), "2 min 29 s");
+  // Rien de mesurable ne se lit « 0 s » : ça se lirait comme un chargement instantané.
+  assert.equal(dureeTexte(0), "—");
+  assert.equal(dureeTexte(null), "—");
+  assert.equal(dureeTexte(undefined), "—");
+  assert.equal(dureeTexte(-3), "—");
 });
 
 // ---------- Relevé de station : du montant payé au coefficient ----------
