@@ -157,6 +157,32 @@ export function maxBoxSize(t) {
   return n > 0 ? n : 32;
 }
 
+// Le VRAI plafond de caisse : celui du couple (comptoir, commodité), pas celui du comptoir (#194).
+// UEX publie `container_sizes` sur la LIGNE DE PRIX — la liste des tailles que CE comptoir propose
+// pour CETTE commodité — et le pipeline la téléchargeait depuis toujours sans rien en garder.
+// Mesuré le 2026-08-24 sur les 2 579 lignes qui la portent (sur 2 593) : `max(liste)` ÉGALE le
+// `max_container_size` du terminal 1 982 fois, lui est STRICTEMENT INFÉRIEUR 597 fois (23 %), et ne
+// le dépasse JAMAIS. `maxBoxSize` est donc un MAJORANT exact, jamais un plafond réel : sur près
+// d'un quart des points de marché, l'app prêtait au joueur des caisses plus grosses que ce que le
+// comptoir propose, et sous-estimait les frais d'autant. 103 comptoirs sur 123 (84 %) publient
+// plusieurs listes ; Ashland en publie sept sous un plafond terminal de 24, dont une commodité
+// offerte en caisses de 2 — douze fois plus de caisses que ce qui était facturé.
+// 0 = UEX se tait (14 lignes) : `tailleOfferte` (logic.ts) le lit comme une absence, et le calcul
+// retombe sur `Terminal.maxBox`. Le repli SOUS-ESTIME, il n'invente pas — même sens que maxBoxSize.
+// DETTE ASSUMÉE, à écrire noir sur blanc : c'est une LISTE, et 210 lignes ont des TROUS
+// (« 8,16,24,32 » sans 1/2/4). N'en garder que le maximum suffit tant qu'aucun réglage n'expose un
+// choix de taille (ADR-014) ; le jour où il en existera un, il devra proposer la liste réellement
+// offerte et non la grille théorique — et un simple nombre ne saura pas la porter.
+// Exportée pour être testée, comme sellDemand et maxBoxSize : sinon la règle vit au fond de main().
+export function tailleDeCaisse(p) {
+  let max = 0;
+  for (const brut of String(p.container_sizes ?? "").split(",")) {
+    const n = Number(brut.trim());
+    if (Number.isFinite(n) && n >= 1 && n > max) max = n;
+  }
+  return max;
+}
+
 // Capacités de soute relevées EN JEU, là où UEX se trompe. UEX est notre source, pas une autorité :
 // la soute borne le volume de fret, donc les unités, donc le profit et le classement de TOUTES les
 // vues — une valeur fausse ne se voit nulle part et fausse tout. La correction doit vivre ici et
@@ -279,6 +305,14 @@ function buildMarket(byCommodity, term) {
     index.set(id, i);
     return i;
   };
+  // Le 6e champ n'est écrit QUE s'il est connu. Un `null` en queue de tuple pèserait sur les
+  // 2 593 lignes du fichier sans rien dire de plus qu'une absence — et `tailleOfferte` (logic.ts)
+  // traite déjà les deux pareil. Les tuples publiés font donc 5 OU 6 champs : c'est le contrat, et
+  // `build-data.test.mjs` le vérifie. C'est aussi ce qui rend le changement rétro-compatible dans
+  // les DEUX sens — un instantané d'avant reste lisible, et un instantané d'après reste lisible par
+  // une coquille d'avant, qui ignore simplement le champ en trop.
+  const tuple = (idx, prix, vol, releve, statut, taille) =>
+    (taille > 0 ? [idx, prix, vol, releve, statut, taille] : [idx, prix, vol, releve, statut]);
   const commodities = [];
   for (const [, c] of byCommodity) {
     // Tout ce qui est VENDABLE entre, même sans point d'achat : le butin (minerais raffinés,
@@ -289,8 +323,8 @@ function buildMarket(byCommodity, term) {
     if (!c.sells.length) continue;
     commodities.push({
       name: c.name, code: c.code || "", kind: c.kind, illegal: c.illegal,
-      buys: c.buys.map((b) => [idxOf(b.id), b.price, b.stock, b.updated, b.status]),
-      sells: c.sells.map((s) => [idxOf(s.id), s.price, s.demand, s.updated, s.status]),
+      buys: c.buys.map((b) => tuple(idxOf(b.id), b.price, b.stock, b.updated, b.status, b.taille)),
+      sells: c.sells.map((s) => tuple(idxOf(s.id), s.price, s.demand, s.updated, s.status, s.taille)),
     });
   }
   return { terminals, commodities };
@@ -386,7 +420,7 @@ async function main() {
       byCommodity.set(p.id_commodity, c);
     }
     if (p.price_buy > 0) {
-      c.buys.push({ ...loc, price: numField(p.price_buy), stock: numField(p.scu_buy), updated: numField(p.date_modified), status: numField(p.status_buy) });
+      c.buys.push({ ...loc, price: numField(p.price_buy), stock: numField(p.scu_buy), updated: numField(p.date_modified), status: numField(p.status_buy), taille: tailleDeCaisse(p) });
     }
     if (p.price_sell > 0) {
       // Demande = capacité RESTANTE du terminal, jamais son stock. UEX expose `scu_sell` (capacité
@@ -397,7 +431,10 @@ async function main() {
       // vente (peu de stock, donc forte demande) paraissaient les plus contraints.
       // null = capacité inconnue (UEX ne renseigne scu_sell que sur ~11 % des points) -> pas de
       // plafond de volume, contrairement à 0 qui signifie « saturé, ne prend plus rien ».
-      c.sells.push({ ...loc, price: numField(p.price_sell), demand: sellDemand(p), updated: numField(p.date_modified), status: numField(p.status_sell) });
+      // Côté VENTE aussi : une cargaison acquise ailleurs (butin, minage, fret embarqué) n'a jamais
+      // été chargée ici, et `offloadPlan` facture alors son DÉCHARGEMENT à la taille de ce
+      // comptoir-ci pour cette commodité-là — sans elle, il retomberait sur le majorant du terminal.
+      c.sells.push({ ...loc, price: numField(p.price_sell), demand: sellDemand(p), updated: numField(p.date_modified), status: numField(p.status_sell), taille: tailleDeCaisse(p) });
     }
   }
 

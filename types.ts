@@ -359,8 +359,9 @@ export type Terminal = {
 /** Un point de marché de data/market.json : le tuple compact écrit par `buildMarket`
  *  (scripts/build-data.mjs:283-284) et déjà décrit en logic.ts:752 comme
  *  « [idxTerminal, prix, volume, updated, statut] ».
- *  Mesuré : 2 373 tuples, TOUS de longueur 5 — d'où un tuple nommé et non `number[]`, pour que
- *  `p[5]` soit une erreur et que les libellés s'affichent au survol.
+ *  Mesuré à sa création : 2 373 tuples, TOUS de longueur 5 — d'où un tuple nommé et non
+ *  `number[]`, pour que les libellés s'affichent au survol. Depuis #194 il en porte SIX, le
+ *  dernier optionnel : les deux longueurs coexistent, et c'est voulu (voir `taille`).
  *  Le premier élément est un INDEX dans `market.terminals`, jamais un nom : le nommer `terminal`
  *  induirait précisément l'erreur que `market.terminals[p[0]]` répare partout. */
 export type PointMarche = [
@@ -383,6 +384,20 @@ export type PointMarche = [
    *  approvisionné, 251 points sur 494. 0 = UEX n'a rien dit, d'où le `b[4] || 0` de logic.ts:1212.
    *  Pas d'union `1|2|…|7` : elle interdirait justement ce 0. */
   statut: number,
+  /** Plus grosse caisse que CE comptoir propose pour CETTE commodité — `max(container_sizes)` de
+   *  la ligne de prix UEX (#194). À ne pas confondre avec `Terminal.maxBox`, qui n'en est que le
+   *  MAJORANT : mesuré le 2026-08-24 sur 2 579 lignes, ce maximum égale le plafond du terminal
+   *  1 982 fois, lui est strictement INFÉRIEUR 597 fois (23 %), et ne le dépasse jamais.
+   *  OPTIONNEL, et il le restera : le service worker sert data/*.json en « réseau d'abord, cache
+   *  en repli », donc une coquille antérieure au build qui l'ajoute peut revenir à tout moment —
+   *  exactement le motif déjà écrit pour `autoload`/`maxBox`. `tailleOfferte` (logic.ts) est la
+   *  seule lecture autorisée : elle rend `undefined` pour l'absence COMME pour un 0 publié, et
+   *  l'appelant retombe alors sur le majorant du terminal.
+   *  DETTE ASSUMÉE : UEX publie une LISTE (« 1,2,4,8,16,24,32 »), pas un plafond, et 210 lignes ont
+   *  des trous (« 8,16,24,32 » sans 1/2/4). On n'en garde que le maximum, ce qui suffit tant
+   *  qu'aucun réglage n'expose un choix de taille (ADR-014) — le jour où il en existera un, il
+   *  devra proposer la liste et non la grille théorique. */
+  taille?: number,
 ];
 
 /** Le MÊME tuple, côté ACHAT, où le volume est un stock TOUJOURS publié : 494 sur 494 dans
@@ -392,7 +407,7 @@ export type PointMarche = [
  *  qui prennent les DEUX côtés ne bougent pas : `prix()` logic.ts:1201, `point()` logic.ts:1237.
  *  Ce qu'il achète : `computeUnits(b[1], b[2], …)` (logic.ts:798) et `stock: b[2]` (dealFrom,
  *  logic.ts:765) cessent de propager un `null` fantôme le jour où `strictNullChecks` passera. */
-export type PointAchatMarche = [idxTerminal: number, prix: number, stock: number, releve: number, statut: number];
+export type PointAchatMarche = [idxTerminal: number, prix: number, stock: number, releve: number, statut: number, taille?: number];
 
 export type CommoditeIdentite = { name: string; kind: string; illegal: boolean };
 
@@ -515,6 +530,14 @@ export type LigneManifeste = {
    *  PIÈGE : sur le TRAJET, `aBord` est un NOMBRE de SCU (app.js:989, :1250). Même nom, autre
    *  champ, autre type — ne pas réutiliser ce booléen pour typer `Trajet`. */
   aBord?: boolean;
+  /** Taille de caisse de CETTE commodité au comptoir de chargement (#194), recopiée du tuple de
+   *  marché par les cinq fabriques de lignes. C'est elle que `lineHaulFee` facture, et `cargoBoxes`
+   *  qui l'affiche — les deux DOIVENT lire la même, sinon le « 📦 » contredit le montant qu'il
+   *  explique. Elle vit sur la LIGNE et non sur le point de frais parce qu'un manifeste
+   *  multi-commodité en mélange plusieurs sous un seul comptoir : Ashland en publie sept.
+   *  `undefined` = instantané antérieur, ou ligne fabriquée à la main — le point de frais garde
+   *  alors la sienne, et le calcul est exactement celui d'avant #194. */
+  taille?: number;
 };
 
 // Les lecteurs qui n'en prennent qu'une part n'élargissent PAS ce type — ils annoncent leur propre
@@ -815,6 +838,10 @@ export type JambeChaine = {
   margin: number; buyPrice: number; sellPrice: number;
   stock: number | null; demand: number | null; demandKnown: boolean;
   fee: PaireFrais | null; buyUpdated?: number; sellUpdated?: number;
+  /** Taille de caisse de la commodité de l'arc (#194) — `ligneDuSaut` la relaie à la ligne qu'il
+   *  fabrique, sans quoi le chiffrage mono d'un saut retomberait sur le majorant du comptoir
+   *  pendant que le manifeste pré-calculé du même arc, lui, facture la bonne. */
+  taille?: number;
   lines?: LigneManifeste[]; net?: ChiffrageSaut;
 };
 

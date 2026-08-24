@@ -52,7 +52,8 @@ export type ProprietesManifeste = {
   suggestions: CandidatChargement[];
   /** L'espace et le budget qu'il reste — `manifestRemaining`, qui lit les filtres. */
   restant: RestantManifeste;
-  libelleCaisses: (units: number) => string;
+  /** `taille` = celle de la LIGNE (#194) ; sans elle, l'appelant retombe sur son propre repli. */
+  libelleCaisses: (units: number, taille?: number) => string;
   texteBoutFrais: (bout: unknown) => string;
   minutesTrajet: number;
   estCorrige: (commodite: string, terminal: string, cote: string, champ: string) => boolean;
@@ -290,7 +291,7 @@ function Ligne({ p, l, i }: { p: ProprietesManifeste; l: LigneManifeste; i: numb
       >
         {texteProfit}
       </span>
-      <span className="mboxes" title={`Caisses à charger pour ${l.units} SCU — une seule taille, la dernière éventuellement partielle`}>{`📦 ${p.libelleCaisses(l.units)}`}</span>
+      <span className="mboxes" title={`Caisses à charger pour ${l.units} SCU — une seule taille, la dernière éventuellement partielle`}>{`📦 ${p.libelleCaisses(l.units, l.taille)}`}</span>
     </div>
   );
 }

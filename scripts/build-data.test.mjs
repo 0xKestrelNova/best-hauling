@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  normalizeKind, routesForCommodity, buildBestLegs, buildMarket, sellDemand, maxBoxSize, numField,
+  normalizeKind, routesForCommodity, buildBestLegs, buildMarket, sellDemand, maxBoxSize, tailleDeCaisse, numField,
   MIN_TERMINALS, MIN_ROUTES, shipEntry, SCU_RELEVES,
 } from "./build-data.mjs";
 import { readFileSync } from "node:fs";
@@ -201,7 +201,13 @@ test("data/market.json : chaque commodité est vendable et bien formée", () => 
     assert.equal(typeof c.illegal, "boolean");
     for (const [side, tuples, volNullable] of [["buys", c.buys, false], ["sells", c.sells, true]]) {
       for (const t of tuples) {
-        assert.equal(t.length, 5, `${c.name}/${side} : tuple de ${t.length} champs au lieu de 5`);
+        // Depuis #194 un tuple fait 5 OU SIX champs : le 6e — la taille de caisse du couple
+        // (comptoir, commodité) — n'est écrit que s'il est connu. L'invariant ne se contourne pas,
+        // il se DÉPLACE : ce sont ces deux longueurs-là qui sont valides, et aucune autre.
+        // L'instantané versionné n'en porte encore aucun (`node --test` tourne AVANT
+        // `npm run build` et la CI ne re-commite jamais les data/*.json) : ce test vérifie donc ici
+        // la TOLÉRANCE, et la production du champ est couverte sur fixture, plus haut.
+        assert.ok(t.length === 5 || t.length === 6, `${c.name}/${side} : tuple de ${t.length} champs, attendu 5 ou 6`);
         assert.ok(Number.isInteger(t[0]) && t[0] >= 0 && t[0] < n, `${c.name}/${side} : index terminal ${t[0]} hors bornes`);
         assert.ok(typeof t[1] === "number" && t[1] > 0, `${c.name}/${side} : prix ${t[1]} non strictement positif`);
         // Sémantique des volumes : côté vente, null = capacité non communiquée par UEX (aucun
@@ -210,6 +216,9 @@ test("data/market.json : chaque commodité est vendable et bien formée", () => 
         else assert.equal(typeof t[2], "number", `${c.name}/buys : stock ${t[2]}`);
         assert.equal(typeof t[3], "number", `${c.name}/${side} : date ${t[3]}`);
         assert.equal(typeof t[4], "number", `${c.name}/${side} : statut ${t[4]}`);
+        // Jamais un 0 ni un null en 6e position : l'absence s'écrit en TRONQUANT le tuple, ce qui
+        // est précisément ce qui laisse `tailleOfferte` distinguer « rien de publié » d'une taille.
+        if (t.length === 6) assert.ok(typeof t[5] === "number" && t[5] >= 1, `${c.name}/${side} : taille ${t[5]}`);
       }
     }
   }
@@ -317,6 +326,55 @@ test("maxBoxSize : une vraie limite basse est conservée, jamais remontée à 32
   assert.equal(maxBoxSize({ max_container_size: 24 }), 24);
   assert.equal(maxBoxSize({ max_container_size: 32 }), 32);
   assert.notEqual(maxBoxSize({ max_container_size: 1 }), maxBoxSize({ max_container_size: 0 }));
+});
+
+test("tailleDeCaisse : UEX publie une LISTE par couple, on en garde le maximum (#194)", () => {
+  assert.equal(tailleDeCaisse({ container_sizes: "1,2,4,8,16,24,32" }), 32);
+  assert.equal(tailleDeCaisse({ container_sizes: "1,2,4,8,16" }), 16);
+  assert.equal(tailleDeCaisse({ container_sizes: "2" }), 2);
+  // Les listes à TROUS existent — 210 lignes sur 2 579 — et leur maximum reste leur maximum. C'est
+  // la dette assumée du lot : le jour où l'interface proposera un choix de taille, elle devra
+  // proposer CETTE liste et non la grille théorique, et un simple nombre ne saura pas la porter.
+  assert.equal(tailleDeCaisse({ container_sizes: "8,16,24,32" }), 32);
+  // UEX est une source tierce : ni ordre garanti, ni espaces, ni type.
+  assert.equal(tailleDeCaisse({ container_sizes: "32, 8 ,16" }), 32);
+  // 0 = « UEX se tait » (14 lignes sur 2 593), et le calcul retombe alors sur le majorant du
+  // terminal. Ce n'est PAS « caisses de zéro SCU ».
+  assert.equal(tailleDeCaisse({}), 0);
+  assert.equal(tailleDeCaisse({ container_sizes: "" }), 0);
+  assert.equal(tailleDeCaisse({ container_sizes: null }), 0);
+  assert.equal(tailleDeCaisse({ container_sizes: "aucune" }), 0);
+  // Une taille sous 1 SCU n'existe pas : elle ferait diverger le décompte de caisses.
+  assert.equal(tailleDeCaisse({ container_sizes: "0,0.5" }), 0);
+});
+
+test("buildMarket publie la taille de caisse par COUPLE, et tronque le tuple quand elle manque (#194)", () => {
+  const term = new Map([
+    [10, { name: "Ashland", system: "Pyro", planet: "", outpost: false, autoload: true, maxBox: 24 }],
+    [20, { name: "B", system: "Pyro", planet: "", outpost: false, autoload: true, maxBox: 32 }],
+  ]);
+  const byCommodity = new Map([
+    [1, {
+      name: "Fine", kind: "metal", illegal: false,
+      // Le comptoir plafonne à 24, mais CETTE commodité n'y est offerte qu'en caisses de 2.
+      buys: [buy({ id: 10, price: 100, stock: 50, updated: 111, status: 4, taille: 2 })],
+      sells: [buy({ id: 20, price: 250, demand: 80, updated: 222, status: 2, taille: 32 })],
+    }],
+    [2, {
+      name: "Muette", kind: "gas", illegal: false,
+      buys: [buy({ id: 10, price: 100, stock: 50, updated: 111, status: 4 })],
+      sells: [buy({ id: 20, price: 250, demand: 80, updated: 222, status: 2 })],
+    }],
+  ]);
+  const m = buildMarket(byCommodity, term);
+  const [fine, muette] = m.commodities;
+  assert.deepEqual(fine.buys[0], [0, 100, 50, 111, 4, 2]);
+  assert.deepEqual(fine.sells[0], [1, 250, 80, 222, 2, 32]);
+  // Rien de publié -> tuple de CINQ champs, exactement comme avant #194. Un 6e à 0 ou à null
+  // dirait la même chose en pesant sur les 2 593 lignes du fichier, et surtout il obligerait chaque
+  // lecteur à connaître la sentinelle : c'est l'ABSENCE qui porte le sens.
+  assert.deepEqual(muette.buys[0], [0, 100, 50, 111, 4]);
+  assert.deepEqual(muette.sells[0], [1, 250, 80, 222, 2]);
 });
 
 test("buildMarket publie autoload et maxBox par terminal", () => {

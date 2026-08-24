@@ -39,7 +39,9 @@ function evaluateLoop(l: Boucle, f: Filtres & FiltresVolume): BoucleEvaluee {
   const cross = l.a.system !== l.b.system;
   // Une boucle n'a pas un terminal d'achat et un de vente : elle a deux EXTRÉMITÉS qui sont tour à
   // tour l'un et l'autre, d'où { a, b } et quatre opérations facturées (cf. loopMetrics).
-  const feeInfo = feeCtx(f, l.a.terminal, l.b.terminal);
+  // Chaque extrémité charge SA commodité (#194) : `a` charge l'aller, `b` charge le retour. Passer
+  // la même des deux côtés facturerait le retour au plafond de la commodité de l'aller.
+  const feeInfo = feeCtx(f, l.a.terminal, l.b.terminal, null, null, { buy: l.out.commodity, sell: l.back.commodity });
   const metrics = loopMetrics(out, back, l.distance, cross, f, feeInfo && { a: feeInfo.a.point, b: feeInfo.b.point });
   return { ...l, out, back, cross, feeInfo, ...metrics } as BoucleEvaluee;
 }

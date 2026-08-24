@@ -36,11 +36,12 @@ export const fmtFee = (n: number, fees: number): string => (fees > 0 ? "≈ " + 
 export const signe = (n: number, texte: string): string => (n < 0 ? texte : "+" + texte);
 
 // ── Les libellés de CAISSES ────────────────────────────────────────────────────────────────────
-// Ex. « 8×32 · 1×16 · 1×4 · 1×2 · 1×1 ». `maxBox` est le plafond de caisse du terminal de
-// CHARGEMENT quand on le connaît : c'est une propriété physique de la station, indépendante de
-// l'interrupteur de frais. On le propage partout où le terminal d'achat est disponible, parce que
-// c'est exactement la décomposition que la facture d'autoload utilise — un « 📦 1×32 » à côté d'un
-// montant calculé sur deux caisses de 16 serait une incohérence directement visible.
+// Ex. « 3×32 ». Le second paramètre est la taille EMPLOYÉE, et depuis #194 elle vaut par couple
+// (comptoir, COMMODITÉ) : chaque appelant passe donc celle de sa LIGNE, et retombe sur le plafond
+// du terminal de chargement seulement quand la ligne n'en porte pas. C'est une propriété du
+// marché, indépendante de l'interrupteur de frais — et c'est exactement la décomposition que la
+// facture d'autoload utilise. Un « 📦 1×32 » à côté d'un montant calculé sur seize caisses de 2
+// serait une incohérence directement visible, et c'est ce que ce parallélisme empêche.
 //
 // Ils vivaient dans `app.js` alors qu'ils ne lisent aucun état : trois vues les consomment, et deux
 // d'entre elles vivent maintenant dans l'arbre.

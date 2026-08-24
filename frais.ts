@@ -14,7 +14,7 @@ import {
 } from "./logic.ts";
 import type { LigneManifeste, PaireFrais, Terminal } from "./types.ts";
 import { etat } from "./etat.ts";
-import { termByName } from "./marche.ts";
+import { tailleDuCouple, termByName } from "./marche.ts";
 import { fmt, fmtFee, signe } from "./format.ts";
 
 /** La cellule « profit » soumise aux frais : un marqueur et un texte d'infobulle. */
@@ -55,11 +55,16 @@ export const kFor = (terminal: string): number => {
 // EXPLIQUER le chiffre à l'écran — « cette station ne propose pas l'autoload » et « UEX ne nous a
 // pas dit si elle le propose » aboutissent au même 0 mais ne se racontent pas pareil, et aucun des
 // deux ne doit se lire comme un frais oublié.
-function feeEnd(name: string, terminal: Terminal | null | undefined) {
+function feeEnd(name: string, terminal: Terminal | null | undefined, commodite?: string) {
   const t = terminal || termByName.get(name) || null;
   const k = kFor(name);
+  // La taille du COUPLE prime sur le majorant du comptoir (#194). Sans commodité — vue
+  // multi-commodité, ou marché pas encore indexé — le point garde celle du terminal, et le calcul
+  // est exactement celui d'avant : le repli sous-estime, il n'invente pas.
+  const taille = commodite ? tailleDuCouple(commodite, name) : undefined;
+  const point = autoloadPoint(t, k);
   return {
-    name, k, point: autoloadPoint(t, k),
+    name, k, point: point && taille ? { taille, k: point.k } : point,
     known: !!t && t.autoload != null, // champ absent = instantané de market.json antérieur au build
     available: !!t && t.autoload === true,
     measured: !!etat.AUTOLOAD_K[alKey(name)],
@@ -69,13 +74,20 @@ function feeEnd(name: string, terminal: Terminal | null | undefined) {
 // Contexte de frais d'un chargement A -> B. `null` dès que l'interrupteur est inactif, et c'est
 // littéralement ce que « inactif » veut dire pour tout le moteur : sans contexte, chaque fonction
 // de logic.mjs rend exactement les valeurs brutes qu'elle rendait avant que les frais n'existent.
-export function feeCtx(f: { autoload?: boolean }, buyName: string, sellName: string, buyT?: Terminal | null, sellT?: Terminal | null) {
+// `commodites` : la commodité chargée À CHAQUE EXTRÉMITÉ (#194). Un OBJET et non deux positionnels
+// de plus — `feeCtx` en porte déjà cinq, et le dépôt a payé cette leçon sur `enTetePlan` : deux
+// branches ajoutent chacune LEUR argument, et une résolution de conflit naïve passe la mauvaise
+// valeur au bon paramètre, en silence.
+// Deux noms et pas un seul, parce qu'une BOUCLE charge des commodités différentes à ses deux bouts :
+// `a` est le comptoir d'achat de l'aller et de vente du retour. Un trajet simple passe la même des
+// deux côtés — seule celle du chargement est facturée (hypothèse 1), l'autre est juste exacte.
+export function feeCtx(f: { autoload?: boolean }, buyName: string, sellName: string, buyT?: Terminal | null, sellT?: Terminal | null, commodites?: { buy?: string; sell?: string }) {
   if (!f.autoload) return null;
   // Marché pas encore chargé (premier rendu de « Trajets » / « Boucles ») : aucun terminal n'est
   // résolvable, donc aucun frais n'est calculable. On rend le brut SANS marqueur — prétendre
   // « aucune de ces stations ne facture » serait faux — et ensureFeeMarket re-rend à l'arrivée.
   if (!buyT && !sellT && !termByName.size) return null;
-  const a = feeEnd(buyName, buyT), b = feeEnd(sellName, sellT);
+  const a = feeEnd(buyName, buyT, commodites && commodites.buy), b = feeEnd(sellName, sellT, commodites && commodites.sell);
   return { a, b, pair: { buy: a.point, sell: b.point } };
 }
 
@@ -103,8 +115,13 @@ const FEE_FORMULA = `${AUTOLOAD.base} + ${AUTOLOAD.perBox}/caisse + ${AUTOLOAD.p
 // APRÈS le premier « · » à dessein — le segment qui suit « caisses » est lu par la suite e2e
 // comme un nombre de COMMODITÉS (e2e/autoload.pw.mjs:55), et « en 20 caisses de 32 SCU » y
 // deviendrait « 32 commodités » sans qu'aucune assertion ne le voie.
+// Depuis #194 un chargement multi-commodité peut mélanger PLUSIEURS tailles sous un seul comptoir
+// — le plafond vaut par (comptoir, commodité), et Ashland en publie sept. N annoncer que la plus
+// grosse redonnerait un décompte faux au lecteur qui referait le calcul, et sans rien signaler.
 const tailleTexte = (boxes: { size: number }[]): string =>
-  boxes.length ? ` · caisses de ${boxes[0].size} SCU` : "";
+  boxes.length === 0 ? ""
+    : boxes.length === 1 ? ` · caisses de ${boxes[0].size} SCU`
+      : ` · caisses de ${boxes.map((b) => b.size).join(", ")} SCU selon la commodité`;
 export function feeLoadText(scu: number, taille?: number): string {
   const boxes = caissesDe(scu, taille);
   const n = nombreDeCaisses(boxes);

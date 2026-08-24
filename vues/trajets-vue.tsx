@@ -47,7 +47,9 @@ export function evaluate(r: Route, f: Filtres & FiltresVolume): LigneTrajet {
   const { buy, sell, margin } = applyOverrides(r.commodity, r.buy, r.sell);
   // `routes.json` et `enRouteDeals` ne donnent que des NOMS de terminaux : c'est ici, du côté
   // impur, qu'ils deviennent des tarifs. `routeMetrics`, lui, reçoit un contexte déjà résolu.
-  const feeInfo = feeCtx(f, buy.terminal, sell.terminal);
+  // La commodité des deux côtés : c'est elle, et non le plafond du comptoir, qui décide du
+  // découpage (#194). Une route ne transporte qu'une commodité, donc le même nom aux deux bouts.
+  const feeInfo = feeCtx(f, buy.terminal, sell.terminal, null, null, { buy: r.commodity, sell: r.commodity });
   const metrics = routeMetrics({
     buyPrice: buy.price, buyStock: buy.stock, sellDemand: sell.demand, margin,
     distance: r.distance, sameSystem: r.same_system,

@@ -18,7 +18,7 @@ import type { LigneTrajet } from "./trajets.tsx";
 import { corriger } from "../corrections-actions.ts";
 import { scuBoxesLabel } from "../format.ts";
 import { feeCell, feeLoadText } from "../frais.ts";
-import { termByName } from "../marche.ts";
+import { tailleDuCouple, termByName } from "../marche.ts";
 import { pickJourney } from "../voyage-actions.ts";
 import { BUY_STATUS, SELL_STATUS } from "./communs.tsx";
 
@@ -36,7 +36,11 @@ export function propsTrajetsCommunes() {
 
 /** Ce qui se calcule LIGNE PAR LIGNE, et vaut pour les deux tables à lignes simples. */
 export function propsLignesSimples() {
-  const plafond = (r: LigneTrajet) => termByName.get(r.buy.terminal)?.maxBox;
+  // La taille du COUPLE (comptoir, commodité) d'abord (#194) : le plafond du terminal n'en est
+  // que le majorant, strictement trop grand sur 23 % des points de marché. Sans cette lecture,
+  // l'infobulle et le badge 📦 annonceraient un décompte que la facture ne pratique plus.
+  const plafond = (r: LigneTrajet) =>
+    tailleDuCouple(r.commodity, r.buy.terminal) ?? termByName.get(r.buy.terminal)?.maxBox;
   return {
     celluleFrais: (r: LigneTrajet) =>
       feeCell(r.feeInfo, r.fees, () => feeLoadText(r.units, plafond(r)), r.units > 0),
@@ -47,9 +51,10 @@ export function propsLignesSimples() {
         return "prix très éloigné de la moyenne UEX";
       return null;
     },
-    // Le plafond de caisse vient du MARCHÉ, pas du contexte de frais : c'est une propriété physique
-    // de la station. Le prendre dans `feeInfo` le faisait disparaître dès l'interrupteur relâché, et
-    // la ligne annonçait « 3×32 » à côté d'un manifeste qui affichait « 6×16 » pour la même cargaison.
+    // Le plafond de caisse vient du MARCHÉ, pas du contexte de frais : c'est une propriété du
+    // couple (comptoir, commodité). Le prendre dans `feeInfo` le faisait disparaître dès
+    // l'interrupteur relâché, et la ligne annonçait « 3×32 » à côté d'un manifeste qui affichait
+    // « 6×16 » pour la même cargaison.
     libelleCaisses: (r: LigneTrajet) => (r.units ? scuBoxesLabel(r.units, plafond(r)) : null),
     choisirTrajet: (r: LigneTrajet) => pickJourney([legFromRoute(r)]),
   };

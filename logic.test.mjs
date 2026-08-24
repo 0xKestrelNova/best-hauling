@@ -7,6 +7,7 @@ import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, tighterVolume,
   scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, caissesDe, tailleRetenue, nombreDeCaisses, TAILLE_CAISSE_DEFAUT, cargoBoxes, bestChain, chainLegNet,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
+  tailleOfferte, pointPourCommodite,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
   profitPerHour, routePasses, loopPasses,
@@ -3820,6 +3821,104 @@ test("haulFee : un terminal sans autoload ne facture rien, l'autre extrémité p
   // Chargé à la main en A (16 SCU par caisse), déchargé par l'autoload de B : B facture, et il
   // facture DEUX caisses — celles qu'on lui apporte.
   assert.equal(haulFee(32, { buy: sansService, sell: PT_A }), autoloadFee(32, 16, 1));
+});
+
+// ---------- #194 : le plafond de caisse vaut par (comptoir, COMMODITÉ) ----------
+// UEX publie `container_sizes` sur la LIGNE DE PRIX — donc par couple (terminal, commodité) — et
+// pas seulement `max_container_size` sur le terminal. Re-mesuré le 2026-08-24 sur les 2 579 lignes
+// qui le portent : `max(liste)` ÉGALE le plafond du terminal 1 982 fois, lui est STRICTEMENT
+// INFÉRIEUR 597 fois (23 %), et ne le dépasse JAMAIS — c'est ce qui autorise le repli sur le
+// terminal quand la donnée manque : il sous-estime les frais, il ne les invente pas.
+// 103 comptoirs sur 123 (84 %) publient plusieurs listes. Ashland en publie SEPT sous un plafond
+// terminal de 24, dont une commodité offerte en caisses de 2 : l'app lui facturait douze fois trop
+// peu de caisses.
+
+test("tailleOfferte : le 6e champ du tuple porte le plafond de CETTE commodité (#194)", () => {
+  assert.equal(tailleOfferte([0, 100, 50, NOW, 3, 8]), 8);
+  // Instantané ANTÉRIEUR au build qui l'ajoute — le service worker sert data/*.json en « réseau
+  // d'abord, cache en repli », donc une coquille d'avant peut revenir à tout moment. Ce n'est ni 0
+  // ni 32 : c'est « je ne sais pas », et c'est l'appelant qui choisit son repli.
+  assert.equal(tailleOfferte([0, 100, 50, NOW, 3]), undefined);
+  assert.equal(tailleOfferte(undefined), undefined);
+  assert.equal(tailleOfferte(null), undefined);
+  // Ce qui n'est pas une taille ne devient pas une taille : 0 vaut « rien de publié », pas
+  // « caisses de zéro SCU » — qui ferait diverger `caissesDe`.
+  assert.equal(tailleOfferte([0, 100, 50, NOW, 3, 0]), undefined);
+  assert.equal(tailleOfferte([0, 100, 50, NOW, 3, -4]), undefined);
+});
+
+test("pointPourCommodite : la taille du couple remplace le majorant, le tarif ne bouge pas (#194)", () => {
+  const comptoir = { taille: 32, k: 1.4 };
+  assert.deepEqual(pointPourCommodite(comptoir, [0, 100, 50, NOW, 3, 8]), { taille: 8, k: 1.4 });
+  // Rien de publié -> on rend le point TEL QUEL, à l'identité près : le repli ne fabrique pas
+  // d'objet neuf pour rien, et surtout il ne touche pas à k.
+  assert.equal(pointPourCommodite(comptoir, [0, 100, 50, NOW, 3]), comptoir);
+  assert.equal(pointPourCommodite(null, [0, 100, 50, NOW, 3, 8]), null);
+});
+
+test("lineHaulFee : la taille de la LIGNE prime sur le majorant du comptoir (#194)", () => {
+  const comptoir = { taille: 32, k: 1 };
+  const paire = { buy: comptoir, sell: comptoir };
+  // Sans taille de ligne, rien ne change : c'est le comportement d'avant, à l'aUEC près.
+  assert.equal(lineHaulFee(32, { units: 32 }, paire), 2 * autoloadFee(32, 32, 1));
+  // Avec : la même ligne, au même comptoir, offerte en caisses de 8 — quatre fois plus de caisses,
+  // aux DEUX extrémités, puisque rien ne re-caisse la cargaison en vol (hypothèse 1, ADR-014).
+  assert.equal(lineHaulFee(32, { units: 32, taille: 8 }, paire), 2 * autoloadFee(32, 8, 1));
+  assert.ok(autoloadFee(32, 8, 1) > autoloadFee(32, 32, 1), "le test serait vacuisant si les deux coûtaient pareil");
+});
+
+test("manifestTotals : deux commodités du MÊME comptoir se caissent chacune à SA taille (#194)", () => {
+  // C'est le cœur de #194 : un plafond PAR TERMINAL ne peut pas décrire ce manifeste-là, et
+  // Ashland en publie sept. Aucune taille unique ne rend ce total.
+  const paire = { buy: { taille: 24, k: 1 }, sell: { taille: 24, k: 1 } };
+  const lignes = [
+    { name: "Grosse", units: 32, margin: 100, buyPrice: 10, taille: 24 },
+    { name: "Fine", units: 32, margin: 100, buyPrice: 10, taille: 2 },
+  ];
+  const t = manifestTotals(lignes, paire);
+  assert.equal(t.fees, 2 * autoloadFee(32, 24, 1) + 2 * autoloadFee(32, 2, 1));
+  // Et la contre-épreuve : le total d'AVANT — tout le monde à 24 — était strictement plus bas.
+  assert.ok(t.fees > 4 * autoloadFee(32, 24, 1), "sans #194 la fine ligne était sous-facturée");
+});
+
+test("manifestsFrom : la ligne emporte le plafond de sa commodité, et la facture le suit (#194)", () => {
+  const mkt = {
+    terminals: [
+      { name: "Ashland", system: "S", planet: "", outpost: false, autoload: true, maxBox: 24 },
+      { name: "B", system: "S", planet: "", outpost: false, autoload: true, maxBox: 32 },
+    ],
+    commodities: [
+      { name: "Grosse", kind: "metal", illegal: false, buys: [[0, 100, 32, NOW, 5, 24]], sells: [[1, 300, 999, NOW, 3]] },
+      { name: "Fine", kind: "metal", illegal: false, buys: [[0, 100, 32, NOW, 5, 2]], sells: [[1, 300, 999, NOW, 3]] },
+    ],
+  };
+  const tarif = (t) => autoloadPoint(t, 1);
+  const [trip] = manifestsFrom(mkt, 0, "", F({ useCargo: true, cargo: 64 }), idResolve, null, tarif);
+  const parNom = new Map(trip.lines.map((l) => [l.name, l]));
+  assert.equal(parNom.size, 2, "les deux lignes doivent tenir dans la soute");
+  assert.equal(parNom.get("Grosse").taille, 24);
+  assert.equal(parNom.get("Fine").taille, 2);
+  // Le trajet est facturé ligne à ligne, chacune à sa taille — jamais au majorant du comptoir.
+  assert.equal(manifestTotals(trip.lines, trip.fee).fees, 2 * autoloadFee(32, 24, 1) + 2 * autoloadFee(32, 2, 1));
+});
+
+test("instantané antérieur à #194 : on retombe sur le majorant du comptoir, sans l'inventer", () => {
+  // Les MÊMES commodités, mais des tuples de cinq champs — la coquille d'avant. Aucune taille ne
+  // remonte, et le moteur facture exactement ce qu'il facturait : le plafond du terminal.
+  const mkt = {
+    terminals: [
+      { name: "Ashland", system: "S", planet: "", outpost: false, autoload: true, maxBox: 24 },
+      { name: "B", system: "S", planet: "", outpost: false, autoload: true, maxBox: 32 },
+    ],
+    commodities: [
+      { name: "Grosse", kind: "metal", illegal: false, buys: [[0, 100, 32, NOW, 5]], sells: [[1, 300, 999, NOW, 3]] },
+      { name: "Fine", kind: "metal", illegal: false, buys: [[0, 100, 32, NOW, 5]], sells: [[1, 300, 999, NOW, 3]] },
+    ],
+  };
+  const tarif = (t) => autoloadPoint(t, 1);
+  const [trip] = manifestsFrom(mkt, 0, "", F({ useCargo: true, cargo: 64 }), idResolve, null, tarif);
+  for (const l of trip.lines) assert.equal(l.taille, undefined);
+  assert.equal(manifestTotals(trip.lines, trip.fee).fees, 4 * autoloadFee(32, 24, 1));
 });
 
 // --- Trajets simples / En route (routeMetrics) ---
