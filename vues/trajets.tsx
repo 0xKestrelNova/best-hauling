@@ -183,8 +183,9 @@ export type ProprietesMulti = ProprietesCommunes & {
   /** Ce que rapporte UNE ligne du chargement, frais compris. Reste à app.js : dépend du contexte
    *  de frais, que l'îlot ne connaît pas. */
   texteProfitLigne: (units: number, l: LigneManifeste, fee: PaireFrais | null) => string;
-  /** « 8×32 · 1×16 · … » — dépend du plafond de caisse du terminal d'achat. */
-  libelleCaissesScu: (units: number, maxBox?: number) => string;
+  /** « 3×32 » — dépend de la taille de caisse EMPLOYÉE, qui vaut par couple (comptoir, commodité)
+   *  depuis #194 : on lui passe celle de la ligne, le plafond du terminal ne servant que de repli. */
+  libelleCaissesScu: (units: number, taille?: number) => string;
   /** ▶ : faire ce chargement. À passer EXPLICITEMENT — `propsLignesSimples()` d'app.js, qui porte
    *  celui des lignes simples, n'est PAS étalée ici. */
   choisirTrajet: (t: LigneMulti) => void;
@@ -225,7 +226,7 @@ function ChargementDeplie({ t, colonnes, texteProfitLigne, libelleCaissesScu }: 
               <span className="mstock">{`stock ${fmt(l.stock as number)} · dem. ${fmtVol(l.demand as number | null)}`}</span>
               <span className="mprice">{`${fmt(l.buyPrice)} → ${fmt(l.sellPrice)} · marge ${fmt(l.margin)}`}</span>
               <span className="mprofit profit">{texteProfitLigne(l.units, l, t.fee)}</span>
-              <span className="mboxes" title="Caisses SCU standard à charger">{`📦 ${fmt(l.units)} SCU · ${libelleCaissesScu(l.units, t.origin.maxBox)}`}</span>
+              <span className="mboxes" title="Caisses SCU standard à charger">{`📦 ${fmt(l.units)} SCU · ${libelleCaissesScu(l.units, l.taille ?? t.origin.maxBox)}`}</span>
             </div>
           ))}
         </div>

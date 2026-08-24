@@ -1,8 +1,8 @@
 // Les index dérivés du marché (ADR-011).
 //
-// Trois tables construites UNE FOIS à l'arrivée de `market.json`, et consultées partout : le champ
+// Quatre tables construites UNE FOIS à l'arrivée de `market.json`, et consultées partout : le champ
 // de départ d'« En route », le sélecteur de station des Corrections, les frais d'autoload, la
-// résolution d'un nom de terminal en objet.
+// résolution d'un nom de terminal en objet, et la taille de caisse d'un couple.
 //
 // **Elles sont exportées telles quelles, et c'est légitime ici** — contrairement aux 27 globales
 // parties dans `etat.ts` avec le déménagement (#135). Une liaison ES est vivante en lecture mais non
@@ -23,6 +23,23 @@ export const stationMap = new Map<string, number>();
 /** Nom de terminal → le terminal lui-même. Le pont qu'utilisent les frais d'autoload. */
 export const termByName = new Map<string, Terminal>();
 
+/** « commodité|terminal » → plus grosse caisse que CE comptoir propose pour CETTE commodité (#194).
+ *  Les vues MONO-commodité — Trajets, Boucles — ne reçoivent que des NOMS : `routes.json` et
+ *  `loops.json` ne portent pas les tuples de marché, et `feeCtx` n'a donc aucun moyen de retrouver
+ *  la taille du couple sans cet index. Les vues multi-commodité, elles, n'en ont pas besoin : la
+ *  taille voyage sur la LIGNE de manifeste, posée par les fabriques de `logic.ts`.
+ *  Clé par NOM, comme `termByName` et pour la même raison : vérifié sur l'instantané, 114
+ *  terminaux pour 114 noms distincts. C'est le `code` UEX qui n'est pas unique, pas le nom. */
+export const tailleParCouple = new Map<string, number>();
+const cleCouple = (commodite: string, terminal: string): string => `${commodite}|${terminal}`;
+
+/** La taille du couple, ou `undefined` — l'appelant retombe alors sur `Terminal.maxBox`, qui est un
+ *  MAJORANT (jamais dépassé sur 2 579 lignes UEX). Passer par cet accesseur et jamais par la Map :
+ *  trois lecteurs la consultent — la facture, l'infobulle et le libellé 📦 — et ils DOIVENT rendre
+ *  le même décompte, sinon le « 📦 3×32 » contredit le montant qu'il explique. */
+export const tailleDuCouple = (commodite: string, terminal: string): number | undefined =>
+  tailleParCouple.get(cleCouple(commodite, terminal));
+
 let construits = false;
 
 /**
@@ -38,10 +55,19 @@ export function construireIndex(marche: Marche): void {
   for (const c of marche.commodities) {
     for (const b of c.buys) {
       const i = b[0] as number;
+      // La taille se range AVANT le court-circuit : elle vaut par COUPLE, là où `originMap` ne
+      // retient qu'un terminal une fois pour toutes. La poser après aurait perdu toutes les
+      // commodités d'un comptoir sauf la première — en silence, et sans qu'aucun test ne bronche.
+      if (b[5] != null) tailleParCouple.set(cleCouple(c.name, marche.terminals[i].name), b[5] as number);
       if (vus.has(i)) continue;
       vus.add(i);
       const t = marche.terminals[i];
       originMap.set(stationLabel(t.name, t.system), i);
+    }
+    // Côté vente aussi : une boucle charge à ses DEUX extrémités, et une cargaison acquise ailleurs
+    // se décharge au comptoir d'arrivée sans y avoir jamais été chargée.
+    for (const s of c.sells) {
+      if (s[5] != null) tailleParCouple.set(cleCouple(c.name, marche.terminals[s[0] as number].name), s[5] as number);
     }
   }
 

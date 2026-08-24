@@ -405,7 +405,7 @@ function resolveSides(market: Marche, fromIdx: number, toIdx: number, c: Commodi
 export function freeManifestLine(market: Marche, fromIdx: number, toIdx: number, c: Commodite, cargoLeft: number, resolve: ResolveurCorrections): LigneManifeste {
   const { b, s, eb, es } = resolveSides(market, fromIdx, toIdx, c, resolve);
   const u = freeAddUnits(eb ? eb.vol : Infinity, cargoLeft);
-  return manifestLine(c, eb, es, b ? b[3] : 0, s ? s[3] : 0, u, u);
+  return { ...manifestLine(c, eb, es, b ? b[3] : 0, s ? s[3] : 0, u, u), taille: tailleOfferte(b) };
 }
 
 // Ligne RÉ-HYDRATÉE depuis la seule intention persistée { name, units }.
@@ -415,7 +415,7 @@ export function freeManifestLine(market: Marche, fromIdx: number, toIdx: number,
 export function hydrateManifestLine(market: Marche, fromIdx: number, toIdx: number, c: Commodite, units: number, resolve: ResolveurCorrections): LigneManifeste {
   const { b, s, eb, es } = resolveSides(market, fromIdx, toIdx, c, resolve);
   const cap = tighterVolume(eb ? eb.vol : Infinity, es ? es.vol : null);
-  return manifestLine(c, eb, es, b ? b[3] : 0, s ? s[3] : 0, units, cap);
+  return { ...manifestLine(c, eb, es, b ? b[3] : 0, s ? s[3] : 0, units, cap), taille: tailleOfferte(b) };
 }
 
 // ---------- Le caissage : UNE taille, et elle est CHOISIE (ADR-014) ----------
@@ -478,7 +478,9 @@ export const nombreDeCaisses = (boxes: { count: number }[]): number =>
 export function cargoBoxes(lines: Partial<LigneManifeste>[], taille?: number | null): Caisse[] {
   const parTaille = new Map();
   for (const l of lines) {
-    for (const b of caissesDe(l.units, taille)) parTaille.set(b.size, (parTaille.get(b.size) || 0) + b.count);
+    // La taille de la LIGNE d'abord (#194) : le libellé DOIT compter les caisses que
+    // `lineHaulFee` facture, sinon le « 📦 » et le montant qu'il explique se contredisent.
+    for (const b of caissesDe(l.units, l.taille !== undefined ? l.taille : taille)) parTaille.set(b.size, (parTaille.get(b.size) || 0) + b.count);
   }
   return [...parTaille].sort((a, b) => b[0] - a[0]).map(([size, count]) => ({ size, count }));
 }
@@ -557,6 +559,33 @@ export function autoloadPoint(terminal: Terminal | null | undefined, k: number):
   return { taille: terminal.maxBox, k: terminal.autoload === true ? k : 0 };
 }
 
+// Le plafond de caisse vaut par (comptoir, COMMODITÉ) et non par comptoir (#194). UEX le publie
+// sur la LIGNE DE PRIX — `container_sizes` — et `buildMarket` en range le maximum en 6e position
+// du tuple de marché. Mesuré le 2026-08-24 sur les 2 579 lignes qui le portent : ce maximum ÉGALE
+// le `max_container_size` du terminal 1 982 fois, lui est STRICTEMENT INFÉRIEUR 597 fois (23 %),
+// et ne le dépasse JAMAIS. Ashland publie sept listes différentes sous un plafond terminal de 24,
+// dont une commodité offerte en caisses de 2.
+// `undefined` = rien de publié pour ce couple. Ce n'est ni 0 ni le plafond du comptoir : c'est
+// l'appelant qui choisit son repli, et il n'y a pas qu'un cas — un instantané ANTÉRIEUR au build
+// qui ajoute le champ revient à tout moment, le service worker servant data/*.json en « réseau
+// d'abord, cache en repli ». Un 0 publié dit la même chose qu'une absence : `caissesDe` divergerait
+// sur des caisses de zéro SCU.
+export const tailleOfferte = (p?: PointMarche | null): number | undefined => {
+  const t = p && p[5];
+  return typeof t === "number" && t >= 1 ? t : undefined;
+};
+
+// Le point de frais d'un comptoir, la taille de CETTE commodité substituée à son majorant.
+// Rend le point INCHANGÉ — la même référence — quand rien n'est publié : le repli sur
+// `terminal.maxBox` SOUS-ESTIME les frais (le majorant n'est jamais dépassé), il ne les invente
+// pas, et c'est la même règle que la décision 5 de l'ADR-014.
+// `k` ne bouge JAMAIS ici : le tarif est celui de la station, il ne dépend pas de la commodité.
+export function pointPourCommodite(point: PointFrais | null, p?: PointMarche | null): PointFrais | null {
+  const t = tailleOfferte(p);
+  if (!point || t === undefined) return point;
+  return { taille: t, k: point.k };
+}
+
 // Frais des DEUX opérations d'un chargement de `scu` SCU : chargement au terminal d'achat,
 // déchargement au terminal de vente, chacun au tarif de SA station.
 // `pair` = { buy, sell } (points de frais) ; null/absent -> aucun frais.
@@ -588,12 +617,19 @@ export function haulFee(scu: number, pair?: PaireFrais | null): number {
 // (hypothèse 1) — c'est-à-dire exactement celui que le « 📦 » de la ligne affiche.
 export function lineHaulFee(units: number, line: Partial<LigneManifeste> | null | undefined, pair: PaireFrais | null): number {
   if (!pair) return 0;
-  const { carry, acquired } = line || {};
-  if (!carry && !acquired) return haulFee(units, pair);
+  const { carry, acquired, taille } = line || {};
+  // La taille de la LIGNE prime sur celle des points : le plafond vaut par commodité (#194), et un
+  // manifeste multi-commodité en mélange plusieurs SOUS LE MÊME COMPTOIR — aucune taille unique ne
+  // peut décrire un chargement Ashland, qui en publie sept. Elle s'applique aux DEUX extrémités :
+  // rien ne re-caisse la cargaison en vol (hypothèse 1, ADR-014). Absente — ligne fabriquée à la
+  // main, instantané antérieur — les points gardent la leur et rien ne change.
+  const sienne = (p) => (p && taille !== undefined ? { taille, k: p.k } : p);
+  const buy = sienne(pair.buy), sell = sienne(pair.sell);
+  if (!carry && !acquired) return haulFee(units, { buy, sell });
   const muet = (p) => (p ? { taille: p.taille, k: 0 } : p);
   return haulFee(units, {
-    buy: acquired ? muet(pair.buy) : pair.buy,
-    sell: carry ? muet(pair.sell) : pair.sell,
+    buy: acquired ? muet(buy) : buy,
+    sell: carry ? muet(sell) : sell,
   });
 }
 
@@ -630,6 +666,7 @@ const ligneDuSaut = (leg: JambeChaine, units: number): LigneManifeste[] => (unit
   buyPrice: leg.buyPrice, sellPrice: leg.sellPrice, margin: leg.margin,
   stock: leg.stock, demand: leg.demand, demandKnown: leg.demandKnown,
   buyUpdated: leg.buyUpdated || 0, sellUpdated: leg.sellUpdated || 0,
+  taille: leg.taille,
   units, cap: units,
 }]);
 export function chainLegNet(leg: JambeChaine, cargo: number): ChargementDuSaut {
@@ -867,6 +904,10 @@ export function enRouteDeals(market: Marche, origin: number, destSystem: string,
   market.commodities.forEach((c) => {
     const b = c.buys.find((x) => x[0] === origin);
     if (!b) return;
+    // Le point du comptoir reste hissé hors de la boucle — c'est `kFor` qui coûte, et il ne dépend
+    // que du terminal. Seule la TAILLE change d'une commodité à l'autre (#194), d'où cette
+    // substitution : une allocation par commodité, aucune par vente candidate.
+    const pointAchat = pointPourCommodite(buyPoint, b);
     // Profit RÉALISABLE d'une vente candidate, dans les termes exacts de routeMetrics. Le prix au SCU
     // ne suffit pas : `computeUnits` plafonne ensuite par la demande du terminal, si bien qu'une
     // vente très chère mais presque saturée rapporte moins qu'une vente un peu moins chère qui prend
@@ -878,7 +919,7 @@ export function enRouteDeals(market: Marche, origin: number, destSystem: string,
       if (!f) return s[1];
       const u = computeUnits(b[1], b[2], s[2], f);
       if (!isFinite(u)) return s[1];
-      const fee = autoloadFor ? haulFee(u, { buy: buyPoint, sell: autoloadFor(market.terminals[s[0]]) }) : 0;
+      const fee = autoloadFor ? haulFee(u, { buy: pointAchat, sell: autoloadFor(market.terminals[s[0]]) }) : 0;
       return u * (s[1] - b[1]) - fee;
     };
     let best = null, bestScore = 0;
@@ -929,7 +970,7 @@ export function suggestionsFrom(market: Marche, m: ContexteManifeste, resolve: R
     const es = resolve(c.name, m.dest.name, "sell", s[1], s[2], s[3]);
     const margin = es.price - eb.price;
     if (margin <= 0) return;
-    out.push({ name: c.name, kind: c.kind, illegal: c.illegal, buyPrice: eb.price, stock: eb.vol, sellPrice: es.price, demand: es.vol, demandKnown: es.ovol, margin, buyUpdated: b[3], sellUpdated: s[3] });
+    out.push({ name: c.name, kind: c.kind, illegal: c.illegal, buyPrice: eb.price, stock: eb.vol, sellPrice: es.price, demand: es.vol, demandKnown: es.ovol, margin, buyUpdated: b[3], sellUpdated: s[3], taille: tailleOfferte(b) });
   });
   return out.sort((a, b) => b.margin - a.margin);
 }
@@ -960,7 +1001,7 @@ export function manifestsFrom(market: Marche, origin: number, destSystem: string
       const margin = es.price - eb.price;
       if (margin <= 0) return;
       if (!byDest.has(s[0])) byDest.set(s[0], []);
-      byDest.get(s[0]).push({ name: c.name, kind: c.kind, illegal: c.illegal, buyPrice: eb.price, stock: eb.vol, sellPrice: es.price, demand: es.vol, demandKnown: es.ovol, margin, buyUpdated: b[3], sellUpdated: s[3] });
+      byDest.get(s[0]).push({ name: c.name, kind: c.kind, illegal: c.illegal, buyPrice: eb.price, stock: eb.vol, sellPrice: es.price, demand: es.vol, demandKnown: es.ovol, margin, buyUpdated: b[3], sellUpdated: s[3], taille: tailleOfferte(b) });
     });
   });
 
@@ -1196,7 +1237,8 @@ export function buildChainAdjacency(market: Marche, f: Filtres, resolve: Resolve
       const bt = market.terminals[b[0]];
       if (f.noOutpost && bt.outpost) return;
       const eb = resolve(c.name, bt.name, "buy", b[1], b[2], b[3]);
-      const bp = autoloadFor ? autoloadFor(bt) : null;
+      // Déjà par (commodité, comptoir) : la substitution ne coûte pas une allocation de plus.
+      const bp = pointPourCommodite(autoloadFor ? autoloadFor(bt) : null, b);
       c.sells.forEach((s) => {
         if (s[0] === b[0]) return;
         const st = market.terminals[s[0]];
@@ -1210,7 +1252,7 @@ export function buildChainAdjacency(market: Marche, f: Filtres, resolve: Resolve
         let m = best.get(b[0]);
         if (!m) { m = new Map(); best.set(b[0], m); }
         const cur = m.get(s[0]);
-        const cand = { to: s[0], commodity: c.name, kind: c.kind, illegal: c.illegal, margin, buyPrice: eb.price, sellPrice: es.price, stock: eb.vol, demand: es.vol, demandKnown: es.ovol, fee: autoloadFor ? { buy: bp, sell: autoloadFor(st) } : null };
+        const cand = { to: s[0], commodity: c.name, kind: c.kind, illegal: c.illegal, margin, buyPrice: eb.price, sellPrice: es.price, stock: eb.vol, demand: es.vol, demandKnown: es.ovol, taille: tailleOfferte(b), fee: autoloadFor ? { buy: bp, sell: autoloadFor(st) } : null };
         if (!cur || mieux(cand, cur)) m.set(s[0], cand);
       });
     });
@@ -2270,7 +2312,9 @@ export function offloadPlan(market: Marche, hold: Lot[], originIdx: number, f: F
       // Le coût vient des LOTS réellement consommés (FIFO), pas d'une moyenne : c'est la seule
       // façon d'annoncer un profit qui se réalisera tel quel.
       const sim = sellFromHold(hold, g.name, prend, e.price);
-      const frais = autoloadFor ? lineHaulFee(prend, { acquired: true }, { buy: null, sell: autoloadFor(t) }) : 0;
+      // `buy: null` — rien n'a été chargé ici, donc `haulFee` prend la taille du DÉCHARGEMENT, et
+      // c'est bien celle du couple (ce comptoir, cette commodité) qu'il faut, pas le majorant (#194).
+      const frais = autoloadFor ? lineHaulFee(prend, { acquired: true }, { buy: null, sell: pointPourCommodite(autoloadFor(t), s) }) : 0;
       const recette = prend * e.price - frais;
       lignes.push({
         name: g.name, absorbe: prend, garanti: connue ? prend : 0, reste: g.units - prend,

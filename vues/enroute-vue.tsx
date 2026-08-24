@@ -73,7 +73,7 @@ export function VueEnRoute() {
         parcours: etat.JOURNEY,
         suggestions: suggestionsFor(m),
         restant: manifestRemaining(m),
-        libelleCaisses: (units: number) => scuBoxesLabel(units, m.origin.maxBox),
+        libelleCaisses: (units: number, taille?: number) => scuBoxesLabel(units, taille ?? m.origin.maxBox),
         texteBoutFrais: feeEndText,
         minutesTrajet: tripMinutes(0, m.cross),
         estCorrige: isOv,

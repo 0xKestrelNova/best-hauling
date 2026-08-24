@@ -62,9 +62,11 @@ export function ensureStarmap(then: () => void): void {
 }
 
 // « Trajets » et « Boucles » lisent `routes.json` / `loops.json`, qui ne portent que des NOMS de
-// terminaux : `autoload` et `maxBox` n'existent que dans `market.json`. On le charge en TÂCHE DE
-// FOND et on re-rend à l'arrivée, plutôt que de retarder — ou de vider — la vue par défaut derrière
-// un fetch de 85 ko : le tableau reste lisible, ses profits simplement bruts le temps du chargement.
+// terminaux : `autoload`, `maxBox` et la taille de caisse du couple (comptoir, commodité) n'existent
+// que dans `market.json` — et c'est aussi ce qui alimente l'index `tailleParCouple` (#194, ADR-015).
+// On le charge en TÂCHE DE FOND et on re-rend à l'arrivée, plutôt que de retarder — ou de vider —
+// la vue par défaut derrière un fetch de 85 ko : le tableau reste lisible, ses profits simplement
+// bruts le temps du chargement.
 //
 // En cas d'échec on NE re-rend PAS : ce re-rendu rappellerait cette fonction, qui relancerait un
 // fetch (`loadMarket` ne mémorise jamais l'échec) — en boucle. La prochaine action de l'utilisateur

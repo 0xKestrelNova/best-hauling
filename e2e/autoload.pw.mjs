@@ -25,7 +25,12 @@ test.use({ serviceWorkers: "block" });
 // plafond plus bas change le nombre de caisses donc le montant (32 SCU font 1 caisse à 32, mais 2 à
 // 24 comme à 16). Sans plafond imposé, on répartit des plafonds VARIÉS : un marché uniformément à
 // 32 ne distinguerait pas un `maxBox` respecté d'un `maxBox` ignoré.
-async function enrichMarket(page, mode, fixedMaxBox) {
+// `tailleCouple` pose la même taille sur TOUS les tuples de marché, des deux côtés. Depuis #194
+// c'est elle — et non `maxBox` — qui décide du découpage : sans ce paramètre, l'enrichissement ne
+// toucherait que les terminaux, le chemin par couple ne serait jamais exercé, et ces tests
+// mesureraient le REPLI en croyant mesurer le nominal. C'est le même piège que le mode "strip"
+// documente plus haut, et il ne se contourne pas en espérant que la donnée soit là.
+async function enrichMarket(page, mode, fixedMaxBox, tailleCouple) {
   await page.route("**/data/market.json", async (route) => {
     const res = await route.fetch();
     const market = await res.json();
@@ -36,6 +41,12 @@ async function enrichMarket(page, mode, fixedMaxBox) {
         t.autoload = mode === "all";
         t.maxBox = fixedMaxBox || [32, 24, 16][i % 3];
       });
+    }
+    if (tailleCouple) {
+      for (const c of market.commodities) {
+        for (const b of c.buys) b[5] = tailleCouple;
+        for (const s of c.sells) s[5] = tailleCouple;
+      }
     }
     await route.fulfill({ response: res, json: market });
   });
@@ -72,6 +83,56 @@ function watchErrors(page) {
   page.on("pageerror", (e) => errors.push(String(e)));
   return errors;
 }
+
+// Toutes les infobulles de frais de la colonne profit, décomposées. On les prend TOUTES : une
+// seule ligne ne prouve rien si son volume tient déjà dans une caisse, et c'est le lot des petits
+// volumes qui rend un test de taille de caisse vacuisant.
+async function detailsDesFrais(page) {
+  const titres = await page.locator("#rows tr td.profit:nth-last-child(2)").evaluateAll(
+    (cells) => cells.map((c) => c.getAttribute("title") || ""));
+  return titres.map(feeDetail).filter(Boolean);
+}
+
+test("le plafond de caisse est celui de la COMMODITÉ, pas celui du comptoir (#194)", async ({ page }) => {
+  const errors = watchErrors(page);
+  // Tous les comptoirs plafonnés à 32, mais chaque commodité n'y est offerte qu'en caisses de 8.
+  // C'est le cas réel : `max(container_sizes)` est strictement sous le plafond du terminal sur
+  // 597 des 2 579 lignes UEX (23 %), et Ashland descend jusqu'à 2 sous un plafond de 24.
+  await enrichMarket(page, "all", 32, 8);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await expect(page.locator("#rows tr td.profit").first()).toContainText("≈");
+
+  const details = await detailsDesFrais(page);
+  expect(details.length).toBeGreaterThan(0);
+  for (const d of details) {
+    expect(d.caisses).toBe(Math.ceil(d.scu / 8) * d.commodites);
+    // L'infobulle doit permettre de REFAIRE le calcul : le montant suit le décompte annoncé.
+    expect(d.montant).toBe(feeAttendu(d));
+  }
+  // NON VACUISANT : au moins une ligne doit distinguer 8 de 32, sinon le test passerait aussi
+  // sous l'ancien code — c'est exactement l'erreur que #195 a dû corriger après coup.
+  expect(details.some((d) => Math.ceil(d.scu / 8) !== Math.ceil(d.scu / 32))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("sans taille par couple, le comptoir reprend la main : le repli n'invente rien (#194)", async ({ page }) => {
+  const errors = watchErrors(page);
+  // Le MÊME marché, aux mêmes plafonds de terminal, mais aucun tuple ne porte de taille — soit
+  // l'instantané d'avant le prochain `chore(data)`. Le découpage doit alors être celui du comptoir,
+  // ni plus fin ni plus grossier : le repli SOUS-ESTIME sans inventer (ADR-014, décision 5).
+  await enrichMarket(page, "all", 32);
+  await page.goto("/index.html");
+  await expect(page.locator("#rows tr").first()).toBeVisible();
+  await page.check("#autoload");
+  await expect(page.locator("#rows tr td.profit").first()).toContainText("≈");
+
+  const details = await detailsDesFrais(page);
+  expect(details.length).toBeGreaterThan(0);
+  for (const d of details) expect(d.caisses).toBe(Math.ceil(d.scu / 32) * d.commodites);
+  expect(errors).toEqual([]);
+});
 
 test("défaut : l'interrupteur est inactif, le champ k masqué, aucun montant estimé", async ({ page }) => {
   await page.goto("/index.html");

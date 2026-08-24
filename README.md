@@ -45,7 +45,7 @@ Autres éléments :
 - **Vaisseau** : autocomplétion par sous-chaîne (128 modèles UEX), remplit la soute automatiquement, affiche la photo.
 - **Contraintes désactivables** : couper le budget → meilleure route pour la soute ; couper la soute → meilleure route pour le budget.
 - **Multi commodité** (vue Trajets) : balaie tout le marché et propose les **chargements combinés** A→B — la soute se remplit par marge décroissante, plafonnée par le stock et la demande. Quand c'est le **budget** qui borne, ce glouton se fait drainer par les lignes chères — une commodité à 50 000 aUEC/SCU épuise 100 000 en 2 SCU et laisse la soute vide. L'app essaie donc aussi un remplissage par **rendement du capital** et garde le meilleur des deux : jamais pire, et 31 manifestes sur 4 316 y gagnent plus de 5 % sur l'instantané actuel. Le menu **liste** à côté de la coche décide de la portée : **combinés seuls** (défaut — un trajet qui tient en une seule commodité est déjà dans la liste normale) ou **avec les simples**, qui remet les deux sortes dans le **même classement** quand on veut juste la meilleure option, combinée ou non. Nécessite la soute activée ; la coche est grisée sinon.
-- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **pas du prix** — c'est de la manutention, pas une commission — mais ils dépendent de la **taille de caisse** employée, que le joueur choisit au kiosque : charger en plus grosses caisses coûte moins cher. L'app suppose la plus grosse que le comptoir accepte, et **aucun réglage ne permet encore de la changer** ([#193](https://github.com/0xKestrelNova/best-hauling/issues/193)). Ils sont indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload). Un net **négatif** —
+- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **pas du prix** — c'est de la manutention, pas une commission — mais ils dépendent de la **taille de caisse** employée, que le joueur choisit au kiosque : charger en plus grosses caisses coûte moins cher. L'app retient la plus grosse que le comptoir propose **pour cette commodité-là** — UEX la publie par couple, et elle descend jusqu'à 2 SCU là où le terminal annonce 24. **Aucun réglage ne permet encore de la changer** ([#193](https://github.com/0xKestrelNova/best-hauling/issues/193)). Ils sont indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload). Un net **négatif** —
 la manutention dépasse la marge, c'est le cas que l'interrupteur sert à révéler — s'affiche avec son
 signe et **en rouge**, jamais dans le vert des gains.
 - **Mode Butin** (vue Commodités) : quand le coût d'acquisition est nul, la marge n'a plus de sens — seul compte le **prix de revente**. Ce mode liste **tout ce qui se vend** chez UEX, y compris les ~36 commodités sans aucun point d'achat, et n'affiche que **où l'écouler**. Sa heatmap se calcule **par rang** et non par ratio : les prix de revente s'étalent sur cinq ordres de grandeur (34 M aUEC/SCU pour le Saldynium contre 1 000 pour l'Iron Ore), une échelle linéaire écraserait tout le board.
@@ -619,17 +619,25 @@ les **161 terminaux** qu'expose UEX, et `k` varie déjà de **40 %** de l'une à
 la station est donc d'un ordre de grandeur au-dessus de celle de la formule. Les stations non relevées
 prennent un **`k` global réglable** (défaut 1,2, milieu des deux mesures). S'y ajoute le nombre de
 caisses, qui dépend de la **taille de caisse employée** — celle que tu choisis au kiosque. L'app la
-suppose égale au plafond de conteneur du terminal (`max_container_size` d'UEX), c'est-à-dire à la plus
-grosse caisse qu'il accepte, donc au chargement le moins cher ; **replié sur 32 quand UEX renvoie 0**.
-Les deux replis sous-estiment les frais plutôt que de les inventer. Quand tu enregistres un relevé, le
+suppose égale à la plus grosse que le comptoir propose **pour cette commodité** (`container_sizes`
+d'UEX, publié par ligne de prix), donc au chargement le moins cher qu'il offre. Deux replis, dans cet
+ordre : sans liste publiée pour le couple, le plafond du **terminal** (`max_container_size`) ; sans
+lui, **32**. Les deux sous-estiment les frais plutôt que de les inventer — c'est le sens dans lequel
+il faut se tromper. Quand tu enregistres un relevé, le
 troisième champ te demande la taille que tu as réellement employée : sans elle, le `k` mesuré porte
 l'erreur de découpage en plus du tarif de la station.
 
-> **Limite connue** ([#193](https://github.com/0xKestrelNova/best-hauling/issues/193)) : le plafond de
-> caisse est publié par UEX **par terminal**, alors qu'il vaut en réalité par couple (terminal,
-> commodité). Mesuré sur 2 579 lignes de prix : 597 fois (23 %) la commodité plafonne plus bas que son
-> terminal. L'app prête donc des caisses trop grosses à un quart des points de marché, et sous-estime
-> les frais d'autant. La correction demande un changement de schéma des données, elle vient à part.
+> **Levé le 2026-08-24** ([#194](https://github.com/0xKestrelNova/best-hauling/issues/194)) : le
+> plafond de caisse vaut par couple (terminal, commodité), et c'est désormais celui-là qui est
+> facturé. Mesuré sur 2 579 lignes de prix : la commodité plafonne **plus bas que son terminal
+> 597 fois (23 %)**, et jamais plus haut. Ashland publie sept listes différentes sous un plafond
+> terminal de 24, dont une commodité offerte en caisses de **2** — l'app y comptait douze fois trop
+> peu de caisses.
+>
+> **Ce qui reste** : UEX publie une **liste** (« 1,2,4,8,16,24,32 »), pas un plafond, et **210 lignes
+> ont des trous** (« 8,16,24,32 » sans 1/2/4). On n'en garde que le maximum, ce qui suffit tant
+> qu'aucun réglage n'expose un choix de taille ; le jour où il en existera un, il devra proposer la
+> liste réellement offerte et non la grille théorique — et un simple nombre ne saura pas la porter.
 
 La vue **Corrections** affiche, pour la station cherchée, le tarif qu'elle retiendrait : « Tarif retenu :
 `k = …` », suivi de « (ton relevé) » ou « (k global) » selon d'où il vient, et du montant que ça donne
@@ -760,6 +768,15 @@ UEX ne renseigne `scu_sell` que sur **~11 %** des points de vente. Le pipeline e
 - `demand: null` → capacité inconnue, **aucun plafond** de volume à la vente ;
 - `demand: 0` → terminal **saturé**, il ne prend plus rien → plafonne à 0 ;
 - `demand: n` → capacité restante réelle.
+
+Un point de marché de `data/market.json` est un **tuple compact**
+`[idxTerminal, prix, volume, relevé, statut]`, auquel s'ajoute depuis #194 un **sixième champ
+optionnel** : la plus grosse caisse que ce comptoir propose pour cette commodité. Il n'est écrit que
+s'il est connu — un tuple fait donc **5 ou 6 champs**, jamais un `null` de remplissage. C'est
+l'absence qui porte le sens, et elle est lue en un seul endroit (`tailleOfferte`, `logic.ts`) : sans
+elle, le calcul retombe sur le plafond du terminal. Cette tolérance n'est pas de la prudence
+gratuite — le service worker sert `data/*.json` en « réseau d'abord, cache en repli », donc une
+coquille antérieure au build qui ajoute le champ peut revenir à tout moment.
 
 - **SC Trade Tools** (`sc-trade.tools`) — routes optimisées, pas d'API publique documentée.
 - **Regolith Co** — plutôt minage/raffinage.
