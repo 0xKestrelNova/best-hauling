@@ -653,6 +653,34 @@ mesurées) **demande confirmation** avant d'être retenu : un zéro de trop dans
 coefficient d'apparence honnête, ensuite affiché « (relevé) » comme s'il avait été mesuré. La question
 ne refuse rien — un tarif vraiment surprenant reste enregistrable en un clic.
 
+### Le temps de chargement : mesuré ou rien
+
+Un fret qui rapporte 15 % de plus mais qui immobilise huit minutes de plus à quai n'est pas le meilleur
+fret. Le panneau de station porte donc, sous le relevé de tarif, un **chronomètre** : `▶` au moment où
+tu lances le chargement, `⏹` quand la soute est pleine — et la mesure se range avec la quantité et la
+taille de caisse des champs du dessus. Une durée déjà chronométrée de ton côté se saisit directement.
+
+**Le jeu ne publie aucune durée, et c'est vérifié** ([#192](https://github.com/0xKestrelNova/best-hauling/issues/192)) :
+sur 158 journaux (`Game.log` + 157 archives, 88 achats en autoload), `autoLoading` n'apparaît que comme
+**drapeau** de la requête d'achat. Ni début, ni fin, ni progression — le balayage de tout ce que le jeu
+écrit dans les 180 s suivant chaque achat ne rend que du rafraîchissement de kiosque, de la machinerie
+de shard et du décor de hangar. Le chrono ne peut donc pas se lire : il se presse.
+
+Ce que le panneau affiche, et **rien d'autre** :
+
+- **aucun temps pour une station non mesurée.** Pas d'estimation, pas de formule — rien qu'aucune
+  mesure n'appuie. C'est la différence avec le tarif, qui est une grille retrouvée à l'aUEC près ;
+- à **une** mesure : la durée, et le fait qu'**aucune dispersion n'existe encore**. Un « ±0 s »
+  ferait passer un relevé unique pour une certitude ;
+- à **deux et plus** : la moyenne, l'**écart-type d'échantillon**, l'étendue, plus les secondes par SCU
+  et par caisse — les deux termes qu'un futur modèle mettrait en facteur. Ils se prennent en total sur
+  total, jamais en moyenne de rapports : un relevé de 200 SCU en dit vingt fois plus qu'un de 10.
+
+Un temps dépend aussi de la charge du shard : il est **plus bruité qu'un tarif**, et il en faudra
+plusieurs par station avant d'en tirer quoi que ce soit. Rien de tout cela n'entre encore dans le
+classement des trajets — « rapporte le plus par heure » plutôt que « par voyage » est la suite logique,
+mais elle n'a de sens qu'une fois des temps mesurés.
+
 Trois hypothèses complètent le modèle, faute de mesures. La troisième est arrivée avec
 l'[ADR-014](docs/superpowers/specs/2026-08-23-taille-de-caisse-choisie-adr.md) : une **caisse
 partielle se facture plein tarif**. Les 18 relevés portent tous des volumes multiples exacts de leur

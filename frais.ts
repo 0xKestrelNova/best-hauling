@@ -10,9 +10,9 @@
 // sa vérité, et le recopier dans l'état en créerait une seconde.
 
 import {
-  AUTOLOAD, autoloadPoint, caissesDe, cargoBoxes, lineHaulFee, lineNet, nombreDeCaisses,
+  AUTOLOAD, autoloadPoint, caissesDe, cargoBoxes, lineHaulFee, lineNet, nombreDeCaisses, tempsStation,
 } from "./logic.ts";
-import type { LigneManifeste, PaireFrais, Terminal } from "./types.ts";
+import type { LigneManifeste, PaireFrais, ReleveTemps, TempsStation, Terminal } from "./types.ts";
 import { etat } from "./etat.ts";
 import { tailleDuCouple, termByName } from "./marche.ts";
 import { fmt, fmtFee, signe } from "./format.ts";
@@ -35,6 +35,35 @@ const K_DEFAULT = 1.2; // milieu des deux seules stations mesurées (Endgame 1,0
 export const alKey = (terminal: string): string => `autoload|${terminal}`;
 export function loadAutoloadK(): void { try { etat.AUTOLOAD_K = JSON.parse(localStorage.getItem(AUTOLOAD_KEY)) || {}; } catch { etat.AUTOLOAD_K = {}; } }
 export function saveAutoloadK(): void { try { localStorage.setItem(AUTOLOAD_KEY, JSON.stringify(etat.AUTOLOAD_K)); } catch {} }
+
+// ── Les CHRONOMÉTRAGES (#192) ──────────────────────────────────────────────────────────────────
+// Encore un store à part, et la raison n'est plus seulement celle d'AUTOLOAD_K : un tarif est UNE
+// mesure par station — la grille se retrouve à l'aUEC près — alors qu'un temps est une performance
+// bruitée par le shard. Il en faut donc PLUSIEURS par station, et la valeur porte une LISTE.
+// Même forme de clé qu'AUTOLOAD_K (`alKey`) : c'est la même station, et rien ne gagnerait à ce que
+// les deux stores se désignent différemment.
+const AUTOLOAD_T_KEY = "best-hauling-autoload-temps";
+const CHRONO_KEY = "best-hauling-autoload-chrono";
+export function loadAutoloadT(): void {
+  try { etat.AUTOLOAD_T = JSON.parse(localStorage.getItem(AUTOLOAD_T_KEY)) || {}; } catch { etat.AUTOLOAD_T = {}; }
+  try { etat.CHRONO = JSON.parse(localStorage.getItem(CHRONO_KEY)) || null; } catch { etat.CHRONO = null; }
+}
+export function saveAutoloadT(): void {
+  try { localStorage.setItem(AUTOLOAD_T_KEY, JSON.stringify(etat.AUTOLOAD_T)); } catch {}
+  try {
+    if (etat.CHRONO) localStorage.setItem(CHRONO_KEY, JSON.stringify(etat.CHRONO));
+    else localStorage.removeItem(CHRONO_KEY);
+  } catch {}
+}
+
+/** Les relevés de temps d'une station, dans l'ordre où ils ont été faits. Jamais `undefined`. */
+export const tempsDe = (terminal: string): ReleveTemps[] =>
+  (etat.AUTOLOAD_T[alKey(terminal)] as ReleveTemps[] | undefined) || [];
+
+/** Ce que les chronométrages de cette station disent — `null` si on n'en a aucun. On n'extrapole
+ *  PAS depuis une autre station : deux comptoirs n'ont aucune raison de charger à la même vitesse,
+ *  et rien ne le mesure encore. */
+export const tempsPour = (terminal: string): TempsStation | null => tempsStation(tempsDe(terminal));
 
 // Coefficient global, appliqué à toute station non relevée. Une saisie vide ou absurde retombe sur
 // le défaut : `Number("")` vaut 0, et un k nul annulerait silencieusement tous les frais.

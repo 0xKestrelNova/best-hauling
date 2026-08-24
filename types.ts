@@ -409,6 +409,45 @@ export type PointMarche = [
  *  logic.ts:765) cessent de propager un `null` fantôme le jour où `strictNullChecks` passera. */
 export type PointAchatMarche = [idxTerminal: number, prix: number, stock: number, releve: number, statut: number, taille?: number];
 
+/** UN chronométrage d'autoload, tel qu'il est persisté (#192). C'est la MESURE qui fait foi, jamais
+ *  la moyenne qu'on en tire : la grille de temps du jeu peut changer à un patch, et un relevé
+ *  complet reste réinterprétable là où une moyenne pré-digérée serait devenue illisible. Même règle
+ *  que les relevés de tarif (`frais-actions.ts`), pour la même raison.
+ *  `caisses` est DÉRIVÉ de `scu` et `taille` à l'enregistrement, et persisté quand même : c'est lui
+ *  que la forme candidate du modèle met en facteur, et le recalculer plus tard supposerait que
+ *  `tailleRetenue` n'a pas bougé entre-temps. */
+export type ReleveTemps = {
+  /** Durée observée, en SECONDES entières. Le jeu n'en publie aucune (#192, mesuré sur 158
+   *  journaux) : elle est chronométrée à la main, avec le temps de réaction que ça implique. */
+  s: number;
+  scu: number;
+  /** Taille de caisse EMPLOYÉE pour ce chargement-là — elle vaut par (comptoir, commodité)
+   *  depuis #194, donc elle ne se redevine pas depuis le terminal. */
+  taille: number;
+  caisses: number;
+  /** Epoch en SECONDES, comme les relevés UEX. Sert à dater la mesure, jamais à la périmer : un
+   *  temps n'a pas de date de référence en face. */
+  at: number;
+};
+
+/** Ce que les chronométrages d'UNE station disent, une fois agrégés — et rien de plus (#192).
+ *  `null` quand aucun relevé n'existe : on n'extrapole PAS un temps depuis une autre station, et
+ *  surtout pas depuis une formule qu'aucune mesure n'appuie encore. */
+export type TempsStation = {
+  n: number;
+  /** Moyenne des durées, en secondes. */
+  moyenne: number;
+  /** Écart-type d'ÉCHANTILLON (n−1). `null` à n = 1 : une mesure seule n'a pas de dispersion, et
+   *  afficher « ±0 » ferait passer un unique relevé pour une certitude. */
+  dispersion: number | null;
+  min: number;
+  max: number;
+  /** Secondes par SCU et par caisse — les deux termes que la forme candidate du modèle met en
+   *  facteur. `null` si le dénominateur cumulé est nul. */
+  parScu: number | null;
+  parCaisse: number | null;
+};
+
 export type CommoditeIdentite = { name: string; kind: string; illegal: boolean };
 
 /** Une entrée de `market.commodities` (data/market.json), publiée par `buildMarket`

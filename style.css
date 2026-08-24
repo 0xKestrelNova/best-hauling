@@ -1411,8 +1411,8 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
 .fee-head { font-family: var(--display); font-size: 12px; letter-spacing: 1px; color: var(--acc-2); margin-bottom: 9px; }
 .fee-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
 .fee-row input[type="number"] { min-width: 108px; padding: 7px 9px; font-size: 13px; }
-.fee-note { margin-top: 9px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.fee-note b { color: var(--text); }
+.fee-note, .fee-temps { margin-top: 9px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.fee-note b, .fee-temps b { color: var(--text); }
 .fee-off { font-size: 13px; color: var(--muted); }
 .corr-item.autoload { border-left-color: var(--acc-2); background: rgb(var(--acc-2-rgb) / 0.04); }
 

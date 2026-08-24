@@ -17,11 +17,11 @@ import type {
   JambeChaine, LigneChargement, LigneManifeste, Lot, Marche, MargeNette, MetriquesBoucle,
   MetriquesRoute, MetriquesTrajet, NoeudSysteme, OptionsChaine, OptionsEcoulement,
   OptionsTournee, PaireConvoi, PaireFrais, PalierValeur, Parcours, PointFrais, PointMarche, PointVente,
-  PorteursDeRang, Prise, Releves, Resolveur, ResolveurCorrections, ResolveurFrais,
+  PorteursDeRang, Prise, Releves, ReleveTemps, Resolveur, ResolveurCorrections, ResolveurFrais,
   RestantManifeste, ResumeCommodite, Retrait, RetraitArret, RisqueSysteme, RisquesParcours,
   Route, RouteFiltrable, RouteResolue,
   SansDebouche, SegmentResolu, Starmap, Station, StoreCorrections, SuggestionArret,
-  SystemeCarte, TarifTerminal, Terminal, TotauxManifeste, Tournee, Trajet, ValeurEffective,
+  SystemeCarte, TarifTerminal, TempsStation, Terminal, TotauxManifeste, Tournee, Trajet, ValeurEffective,
   ValeursEffectives, VenteEtape, VenteSoute, VueManifeste,
   VenteAuTerminal, DisqueSysteme, EstAvantPoste, ZoneRisque,
 } from "./types.ts";
@@ -511,6 +511,58 @@ export function autoloadFee(scu: number | null, taille: number | null | undefine
   if (!isFinite(units) || units <= 0 || !(k > 0)) return 0;
   const boxes = nombreDeCaisses(caissesDe(units, taille));
   return Math.round(k * (AUTOLOAD.base + AUTOLOAD.perBox * boxes + AUTOLOAD.perScu * units));
+}
+
+// ---------- Chronométrer l'autoload (#192) ----------
+// Le jeu ne publie AUCUNE durée. Mesuré sur 158 journaux (`Game.log` + 157 archives, 88 achats en
+// autoload) : `autoLoading` n'apparaît que comme DRAPEAU de la requête d'achat, et le seul autre
+// évènement portant ce mot est une erreur isolée. Ni début, ni fin, ni progression — le balayage de
+// tout ce que le jeu écrit dans les 180 s suivant chaque achat ne rend que du rafraîchissement de
+// kiosque, de la machinerie de shard et du décor de hangar. La durée se chronomètre donc à la main.
+//
+// D'où la nature de ces nombres, et elle n'est PAS celle du tarif : un tarif est une GRILLE, qu'on
+// retrouve à l'aUEC près ; un temps est une PERFORMANCE, bruitée par le shard comme l'est déjà la
+// saturation d'un comptoir. On n'en tire donc pas un coefficient mais une moyenne ET sa dispersion,
+// et on n'affiche jamais rien pour une station qu'on n'a pas mesurée.
+//
+// À n = 1, la dispersion n'existe pas — elle vaut `null` et non 0. Un « ±0 s » ferait passer une
+// mesure unique pour une certitude, ce qui est l'inverse de ce que ce champ existe pour dire.
+export const TEMPS_MIN_DISPERSION = 2;
+
+// Ce chronométrage est-il celui d'un chargement, ou d'un chronomètre qu'on a oublié d'arrêter ?
+// Même esprit que `K_PLAUSIBLE` : la borne n'affirme rien sur la vitesse des 114 comptoirs jamais
+// mesurés, elle attrape le seul accident qui produise une durée d'apparence honnête — le chrono
+// laissé courir pendant qu'on joue. Une heure est très au-delà de tout ce qui s'est raconté sur le
+// sujet (« 20 minutes pour un Carrack », la seule anecdote trouvée), donc elle ne peut pas perdre
+// une mesure réelle. Hors borne l'appelant fait CONFIRMER, il ne refuse pas : un chargement
+// vraiment interminable reste une mesure, et c'est l'utilisateur qui l'a faite.
+export const TEMPS_PLAUSIBLE_MAX = 3600;
+export const tempsPlausible = (s: number): boolean => s > 0 && s <= TEMPS_PLAUSIBLE_MAX;
+
+export function tempsStation(releves: ReleveTemps[] | null | undefined): TempsStation | null {
+  // Un relevé sans durée n'est pas une durée nulle : c'est une saisie ratée. On l'écarte du calcul
+  // sans le supprimer du store — c'est l'utilisateur qui décide d'oublier une mesure, pas nous.
+  const bons = (releves || []).filter((r) => r && isFinite(r.s) && r.s > 0);
+  if (!bons.length) return null;
+  const n = bons.length;
+  const total = bons.reduce((a, r) => a + r.s, 0);
+  const moyenne = total / n;
+  const secondes = bons.map((r) => r.s);
+  const dispersion = n < TEMPS_MIN_DISPERSION
+    ? null
+    : Math.sqrt(bons.reduce((a, r) => a + (r.s - moyenne) ** 2, 0) / (n - 1));
+  // Le débit se prend en TOTAL SUR TOTAL, jamais en moyenne des rapports : moyenner des rapports
+  // donnerait le même poids à un relevé de 4 SCU qu'à un de 400, alors que le second en dit
+  // cinquante fois plus. C'est la même raison qui fait prendre `scu_sell - scu_sell_stock` plutôt
+  // qu'un ratio dans le pipeline.
+  const scu = bons.reduce((a, r) => a + (r.scu || 0), 0);
+  const caisses = bons.reduce((a, r) => a + (r.caisses || 0), 0);
+  return {
+    n, moyenne, dispersion,
+    min: Math.min(...secondes), max: Math.max(...secondes),
+    parScu: scu > 0 ? total / scu : null,
+    parCaisse: caisses > 0 ? total / caisses : null,
+  };
 }
 
 // ---------- Relevé de station : du montant payé au coefficient ----------
