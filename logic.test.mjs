@@ -4278,7 +4278,7 @@ test("manifestsFrom : une ligne déficitaire à 100 SCU redevient éligible à 1
   assert.equal(t.profit, 200);                          // 120 avant : Fluorine 28 SCU, seule à bord
 });
 
-test("manifestsFrom : sans frais, le chargement des 4 284 arcs réels est inchangé au SCU près", () => {
+test("manifestsFrom : sans frais, le chargement des 4 287 arcs réels est inchangé au SCU près", () => {
   // Garde-fou : la reprise du remplissage ne vit QUE dans la branche à frais. Interrupteur éteint,
   // `fillCargo` doit rendre exactement ce qu'il rendait — un seul appel, aucun retrait, aucun tri
   // de plus. C'est ce total figé qui le dit.
@@ -4290,7 +4290,11 @@ test("manifestsFrom : sans frais, le chargement des 4 284 arcs réels est inchan
       scu += t.lines.reduce((a, l) => a + l.units, 0);
     }
   }
-  assert.deepEqual({ arcs, scu, profit }, { arcs: 4_284, scu: 344_101, profit: 392_892_971 });
+  // RE-MESURÉ sur l'amorce du 2026-08-24 (4 284 / 344 101 / 392 892 971 sur la précédente).
+  // Ce compteur ne connaît PAS les frais : #194 ne peut pas l'avoir bougé, et la contre-épreuve le
+  // confirme — la même amorce privée de son 6e champ rend ces trois nombres à l'unité près. Ce qui
+  // a bougé, c'est le marché : deux jours de republications UEX.
+  assert.deepEqual({ arcs, scu, profit }, { arcs: 4_287, scu: 353_077, profit: 457_023_683 });
 });
 
 test("manifestsFrom : frais actifs, aucun manifeste réel ne rapporte moins que sa meilleure commodité seule", () => {
@@ -4319,7 +4323,11 @@ test("manifestsFrom : frais actifs, aucun manifeste réel ne rapporte moins que 
   // 4 219 avant l'ADR-014, 4 220 depuis : le caissage uniforme fait BAISSER les frais de tout
   // volume qui n'est pas un multiple exact de la taille, donc UN arc de plus couvre sa manutention.
   // Ce chiffre est RE-MESURÉ, jamais ajusté à la main : c'est lui qui dit l'ampleur du changement.
-  assert.equal(arcs, 4_220, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le défaut");
+  // RE-MESURÉ : 4 220 sur l'amorce précédente, 4 210 sur celle du 2026-08-24. Contre-épreuve faite,
+  // et elle surprend : la MÊME amorce privée de son 6e champ rend AUSSI 4 210. #194 renchérit bien
+  // la manutention (+2,91 % sur les 107 meilleurs manifestes, 50 en hausse et 0 en baisse) mais ne
+  // fait basculer AUCUN arc de part et d'autre de zéro. Les dix arcs perdus sont ceux du marché.
+  assert.equal(arcs, 4_210, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le défaut");
   assert.deepEqual(echecs, []);
   // Non vacuisant : l'invariant serait trivialement vrai si le correctif avait ramené tout le monde
   // à une seule commodité. Le remplissage multi-commodité doit rester la règle, pas l'exception.
@@ -4492,7 +4500,7 @@ test("chaîne : le manifeste par arc reste soumis à « même système » et à 
 const F_REEL = { legalOnly: false, noOutpost: false, maxAge: 0, useCargo: true, cargo: 96 };
 const fraisReels = (t) => autoloadPoint(t, 1);
 
-test("chaîne : sur les 4 355 arcs réels, aucun ne rapporte moins qu'avant et aucun ne disparaît", () => {
+test("chaîne : sur les 4 357 arcs réels, aucun ne rapporte moins qu'avant et aucun ne disparaît", () => {
   const adj = buildChainAdjacency(REAL, F_REEL, idResolve, fraisReels);
   let arcs = 0, sansManifeste = 0, multi = 0, scuMono = 0, scuManifeste = 0;
   const pertes = [];
@@ -4512,11 +4520,16 @@ test("chaîne : sur les 4 355 arcs réels, aucun ne rapporte moins qu'avant et a
       scuManifeste += saut.units;
     }
   }
-  assert.equal(arcs, 4_355, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le gain");
+  // RE-MESURÉ : 4 355 sur l'amorce précédente, 4 357 sur celle du 2026-08-24 — et là encore, la
+  // même amorce sans son 6e champ rend 4 357. C'est le marché qui a bougé, pas le caissage.
+  assert.equal(arcs, 4_357, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le gain");
   assert.deepEqual(pertes, []);
-  // 136 avant l'ADR-014, 135 depuis — le même mouvement vu de l'autre côté : un arc qui n'avait
-  // aucun chargement rentable en trouve un maintenant que les frais ont baissé. RE-MESURÉ.
-  assert.equal(sansManifeste, 135, "arcs sans manifeste (frais actifs) : ils doivent RESTER dans le graphe");
+  // 136 avant l'ADR-014, puis 135, et 147 sur l'amorce du 2026-08-24. RE-MESURÉ, et la cause
+  // ISOLÉE : la même amorce privée de son 6e champ rend AUSSI 147. C'était pourtant le compteur le
+  // plus susceptible de porter la marque de #194 — un arc sans chargement rentable est exactement
+  // ce que produisent des frais qui montent — et non : les douze arcs perdus le sont pour le
+  // marché. #194 renchérit la manutention de +2,91 % sans faire basculer un seul arc.
+  assert.equal(sansManifeste, 147, "arcs sans manifeste (frais actifs) : ils doivent RESTER dans le graphe");
   // Non vacuisant : l'invariant serait trivialement vrai si les arcs étaient tous restés mono.
   assert.ok(multi > 700, `chargements multi-commodité tombés à ${multi}`);
   assert.ok(scuManifeste > scuMono * 1.04, `SCU emportés : ${scuManifeste} contre ${scuMono} avant`);

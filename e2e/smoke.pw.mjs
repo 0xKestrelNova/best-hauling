@@ -1503,7 +1503,8 @@ async function manifesteDepuis(page, label) {
   await expect(page.locator("#manifest .mqty-input").first()).toBeVisible();
 }
 // Les noms d'étape sont mis en capitales par le CSS : on compare donc sans tenir compte de la casse.
-const memeStation = (nom) => new RegExp(nom.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+const echapper = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const memeStation = (nom) => new RegExp(echapper(nom), "i");
 // Parcours encodé dans le lien partageable (paramètre `j` du hash), ou null.
 const lienVoyage = (page) => page.evaluate(() => new URLSearchParams(location.hash.slice(1)).get("j"));
 
@@ -1555,6 +1556,10 @@ test("Manifeste -> voyage : la jambe COURANTE n'offre pas de bouton (non-destruc
 });
 
 test("Manifeste -> voyage : un départ étranger au parcours nomme les deux bouts, sans agir", async ({ page }) => {
+  // Ce test SONDE les terminaux jusqu'à en trouver un qui rende un manifeste (voir plus bas), et
+  // chaque candidat muet coûte son délai. Il lui faut donc son propre budget : le défaut de 30 s
+  // suffisait tant que le premier candidat répondait, ce qui a cessé d'être vrai le 2026-08-24.
+  test.setTimeout(90_000);
   await manifesteDepuis(page, "Megumi — Pyro");
   await page.click("#manifestToJourney");
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(2);
@@ -1562,14 +1567,28 @@ test("Manifeste -> voyage : un départ étranger au parcours nomme les deux bout
   // Le terminal « étranger » est CHOISI DANS LES DONNÉES, jamais codé en dur : « Rod's Fuel » l'a
   // été pendant un temps, jusqu'à ce qu'une régénération de l'amorce en fasse la jambe 1 du meilleur
   // trajet — le test lisait alors « ✓ C'est déjà la jambe 1 de ton voyage » et échouait.
+  // DEUX pièges cumulés, tous deux payés sur une régénération d'amorce :
+  //   - les noms d'étape sont mis en CAPITALES par le CSS (« MEGUMI »), donc l'exclusion doit
+  //     ignorer la casse — sinon le départ du voyage n'est pas exclu de ses propres candidats ;
+  //   - tout terminal n'offre pas un manifeste. Sur l'amorce du 2026-08-24, ARC-L1 — premier de la
+  //     liste — n'en rend aucun, donc aucune `.journey-hint` n'apparaît et l'attente expire sur
+  //     l'invite PRÉCÉDENTE, celle de Megumi. On essaie donc les candidats jusqu'à en trouver un
+  //     qui parle vraiment, au lieu de parier sur le premier.
   const arrets = (await page.locator("#journeyCard .jstep").allInnerTexts()).map((s) => s.trim().split(" — ")[0]);
-  const etranger = await page.locator("#originList option").evaluateAll(
-    (els, pris) => els.map((e) => e.value).find((v) => !pris.some((p) => v.includes(p))),
+  const candidats = await page.locator("#originList option").evaluateAll(
+    (els, pris) => els.map((e) => e.value).filter((v) => !pris.some((p) => v.toLowerCase().includes(p.toLowerCase()))),
     arrets,
   );
-  expect(etranger, "l'instantané doit offrir un terminal de départ hors du parcours").toBeTruthy();
-  await page.fill("#origin", etranger);
-  await expect(page.locator("#manifest .journey-hint")).toContainText(etranger.split(" — ")[0]);
+  let etranger = null;
+  for (const c of candidats.slice(0, 15)) {
+    await page.fill("#origin", c);
+    try {
+      await expect(page.locator("#manifest .journey-hint")).toContainText(memeStation(c.split(" — ")[0]), { timeout: 1500 });
+      etranger = c;
+      break;
+    } catch { /* ce terminal ne rend pas de manifeste : au suivant */ }
+  }
+  expect(etranger, "l'instantané doit offrir un départ hors du parcours qui RENDE un manifeste").toBeTruthy();
   await expect(page.locator("#manifest .journey-hint")).toContainText(memeStation(fin));
   await expect(page.locator("#manifestToJourney")).toHaveCount(0);
   await expect(page.locator("#journeyCard .jstep")).toHaveCount(2); // aucune modification du voyage
@@ -1583,7 +1602,10 @@ test("Manifeste -> voyage : un chargement AJUSTÉ part tel quel (et hors du lien
   await qty.blur();
   await page.click("#manifestToJourney");
   await expect(page.locator("#journeyCard .jleg-edited")).toHaveCount(1); // ✎ = manifeste personnalisé
-  await expect(page.locator("#journeyCard .jleg-cargo").first()).toContainText(`${nom} 13 SCU`);
+  // Le nom et la quantité ne se touchent PAS quand la commodité est illégale : le rendu insère
+  // « ⛔ illégal » entre les deux (`☠️WiDoW ⛔ illégal 13 SCU`). Le tag ne porte aucun chiffre,
+  // donc `[^0-9]*` reste serré — il n'autorise pas une autre ligne à satisfaire l'assertion.
+  await expect(page.locator("#journeyCard .jleg-cargo").first()).toContainText(new RegExp(echapper(nom) + "[^0-9]*13 SCU"));
   const edits = JSON.parse(await page.evaluate(() => localStorage.getItem("best-hauling-journey-edits-v2")));
   expect(edits[Object.keys(edits)[0]]).toContainEqual({ name: nom, units: 13 });
   // Le lien ne transporte que le PARCOURS : la jambe y tient en 8 champs, sans aucun SCU.
@@ -3165,8 +3187,11 @@ test("Manifeste : « ⧉ Copier » sort le plan de chargement, sa route et son t
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await manifesteDepuis(page, "Megumi — Pyro");
 
-  // `.mname` porte AUSSI le ✕ de retrait de la ligne : on ne garde que le nom.
-  const premiere = (await page.locator("#manifest .mname").first().innerText()).replace(/\s*✕\s*$/, "").trim();
+  // Le nom se lit dans `data-name`, jamais dans le texte RENDU. `.mname` porte le ✕ de retrait,
+  // et — depuis que WiDoW est la meilleure ligne au départ de Megumi — un « ⛔ ILLÉGAL » mis en
+  // capitales par le CSS. Le presse-papiers, lui, écrit le nom nu : la comparaison échouait sur une
+  // décoration, pas sur un défaut. Un attribut ne se fait pas décorer.
+  const premiere = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
   await page.click("#copyManifest");
   await expect(page.locator("#copyManifest")).toHaveText(/Copié/);
 
