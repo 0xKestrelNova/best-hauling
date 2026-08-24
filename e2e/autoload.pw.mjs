@@ -25,11 +25,17 @@ test.use({ serviceWorkers: "block" });
 // plafond plus bas change le nombre de caisses donc le montant (32 SCU font 1 caisse à 32, mais 2 à
 // 24 comme à 16). Sans plafond imposé, on répartit des plafonds VARIÉS : un marché uniformément à
 // 32 ne distinguerait pas un `maxBox` respecté d'un `maxBox` ignoré.
-// `tailleCouple` pose la même taille sur TOUS les tuples de marché, des deux côtés. Depuis #194
-// c'est elle — et non `maxBox` — qui décide du découpage : sans ce paramètre, l'enrichissement ne
-// toucherait que les terminaux, le chemin par couple ne serait jamais exercé, et ces tests
-// mesureraient le REPLI en croyant mesurer le nominal. C'est le même piège que le mode "strip"
-// documente plus haut, et il ne se contourne pas en espérant que la donnée soit là.
+// `tailleCouple` agit sur le 6e champ des tuples de marché, des deux côtés. Depuis #194 c'est lui —
+// et non `maxBox` — qui décide du découpage :
+//   un NOMBRE  : pose cette taille sur tous les tuples (chemin nominal, taille prévisible) ;
+//   "strip"    : RETIRE le champ (chemin de repli, où le plafond du terminal reprend la main) ;
+//   omis       : l'instantané tel qu'il est commité.
+// Le "strip" n'est pas décoratif, et le lot `chore(data)` du 2026-08-24 l'a prouvé : jusque-là
+// l'amorce versionnée ne portait AUCUNE taille, et deux tests vérifiaient le repli en comptant sur
+// cette absence. La première régénération les a fait basculer sur le nominal sans qu'ils le disent.
+// C'est mot pour mot ce qui était déjà arrivé à `maxBox` (voir le mode "strip" des terminaux,
+// plus haut) : un chemin de dégradation se teste en RETIRANT la donnée, jamais en espérant qu'elle
+// manque. Deuxième fois, même leçon.
 async function enrichMarket(page, mode, fixedMaxBox, tailleCouple) {
   await page.route("**/data/market.json", async (route) => {
     const res = await route.fetch();
@@ -43,9 +49,10 @@ async function enrichMarket(page, mode, fixedMaxBox, tailleCouple) {
       });
     }
     if (tailleCouple) {
+      const poser = (t) => { if (tailleCouple === "strip") t.length = 5; else t[5] = tailleCouple; };
       for (const c of market.commodities) {
-        for (const b of c.buys) b[5] = tailleCouple;
-        for (const s of c.sells) s[5] = tailleCouple;
+        for (const b of c.buys) poser(b);
+        for (const s of c.sells) poser(s);
       }
     }
     await route.fulfill({ response: res, json: market });
@@ -119,10 +126,13 @@ test("le plafond de caisse est celui de la COMMODITÉ, pas celui du comptoir (#1
 
 test("sans taille par couple, le comptoir reprend la main : le repli n'invente rien (#194)", async ({ page }) => {
   const errors = watchErrors(page);
-  // Le MÊME marché, aux mêmes plafonds de terminal, mais aucun tuple ne porte de taille — soit
-  // l'instantané d'avant le prochain `chore(data)`. Le découpage doit alors être celui du comptoir,
-  // ni plus fin ni plus grossier : le repli SOUS-ESTIME sans inventer (ADR-014, décision 5).
-  await enrichMarket(page, "all", 32);
+  // Le MÊME marché, aux mêmes plafonds de terminal, mais dont on RETIRE les tailles par couple —
+  // soit un instantané servi depuis le cache du service worker, antérieur au build qui les ajoute.
+  // Le découpage doit alors être celui du comptoir, ni plus fin ni plus grossier : le repli
+  // SOUS-ESTIME sans inventer (ADR-014, décision 5).
+  // Ce "strip" est INDISPENSABLE depuis que l'amorce porte les tailles : sans lui ce test
+  // mesurerait le chemin nominal en croyant mesurer le repli.
+  await enrichMarket(page, "all", 32, "strip");
   await page.goto("/index.html");
   await expect(page.locator("#rows tr").first()).toBeVisible();
   await page.check("#autoload");
@@ -631,7 +641,10 @@ test("infobulle : la taille de caisse est nommée sans casser le décompte des c
   // trouve comme un NOMBRE DE COMMODITÉS. Écrire « en 20 caisses DE 32 SCU, chargement… » lui fait
   // donc lire 32 commodités, et `feeAttendu` se met à valider un montant faux — SILENCIEUSEMENT.
   // La taille vit pour cette raison dans un segment qui commence APRÈS le premier « · ».
-  await enrichMarket(page, "all", 32);
+  // La taille du COUPLE est imposée à 32 comme le plafond des terminaux : ce test parle du FORMAT
+  // de l'infobulle, pas de qui gagne, et il lui faut donc un nombre prévisible. La laisser au
+  // hasard de l'amorce le rendait rouge dès la première régénération (« caisses de 4 SCU »).
+  await enrichMarket(page, "all", 32, 32);
   const errors = watchErrors(page);
   await page.goto("/index.html");
   await expect(page.locator("#rows tr").first()).toBeVisible();
