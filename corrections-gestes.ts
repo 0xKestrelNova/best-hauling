@@ -85,7 +85,7 @@ export function brancherGestesCorrections() {
   // `vues/frais-station.tsx`, dont la `key` porte le relevé lui-même. Les passer à `value=` les
   // gèlerait — c'est écrit en toutes lettres dans l'en-tête de ce composant.
   $("corrections").addEventListener("keydown", (e) => {
-    if ((champ(e).id === "alAmount" || champ(e).id === "alScu") && e.key === "Enter") {
+    if (["alAmount", "alScu", "alBox"].includes(champ(e).id) && e.key === "Enter") {
       e.preventDefault();
       enregistrerReleve();
     }

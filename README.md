@@ -45,11 +45,11 @@ Autres éléments :
 - **Vaisseau** : autocomplétion par sous-chaîne (128 modèles UEX), remplit la soute automatiquement, affiche la photo.
 - **Contraintes désactivables** : couper le budget → meilleure route pour la soute ; couper la soute → meilleure route pour le budget.
 - **Multi commodité** (vue Trajets) : balaie tout le marché et propose les **chargements combinés** A→B — la soute se remplit par marge décroissante, plafonnée par le stock et la demande. Quand c'est le **budget** qui borne, ce glouton se fait drainer par les lignes chères — une commodité à 50 000 aUEC/SCU épuise 100 000 en 2 SCU et laisse la soute vide. L'app essaie donc aussi un remplissage par **rendement du capital** et garde le meilleur des deux : jamais pire, et 31 manifestes sur 4 316 y gagnent plus de 5 % sur l'instantané actuel. Le menu **liste** à côté de la coche décide de la portée : **combinés seuls** (défaut — un trajet qui tient en une seule commodité est déjà dans la liste normale) ou **avec les simples**, qui remet les deux sortes dans le **même classement** quand on veut juste la meilleure option, combinée ou non. Nécessite la soute activée ; la coche est grisée sinon.
-- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **ni du prix ni de la commodité** (c'est de la manutention, pas une commission) : indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload). Un net **négatif** —
+- **Frais d'autoload** (interrupteur **inactif par défaut**, à côté de « Multi commodité ») : déduit du profit le coût du chargement et du déchargement automatiques, facturé **des deux côtés** du trajet. Ces frais ne dépendent **pas du prix** — c'est de la manutention, pas une commission — mais ils dépendent de la **taille de caisse** employée, que le joueur choisit au kiosque : charger en plus grosses caisses coûte moins cher. L'app suppose la plus grosse que le comptoir accepte, et **aucun réglage ne permet encore de la changer** ([#193](https://github.com/0xKestrelNova/best-hauling/issues/193)). Ils sont indolores sur du fret cher (≈ 0,2 % sur 96 SCU d'or), décisifs sur du fret pauvre (≈ 29 % sur les mêmes 96 SCU de déchets) — exactement là où le classement se joue. Actif, les colonnes profit, profit/heure, **marge et ROI** passent en **net** et **le tri suit le net** ; sans quoi le tableau continuerait de classer sur un profit qu'on n'encaisse pas. La marge nette répartit les frais sur le volume transporté — une même colonne garde donc la même définition dans les deux modes de la vue. Seule la **jambe de voyage** retient la marge de marché : elle est persistée et voyage dans le lien, où des frais estimés au moment du clic n'auraient plus de sens. Les montants sont **estimés** et portent un `≈` : [pourquoi](#frais-dautoload). Un net **négatif** —
 la manutention dépasse la marge, c'est le cas que l'interrupteur sert à révéler — s'affiche avec son
 signe et **en rouge**, jamais dans le vert des gains.
 - **Mode Butin** (vue Commodités) : quand le coût d'acquisition est nul, la marge n'a plus de sens — seul compte le **prix de revente**. Ce mode liste **tout ce qui se vend** chez UEX, y compris les ~36 commodités sans aucun point d'achat, et n'affiche que **où l'écouler**. Sa heatmap se calcule **par rang** et non par ratio : les prix de revente s'étalent sur cinq ordres de grandeur (34 M aUEC/SCU pour le Saldynium contre 1 000 pour l'Iron Ore), une échelle linéaire écraserait tout le board.
-- **Décomposition SCU en caisses** (32/24/16/8/4/2/1) sur le manifeste et en infobulle.
+- **Décompte des caisses** sur le manifeste et en infobulle : une cargaison part en caisses d'**une seule taille**, la dernière éventuellement partielle — jamais un assortiment de 32/24/16/8/4/2/1, que personne ne charge.
 - **Manifeste ajustable** : chaque ligne se modifie à la main — tu peux **dépasser le stock UEX** (vol de fret, relevé périmé…) ; le champ passe en ambre pour le signaler. Le chargement que tu **composes** ainsi (lignes ajoutées, SCU ramenés) **reste** : il porte le badge `✎`, garde sa destination, et survit à un prix corrigé, à une frappe dans la recherche ou à un changement de vaisseau — le total `120/32 SCU` te dit alors que tu charges plus que la soute. Il est **local** (localStorage) comme un manifeste de jambe, et `↺ optimal` rend la main au calcul. Changer de **terminal de départ**, ou forcer une **autre arrivée**, l'abandonne : ses lignes se lisent aux prix de ces deux comptoirs-là et d'aucun autre.
 - **Détail du chargement** dépliable (📦), sur les lignes **multi commodité** : ce que contient le chargement, commodité par commodité (stock, demande, prix, marge, profit, caisses). Les autres tables n'ont pas de dépliant — la **carte du parcours** y montre la géographie, et le temps estimé se lit en infobulle de « Profit/h ».
 - **Le classement se fait sur ce que ça rapporte.** Un score composite multipliait autrefois le
@@ -600,7 +600,8 @@ Le montant affiché est une **estimation assumée**, pas la facture du jeu. Voic
 mesuré et ce qui est extrapolé.
 
 **Mesuré** : 18 relevés en jeu (Star Citizen 4.9) sur **deux stations Pyro** (les Admin d'Endgame et de
-Ruin Station) — identiques à l'achat et à la vente, et identiques quelle que soit la commodité. Ils
+Ruin Station) — identiques à l'achat et à la vente. Le TARIF ne dépend pas de la commodité ; le
+DÉCOUPAGE, si : c'est le comptoir qui borne la taille de caisse, et il la borne par commodité. Ils
 donnent une grille unique dont la station n'est qu'un multiplicateur `k` :
 
 ```
@@ -608,15 +609,27 @@ frais ≈ k × (150 + 30 × nombre_de_caisses + 20 × SCU)
 ```
 
 Les trois constantes ne sont pas choisies, elles se **déduisent** des relevés, et sont ancrées sur la
-première station (`k = 1`) ; la seconde vaut `k = 1,4`. Confrontée aux 18 relevés, la formule s'écarte de
-**moins de 3 %** (2,8 % au pire, 1,6 % en moyenne) — c'est un test, qui tombera si le jeu change sa grille.
+première station (`k = 1`) ; la seconde vaut `k = 1,4`. Confrontée aux 18 relevés, **à taille de caisse
+connue**, la formule s'écarte de **moins de 3 %** (2,8 % au pire, 1,6 % en moyenne) — c'est un test, qui
+tombera si le jeu change sa grille. La réserve compte : ces 18 relevés donnent la taille employée, et
+c'est la grille tarifaire qu'ils valident, pas la façon dont l'app devine un découpage.
 
 **Extrapolé** : tout le reste, à commencer par la station. Ces deux stations sont les seules mesurées sur
 les **161 terminaux** qu'expose UEX, et `k` varie déjà de **40 %** de l'une à l'autre : l'incertitude sur
 la station est donc d'un ordre de grandeur au-dessus de celle de la formule. Les stations non relevées
 prennent un **`k` global réglable** (défaut 1,2, milieu des deux mesures). S'y ajoute le nombre de
-caisses, qui dépend du plafond de conteneur du terminal (`max_container_size` d'UEX), **replié sur 32
-quand UEX renvoie 0** : ce repli sous-estime les frais plutôt que de les inventer.
+caisses, qui dépend de la **taille de caisse employée** — celle que tu choisis au kiosque. L'app la
+suppose égale au plafond de conteneur du terminal (`max_container_size` d'UEX), c'est-à-dire à la plus
+grosse caisse qu'il accepte, donc au chargement le moins cher ; **replié sur 32 quand UEX renvoie 0**.
+Les deux replis sous-estiment les frais plutôt que de les inventer. Quand tu enregistres un relevé, le
+troisième champ te demande la taille que tu as réellement employée : sans elle, le `k` mesuré porte
+l'erreur de découpage en plus du tarif de la station.
+
+> **Limite connue** ([#193](https://github.com/0xKestrelNova/best-hauling/issues/193)) : le plafond de
+> caisse est publié par UEX **par terminal**, alors qu'il vaut en réalité par couple (terminal,
+> commodité). Mesuré sur 2 579 lignes de prix : 597 fois (23 %) la commodité plafonne plus bas que son
+> terminal. L'app prête donc des caisses trop grosses à un quart des points de marché, et sous-estime
+> les frais d'autant. La correction demande un changement de schéma des données, elle vient à part.
 
 La vue **Corrections** affiche, pour la station cherchée, le tarif qu'elle retiendrait : « Tarif retenu :
 `k = …` », suivi de « (ton relevé) » ou « (k global) » selon d'où il vient, et du montant que ça donne
@@ -632,7 +645,11 @@ mesurées) **demande confirmation** avant d'être retenu : un zéro de trop dans
 coefficient d'apparence honnête, ensuite affiché « (relevé) » comme s'il avait été mesuré. La question
 ne refuse rien — un tarif vraiment surprenant reste enregistrable en un clic.
 
-Deux hypothèses complètent le modèle, faute de mesures : le **nombre de caisses est fixé au chargement**
+Trois hypothèses complètent le modèle, faute de mesures. La troisième est arrivée avec
+l'[ADR-014](docs/superpowers/specs/2026-08-23-taille-de-caisse-choisie-adr.md) : une **caisse
+partielle se facture plein tarif**. Les 18 relevés portent tous des volumes multiples exacts de leur
+taille, aucune donnée ne tranche — à réviser si le jeu la contredit. Les deux autres : le **nombre de
+caisses est fixé au chargement**
 (au déchargement on sort les caisses qu'on a, seul le tarif change) et **une transaction par commodité**
 (un manifeste à trois commodités paie trois fois la base de 150 — le choix pessimiste). Une ligne qui
 n'est manutentionnée qu'à un bout ne paie qu'**une** opération : le fret chargé ici pour être écoulé

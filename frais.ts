@@ -10,7 +10,7 @@
 // sa vérité, et le recopier dans l'état en créerait une seconde.
 
 import {
-  AUTOLOAD, autoloadPoint, cargoBoxes, lineHaulFee, lineNet, scuBoxes,
+  AUTOLOAD, autoloadPoint, caissesDe, cargoBoxes, lineHaulFee, lineNet, nombreDeCaisses,
 } from "./logic.ts";
 import type { LigneManifeste, PaireFrais, Terminal } from "./types.ts";
 import { etat } from "./etat.ts";
@@ -62,7 +62,6 @@ function feeEnd(name: string, terminal: Terminal | null | undefined) {
     name, k, point: autoloadPoint(t, k),
     known: !!t && t.autoload != null, // champ absent = instantané de market.json antérieur au build
     available: !!t && t.autoload === true,
-    maxBox: t ? t.maxBox : undefined,
     measured: !!etat.AUTOLOAD_K[alKey(name)],
   };
 }
@@ -99,19 +98,27 @@ export function feeEndText(e: ReturnType<typeof feeEnd>): string {
 // facturations — une transaction pour un chargement à une commodité, une PAR commodité au-delà
 // (hypothèse 2 de la spec), et autant de fois la base de 150.
 const FEE_FORMULA = `${AUTOLOAD.base} + ${AUTOLOAD.perBox}/caisse + ${AUTOLOAD.perScu}/SCU`;
-const boxCount = (boxes: { count: number }[]): number => boxes.reduce((a, b) => a + b.count, 0);
-export function feeLoadText(scu: number, maxBox?: number): string {
-  const n = boxCount(scuBoxes(scu, maxBox));
-  return `${fmt(scu)} SCU en ${n} caisse${n > 1 ? "s" : ""}, chargement + déchargement · ${FEE_FORMULA} par opération`;
+// La TAILLE de caisse est nommée, parce qu'elle est désormais un choix et non une fatalité du
+// comptoir (ADR-014) : sans elle, le lecteur ne peut pas refaire le décompte. Elle est placée
+// APRÈS le premier « · » à dessein — le segment qui suit « caisses » est lu par la suite e2e
+// comme un nombre de COMMODITÉS (e2e/autoload.pw.mjs:55), et « en 20 caisses de 32 SCU » y
+// deviendrait « 32 commodités » sans qu'aucune assertion ne le voie.
+const tailleTexte = (boxes: { size: number }[]): string =>
+  boxes.length ? ` · caisses de ${boxes[0].size} SCU` : "";
+export function feeLoadText(scu: number, taille?: number): string {
+  const boxes = caissesDe(scu, taille);
+  const n = nombreDeCaisses(boxes);
+  return `${fmt(scu)} SCU en ${n} caisse${n > 1 ? "s" : ""}, chargement + déchargement${tailleTexte(boxes)} · ${FEE_FORMULA} par opération`;
 }
 // Chargement MULTI-commodité : les caisses se comptent ligne par ligne (une caisse = une commodité)
 // et la base est facturée par commodité. Décrire le total en une seule opération annonçait un
 // nombre de caisses et une formule qui ne redonnaient pas le montant déduit.
-export function feeCargoText(lines: LigneManifeste[], maxBox?: number): string {
-  const n = boxCount(cargoBoxes(lines, maxBox));
+export function feeCargoText(lines: LigneManifeste[], taille?: number): string {
+  const boxes = cargoBoxes(lines, taille);
+  const n = nombreDeCaisses(boxes);
   const scu = lines.reduce((a, l) => a + (l.units || 0), 0);
   const p = lines.length;
-  return `${fmt(scu)} SCU en ${n} caisse${n > 1 ? "s" : ""} sur ${p} commodité${p > 1 ? "s" : ""}, chargement + déchargement · ${FEE_FORMULA} par commodité et par opération`;
+  return `${fmt(scu)} SCU en ${n} caisse${n > 1 ? "s" : ""} sur ${p} commodité${p > 1 ? "s" : ""}, chargement + déchargement${tailleTexte(boxes)} · ${FEE_FORMULA} par commodité et par opération`;
 }
 
 // Infobulle + marqueur d'une cellule de profit soumise aux frais. `what` décrit la manutention et

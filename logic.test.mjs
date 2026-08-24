@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   tripMinutes, loopMinutes, ageDays, pairAge, freshnessFactor, tighterVolume,
-  scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, scuBoxes, cargoBoxes, bestChain, chainLegNet,
+  scoreBarWidth, certitudeVolume, fiabiliteDe, CERTITUDE_PLANCHER, bySort, computeUnits, effValue, fillCargo, addableUnits, caissesDe, tailleRetenue, nombreDeCaisses, TAILLE_CAISSE_DEFAUT, cargoBoxes, bestChain, chainLegNet,
   AUTOLOAD, autoloadFee, autoloadPoint, haulFee, lineHaulFee, lineNet, kFromReading, kPlausible, K_PLAUSIBLE,
   manifestTotals, freeAddUnits, manifestLine, stationLabel, parseStationLabel,
   ovKey, effFromStore, setInStore, safeKey, encodeState, decodeState,
@@ -31,6 +31,7 @@ import {
   exporterCorrections, relireCorrections, exporterEntrepots,
   tirerConvoi, indicatifConvoi, texteConvoi, nommerConvoi, CONVOIS, CONVOI_ESCORTES_MAX,
 } from "./logic.ts";
+import { scuBoxesLabel } from "./format.ts";
 
 // ---------- Temps de trajet ----------
 test("tripMinutes : manutention + distance + saut inter-système", () => {
@@ -418,60 +419,85 @@ test("fillCargo : chaque ligne mémorise son plafond (cap = units)", () => {
   assert.equal(lines[0].units, 7);
 });
 
-// ---------- scuBoxes (décomposition en caisses) ----------
-test("scuBoxes : décompose par tailles standard, plus grand d'abord", () => {
-  assert.deepEqual(scuBoxes(32), [{ size: 32, count: 1 }]);
-  assert.deepEqual(scuBoxes(24), [{ size: 24, count: 1 }]);
-  assert.deepEqual(scuBoxes(3), [{ size: 2, count: 1 }, { size: 1, count: 1 }]);
-  // 279 = 8×32 + 1×16 + 1×4 + 1×2 + 1×1  (256+16+4+2+1)
-  assert.deepEqual(scuBoxes(279), [
-    { size: 32, count: 8 }, { size: 16, count: 1 }, { size: 4, count: 1 }, { size: 2, count: 1 }, { size: 1, count: 1 },
-  ]);
-});
-
-test("scuBoxes : la somme des caisses redonne toujours N", () => {
-  for (const n of [0, 1, 7, 40, 96, 123, 1000, 4608]) {
-    const total = scuBoxes(n).reduce((a, b) => a + b.size * b.count, 0);
-    assert.equal(total, n);
-  }
-});
-
-test("scuBoxes : 0 ou négatif -> aucune caisse", () => {
-  assert.deepEqual(scuBoxes(0), []);
-  assert.deepEqual(scuBoxes(-5), []);
-  assert.deepEqual(scuBoxes(null), []);
-});
-
-test("scuBoxes : maxBox plafonne la taille de caisse", () => {
-  // Un terminal à max_container_size = 16 ne peut PAS sortir une caisse de 32.
-  assert.deepEqual(scuBoxes(32, 16), [{ size: 16, count: 2 }]);
-  assert.deepEqual(scuBoxes(24, 8), [{ size: 8, count: 3 }]);
-  // Le plafond n'a pas à être une taille standard : on descend à la plus grande caisse qui tient.
-  assert.deepEqual(scuBoxes(32, 24), [{ size: 24, count: 1 }, { size: 8, count: 1 }]);
-  // Contre-épreuve : sans plafond, ces mêmes volumes font moins de caisses.
-  assert.deepEqual(scuBoxes(32), [{ size: 32, count: 1 }]);
-  assert.deepEqual(scuBoxes(24), [{ size: 24, count: 1 }]);
-});
-
-test("scuBoxes : sans maxBox (ou plafond inexploitable), comportement strictement inchangé", () => {
-  // Les appelants d'affichage existants passent un seul argument : leur sortie ne doit pas bouger.
-  for (const n of [0, 1, 7, 40, 96, 123, 1000, 4608]) {
-    assert.deepEqual(scuBoxes(n, undefined), scuBoxes(n));
-    assert.deepEqual(scuBoxes(n, null), scuBoxes(n));
-    assert.deepEqual(scuBoxes(n, 32), scuBoxes(n));      // 32 = plus grande caisse : plafond sans effet
-    // Un plafond aberrant ne doit pas faire disparaître du volume (aucune caisse ne tiendrait).
-    assert.deepEqual(scuBoxes(n, 0), scuBoxes(n));
-    assert.deepEqual(scuBoxes(n, -1), scuBoxes(n));
-  }
-});
-
-test("scuBoxes : plafonnée, la somme des caisses redonne toujours N", () => {
-  for (const n of [0, 1, 7, 40, 96, 123, 1000, 4608]) {
-    for (const maxBox of [1, 2, 4, 8, 16, 24, 32]) {
-      const total = scuBoxes(n, maxBox).reduce((a, b) => a + b.size * b.count, 0);
-      assert.equal(total, n, `${n} SCU plafonnés à ${maxBox}`);
-      assert.ok(scuBoxes(n, maxBox).every((b) => b.size <= maxBox), `caisse > ${maxBox}`);
+// ---------- caissesDe : une seule taille, choisie (ADR-014) ----------
+test("caissesDe : une cargaison part en caisses d'UNE SEULE taille", () => {
+  // La règle neuve. Au plus UNE entrée, quelle que soit n — c'est ce que 101 achats relevés en jeu
+  // montrent, 101 fois sur 101 (#193). L'ancien glouton rendait un assortiment jusqu'à cinq tailles.
+  assert.deepEqual(caissesDe(95, 32), [{ size: 32, count: 3 }]);
+  assert.deepEqual(caissesDe(624, 16), [{ size: 16, count: 39 }]);   // le contre-exemple de l'issue
+  assert.deepEqual(caissesDe(624, 32), [{ size: 32, count: 20 }]);   // 19×32 + 1×16 n'existait pas
+  assert.deepEqual(caissesDe(32, 32), [{ size: 32, count: 1 }]);
+  assert.deepEqual(caissesDe(3, 1), [{ size: 1, count: 3 }]);
+  for (const n of [1, 7, 40, 96, 123, 279, 1000, 4608]) {
+    for (const taille of [1, 2, 4, 8, 16, 24, 32]) {
+      assert.equal(caissesDe(n, taille).length, 1, `${n} SCU en caisses de ${taille}`);
     }
+  }
+});
+
+test("caissesDe : la capacité couvre N sans gaspiller une caisse entière", () => {
+  // L'invariant de REMPLACEMENT. « La somme des caisses redonne N » est faux par construction dès
+  // qu'une caisse est partielle : ce qui tient, c'est la capacité (ADR-014, décision 2).
+  //
+  // Il porte sur la taille RETENUE, jamais sur celle qu'on a demandée — et la nuance n'est pas
+  // rhétorique : `caissesDe(95, 20)` rend six caisses de 16, où `20 × 6 − 95 = 25` n'est PAS
+  // inférieur à 20. La boucle inclut donc des tailles HORS grille, sans quoi elle n'exercerait
+  // jamais le cas où `tailleRetenue` substitue.
+  for (const n of [1, 7, 40, 95, 96, 123, 624, 1000, 4608]) {
+    for (const taille of [1, 2, 4, 8, 16, 24, 32, 5, 12, 20, 33, 100]) {
+      const [c] = caissesDe(n, taille);
+      const capacite = c.size * c.count;
+      assert.equal(c.size, tailleRetenue(taille), `taille demandée ${taille}`);
+      assert.ok(capacite >= n, `${n} SCU en ${c.count}×${c.size} ne tiennent pas`);
+      assert.ok(capacite - n < c.size, `${n} SCU en ${c.count}×${c.size} : une caisse pour rien`);
+    }
+  }
+});
+
+test("caissesDe : 0, négatif, nul ou infini -> aucune caisse", () => {
+  assert.deepEqual(caissesDe(0), []);
+  assert.deepEqual(caissesDe(-5), []);
+  assert.deepEqual(caissesDe(null), []);
+  // Infinity passait AVANT : scuBoxes(Infinity, 32) rendait [{ size: 32, count: Infinity }], et
+  // scuBoxesLabel écrivait « Infinity×32 » à l'écran. autoloadFee s'en protégeait, pas l'affichage.
+  assert.deepEqual(caissesDe(Infinity, 32), []);
+  assert.deepEqual(caissesDe(NaN, 32), []);
+});
+
+test("tailleRetenue : le repli est OPTIMISTE, et on ne fabrique pas de conteneur qui n'existe pas", () => {
+  // Taille inconnue, nulle, négative ou absurde -> la plus grosse caisse de la grille. Elle
+  // SOUS-estime les frais au lieu de les inventer : c'est le sens prudent choisi partout ailleurs.
+  assert.equal(TAILLE_CAISSE_DEFAUT, 32);
+  for (const mauvaise of [undefined, null, 0, -1, NaN, Infinity, 0.5]) {
+    assert.equal(tailleRetenue(mauvaise), 32, `repli sur ${mauvaise}`);
+  }
+  // Un comptoir peut annoncer un plafond hors grille : on descend à la plus grosse caisse qui tient.
+  assert.equal(tailleRetenue(100), 32);
+  assert.equal(tailleRetenue(20), 16);
+  assert.equal(tailleRetenue(24), 24);
+  assert.equal(tailleRetenue(1), 1);
+});
+
+test("nombreDeCaisses : un seul compteur, celui qui explique le montant facturé", () => {
+  // Il en existait TROIS implémentations qui s'accordaient par accident — le reduce d'autoloadFee,
+  // la Map de cargoBoxes, et un boxCount privé dans frais.ts qui composait l'infobulle.
+  assert.equal(nombreDeCaisses(caissesDe(95, 32)), 3);
+  assert.equal(nombreDeCaisses(caissesDe(624, 16)), 39);
+  assert.equal(nombreDeCaisses([]), 0);
+  assert.equal(nombreDeCaisses(cargoBoxes([{ units: 8 }, { units: 8 }], 32)), 2);
+});
+
+test("caissesDe : une taille plus petite fait strictement plus de caisses", () => {
+  // Le LEVIER que l'application ne disait nulle part : choisir de plus grosses caisses coûte moins
+  // cher. C'est la seule raison pour laquelle la taille mérite d'être une entrée.
+  //
+  // Le volume est 95 et non 96, et les comptes sont EN DUR : à 96 SCU — un multiple de toutes les
+  // tailles de la grille — les deux modèles rendent la même suite [3,4,6,12,24,48,96], et le test
+  // passerait tel quel sur le code d'avant. À 95, le glouton rendait [6,7,9,14,25,48,95].
+  const comptes = [32, 24, 16, 8, 4, 2, 1].map((taille) => nombreDeCaisses(caissesDe(95, taille)));
+  assert.deepEqual(comptes, [3, 4, 6, 12, 24, 48, 95]);
+  for (let i = 1; i < comptes.length; i++) {
+    assert.ok(comptes[i] > comptes[i - 1], `tailles décroissantes : ${comptes.join(" < ")}`);
   }
 });
 
@@ -479,27 +505,31 @@ test("cargoBoxes : les caisses se comptent PAR LIGNE, jamais sur le total des SC
   // Une caisse ne contient qu'une commodité. Quatre lignes de 8 SCU font quatre caisses de 8 —
   // les décomposer ensemble en annoncerait UNE de 32, qui n'existe pas, et ce décompte sert à
   // expliquer un montant facturé, lui, ligne par ligne.
+  // Sous le caissage uniforme (ADR-014), chacune de ces quatre lignes prend UNE caisse de 32 à
+  // moitié vide — pas une caisse de 8. Le DÉCOMPTE, lui, est le même : quatre. C'est lui qui
+  // facture, et c'est lui que l'infobulle doit redonner.
   const lignes = [8, 8, 8, 8].map((units) => ({ units }));
-  assert.deepEqual(cargoBoxes(lignes, 32), [{ size: 8, count: 4 }]);
-  assert.deepEqual(scuBoxes(32, 32), [{ size: 32, count: 1 }]); // contre-épreuve : le total mentirait
-  // Tailles mélangées : regroupées par taille, plus grande d'abord.
-  assert.deepEqual(cargoBoxes([{ units: 32 }, { units: 24 }, { units: 8 }], 32), [
-    { size: 32, count: 1 }, { size: 24, count: 1 }, { size: 8, count: 1 },
-  ]);
-  // Le plafond du terminal s'applique à chaque ligne, et le volume ne s'évapore jamais.
+  assert.deepEqual(cargoBoxes(lignes, 32), [{ size: 32, count: 4 }]);
+  assert.deepEqual(caissesDe(32, 32), [{ size: 32, count: 1 }]); // contre-épreuve : le total mentirait
+  // Une caisse ne contient qu'une commodité : trois lignes font trois caisses, jamais deux.
+  assert.deepEqual(cargoBoxes([{ units: 32 }, { units: 24 }, { units: 8 }], 32), [{ size: 32, count: 3 }]);
+  // La taille employée s'applique à chaque ligne.
   assert.deepEqual(cargoBoxes([{ units: 32 }, { units: 32 }], 16), [{ size: 16, count: 4 }]);
   assert.deepEqual(cargoBoxes([], 32), []);
   assert.deepEqual(cargoBoxes([{ units: 0 }], 32), []);
+  // L'invariant de CAPACITÉ, ligne par ligne : on couvre le volume sans gaspiller une caisse.
   for (const lignes2 of [[{ units: 7 }, { units: 41 }, { units: 96 }], [{ units: 123 }]]) {
-    const total = cargoBoxes(lignes2, 24).reduce((a, b) => a + b.size * b.count, 0);
-    assert.equal(total, lignes2.reduce((a, l) => a + l.units, 0));
+    const capacite = cargoBoxes(lignes2, 24).reduce((a, b) => a + b.size * b.count, 0);
+    const volume = lignes2.reduce((a, l) => a + l.units, 0);
+    assert.ok(capacite >= volume);
+    assert.ok(capacite - volume < 24 * lignes2.length);
   }
 });
 
 test("cargoBoxes : le décompte de caisses est celui que facture manifestTotals", () => {
   // L'invariant qui manquait : l'infobulle annonçait « 32 SCU en 1 caisse » sous un montant
   // calculé sur quatre. Le nombre de caisses affiché doit redonner le montant déduit.
-  const pair = { buy: { maxBox: 32, k: 1 }, sell: { maxBox: 32, k: 1 } };
+  const pair = { buy: { taille: 32, k: 1 }, sell: { taille: 32, k: 1 } };
   const lignes = [8, 8, 8, 8].map((units) => ({ units, buyPrice: 10, margin: 100 }));
   const { fees, scu } = manifestTotals(lignes, pair);
   const caisses = cargoBoxes(lignes, 32).reduce((a, b) => a + b.count, 0);
@@ -507,8 +537,51 @@ test("cargoBoxes : le décompte de caisses est celui que facture manifestTotals"
   // Deux opérations, une transaction par commodité (hypothèse 2) : la formule doit tomber juste.
   assert.equal(fees, 2 * (lignes.length * AUTOLOAD.base + AUTOLOAD.perBox * caisses + AUTOLOAD.perScu * scu));
   // Et le décompte du TOTAL, lui, ne redonne PAS le montant : c'est le bug qu'on interdit.
-  const surLeTotal = scuBoxes(scu, 32).reduce((a, b) => a + b.count, 0);
+  const surLeTotal = nombreDeCaisses(caissesDe(scu, 32));
   assert.notEqual(fees, 2 * (AUTOLOAD.base + AUTOLOAD.perBox * surLeTotal + AUTOLOAD.perScu * scu));
+});
+
+// ---------- Le caissage est CHOISI, pas dérivé (ADR-014, #193) ----------
+// Ces trois tests tombent sur la signature EXISTANTE : c'est ce qui prouve le bug, sans avoir
+// besoin d'une seule fonction nouvelle. Le remplissage glouton fabrique un assortiment de caisses
+// que personne ne charge — 101 achats relevés en jeu en emploient une seule taille, 101 fois sur 101.
+
+test("autoloadFee : un reste ne se re-caisse pas en petites caisses (#193)", () => {
+  // 95 SCU en caisses de 32, c'est TROIS caisses dont la dernière est à moitié pleine. Le glouton
+  // en fabrique six (2×32, 1×24, 1×4, 1×2, 1×1) et facture 90 aUEC de trop.
+  assert.equal(autoloadFee(95, 32, 1), AUTOLOAD.base + AUTOLOAD.perBox * 3 + AUTOLOAD.perScu * 95);
+  // Le contre-exemple des 624 SCU de l'issue est ici en FORME, pas en montant, et c'est délibéré :
+  // le glouton rendait 19×32 + 1×16, soit VINGT caisses — le même COMPTE que ceil(624/32), donc le
+  // même montant. Mesuré : autoloadFee(624, 32, 1) vaut 13 230 avant comme après, et
+  // autoloadFee(624, 16, 1) vaut 13 800 des deux côtés. Une assertion sur ces montants passerait
+  // sous l'ancien code : elle ne prouverait rien. C'est l'assortiment qui disparaît.
+  assert.deepEqual(caissesDe(624, 32), [{ size: 32, count: 20 }]);   // et non [{32,19},{16,1}]
+  assert.deepEqual(caissesDe(624, 16), [{ size: 16, count: 39 }]);
+  // L'écart de 4,31 % que l'issue mesure (13 230 contre 13 800) oppose la taille SUPPOSÉE par
+  // l'app — le plafond du comptoir — à celle que le joueur a EMPLOYÉE. Ce lot ne le referme pas :
+  // autoloadPoint pose toujours `taille: terminal.maxBox`. Il reste ouvert avec #193.
+  assert.equal(autoloadFee(624, 32, 1), 13_230);
+  assert.equal(autoloadFee(624, 16, 1), 13_800);
+});
+
+test("autoloadFee : retirer un SCU ne peut pas faire monter la facture (#193)", () => {
+  // Aujourd'hui 31 SCU coûtent 890 et 32 en coûtent 820 : l'app facture 70 aUEC de plus pour un SCU
+  // de moins, parce que le glouton découpe 31 en 4 caisses. C'était gravé comme un contrat.
+  for (let scu = 1; scu <= 64; scu++) {
+    assert.ok(
+      autoloadFee(scu, 32, 1) <= autoloadFee(scu + 1, 32, 1),
+      `${scu} SCU coûtent ${autoloadFee(scu, 32, 1)}, plus que ${scu + 1} SCU à ${autoloadFee(scu + 1, 32, 1)}`,
+    );
+  }
+});
+
+test("scuBoxesLabel : une seule taille, jamais un assortiment que personne n'a chargé (#193)", () => {
+  // Le mensonge dans sa forme la plus nue : l'app écrit aujourd'hui « 2×32 · 1×24 · 1×4 · 1×2 · 1×1 »
+  // pour un achat qui n'emploie qu'une taille de conteneur. Cette fonction n'avait aucun test.
+  assert.equal(scuBoxesLabel(95, 32), "3×32");
+  assert.equal(scuBoxesLabel(624, 16), "39×16");
+  assert.equal(scuBoxesLabel(32, 32), "1×32");
+  assert.equal(scuBoxesLabel(0, 32), "");
 });
 
 // ---------- Frais d'autoload ----------
@@ -603,15 +676,19 @@ test("autoloadFee : à volume égal, un terminal plus plafonné coûte plus cher
 });
 
 test("autoloadFee : à taille de caisse constante, le coût croît avec le volume", () => {
-  // La croissance n'est PAS garantie SCU par SCU (31 SCU font 4 caisses, 32 une seule : le
-  // fractionnement rend 31 plus cher que 32). Elle l'est à caisse constante, seul cas qui a un sens.
+  // Elle l'était DÉJÀ à caisse constante. Elle l'est désormais SCU par SCU aussi : le caissage
+  // uniforme a supprimé le fractionnement du reste, qui faisait payer 31 SCU plus cher que 32.
   let prec = 0;
   for (let caisses = 1; caisses <= 8; caisses++) {
     const f = autoloadFee(32 * caisses, 32, 1.2);
     assert.ok(f > prec, `${caisses} caisses coûtent ${f}, pas plus que ${prec}`);
     prec = f;
   }
-  assert.ok(autoloadFee(31, 32, 1) > autoloadFee(32, 32, 1), "31 SCU en 4 caisses > 32 SCU en 1");
+  // C'était une ABSURDITÉ gravée comme un contrat (ADR-014) : le glouton découpait 31 en quatre
+  // caisses, et l'app facturait 70 aUEC de plus pour un SCU de moins. L'inégalité s'inverse.
+  assert.ok(autoloadFee(31, 32, 1) < autoloadFee(32, 32, 1), "31 SCU coûtent moins que 32");
+  assert.equal(autoloadFee(31, 32, 1), 800);
+  assert.equal(autoloadFee(32, 32, 1), 820);
 });
 
 // ---------- Relevé de station : du montant payé au coefficient ----------
@@ -1920,7 +1997,7 @@ test("legFromManifest : la marge reste BRUTE quand les frais d'autoload sont act
   const f = F({ useCargo: true, cargo: 400 });
   // Frais réels mais supportables : à k plus élevé, manifestsFrom écarte les lignes dont la
   // manutention mange la marge et le chargement disparaît — il n'y aurait plus rien à mesurer.
-  const cher = () => ({ maxBox: 32, k: 0.1 });
+  const cher = () => ({ taille: 32, k: 0.1 });
   const toB = manifestsFrom(MKT(), 0, "", f, idResolve, null, cher).find((t) => t.dest.name === "B");
   const m = tripMetrics(toB);
   assert.ok(m.fees > 0, "fixture sans frais : le test ne prouverait rien");
@@ -3708,16 +3785,16 @@ test("suggestionsFrom : une commodité déjà chargée n'est pas re-suggérée",
 // ---------- Frais d'autoload dans le moteur : le profit devient NET ----------
 // Deux points de frais : l'ancrage Endgame (k = 1, caisses de 32) et une station à la fois plus
 // chère et plus plafonnée — les deux seules variables qui font bouger une facture.
-const PT_A = { maxBox: 32, k: 1 };
-const PT_B = { maxBox: 16, k: 1.4 };
+const PT_A = { taille: 32, k: 1 };
+const PT_B = { taille: 16, k: 1.4 };
 
 test("autoloadPoint : sans autoload le terminal ne facture rien mais garde son plafond de caisse", () => {
-  assert.deepEqual(autoloadPoint({ name: "T", autoload: true, maxBox: 16 }, 1.4), { maxBox: 16, k: 1.4 });
-  // k = 0 = « ne facture rien ». Le maxBox survit quand même : c'est encore ce terminal qui décide
-  // de la taille des caisses, y compris quand c'est le joueur qui les empile à la main.
-  assert.deepEqual(autoloadPoint({ name: "T", autoload: false, maxBox: 16 }, 1.4), { maxBox: 16, k: 0 });
+  assert.deepEqual(autoloadPoint({ name: "T", autoload: true, maxBox: 16 }, 1.4), { taille: 16, k: 1.4 });
+  // k = 0 = « ne facture rien ». La taille survit quand même : le chargement part en caisses de
+  // toute façon, et c'est ce décompte qui explique le montant facturé à l'autre extrémité.
+  assert.deepEqual(autoloadPoint({ name: "T", autoload: false, maxBox: 16 }, 1.4), { taille: 16, k: 0 });
   // Instantané de market.json antérieur au build qui ajoute les champs -> aucun frais, pas un crash.
-  assert.deepEqual(autoloadPoint({ name: "T" }, 1.4), { maxBox: undefined, k: 0 });
+  assert.deepEqual(autoloadPoint({ name: "T" }, 1.4), { taille: undefined, k: 0 });
   assert.equal(autoloadPoint(null, 1.4), null);
 });
 
@@ -3738,7 +3815,7 @@ test("haulFee : les caisses sont faites au CHARGEMENT, pas au déchargement (hyp
 });
 
 test("haulFee : un terminal sans autoload ne facture rien, l'autre extrémité paie quand même", () => {
-  const sansService = { maxBox: 16, k: 0 };
+  const sansService = { taille: 16, k: 0 };
   assert.equal(haulFee(32, { buy: sansService, sell: sansService }), 0);
   // Chargé à la main en A (16 SCU par caisse), déchargé par l'autoload de B : B facture, et il
   // facture DEUX caisses — celles qu'on lui apporte.
@@ -4070,28 +4147,36 @@ test("manifestsFrom : une ligne rentable SEULE mais qui prend sa place aux autre
   assert.ok(t.profit > 667 + 95 * 739 - 2 * autoloadFee(95, 32, 1), "le chargement à deux lignes devait perdre");
 });
 
-test("manifestsFrom : une ligne déficitaire à 126 SCU redevient éligible à 128, et le manifeste la reprend", () => {
+test("manifestsFrom : une ligne déficitaire à 100 SCU redevient éligible à 128, et le manifeste la reprend", () => {
   // Aux chiffres de Rat's Nest -> Port Tressler, k = 2. Le verdict « cette ligne ne couvre pas ses
   // frais » dépend du VOLUME qu'on lui a donné, donc de qui d'autre est à bord : « Human Food Bars »
-  // perd 60 aUEC sur 126 SCU et en gagne 200 sur 128, parce que 126 SCU ne tiennent plus en caisses
-  // de 32. Un rejet retenu d'un tour sur l'autre condamnait la meilleure option de l'arc : la soute
-  // repartait avec les 2 SCU de Fluorine et 146 aUEC.
+  // perd 80 aUEC sur 100 SCU et en gagne 200 sur 128. Un rejet retenu d'un tour sur l'autre
+  // condamnait la meilleure option de l'arc : la soute repartait avec les 28 SCU de Fluorine.
+  //
+  // LE DÉCLENCHEUR A ÉTÉ RE-MESURÉ pour l'ADR-014, et c'est le seul changement ici. Sous l'ancien
+  // remplissage glouton, la bascule était à 126 SCU — un volume qui « ne tenait plus en caisses de
+  // 32 » et retombait en cinq caisses. Sous le caissage uniforme, 126 SCU tiennent en quatre
+  // caisses exactement comme 128, et la ligne y est bénéficiaire (+180) : ce fixture-là ne
+  // reproduisait donc plus rien. La bascule vient désormais de la BASE de 150 par opération, qui
+  // ne se couvre qu'à partir de 108 SCU à cette marge. Le DÉFAUT de #41, lui, est intact.
   const mkt = () => ({
     terminals: [TERM_NET("Rat's Nest"), TERM_NET("Port Tressler")],
     commodities: [
-      { name: "Fluorine", kind: "gas", illegal: false, buys: [[0, 100, 2, NOW, 5]], sells: [[1, 613, 999, NOW, 3]] },
+      { name: "Fluorine", kind: "gas", illegal: false, buys: [[0, 100, 28, NOW, 5]], sells: [[1, 210, 999, NOW, 3]] },
       { name: "Human Food Bars", kind: "food", illegal: false, buys: [[0, 100, 6000, NOW, 5]], sells: [[1, 190, 9999, NOW, 3]] },
     ],
   });
   const f = F({ useCargo: true, cargo: 128 });
   const frais2 = (t) => autoloadPoint(t, 2);
-  // Non vacuisant : c'est bien le passage de 128 à 126 SCU qui renverse le signe, par les caisses.
+  // Non vacuisant : c'est bien le passage de 128 à 100 SCU qui renverse le signe.
   assert.equal(lineNet(128, { margin: 90 }, { buy: PT_A, sell: PT_A }) > 0, true);
-  assert.equal(126 * 90 - 2 * autoloadFee(126, 32, 2), -60);
+  assert.equal(100 * 90 - 2 * autoloadFee(100, 32, 2), -80);
   assert.equal(128 * 90 - 2 * autoloadFee(128, 32, 2), 200);
+  // Et le repli que le défaut faisait gagner : Fluorine seule sur ses 28 SCU, moins bon que 200.
+  assert.equal(28 * 110 - 2 * autoloadFee(28, 32, 2), 120);
   const [t] = manifestsFrom(mkt(), 0, "", f, idResolve, null, frais2);
   assert.deepEqual(t.lines.map((l) => [l.name, l.units]), [["Human Food Bars", 128]]);
-  assert.equal(t.profit, 200);                          // 146 avant : Fluorine 2 SCU, seule à bord
+  assert.equal(t.profit, 200);                          // 120 avant : Fluorine 28 SCU, seule à bord
 });
 
 test("manifestsFrom : sans frais, le chargement des 4 284 arcs réels est inchangé au SCU près", () => {
@@ -4132,7 +4217,10 @@ test("manifestsFrom : frais actifs, aucun manifeste réel ne rapporte moins que 
       if (t.profit < mono) echecs.push(`${t.origin.name} -> ${t.dest.name} : ${t.profit} < ${mono}`);
     }
   }
-  assert.equal(arcs, 4_219, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le défaut");
+  // 4 219 avant l'ADR-014, 4 220 depuis : le caissage uniforme fait BAISSER les frais de tout
+  // volume qui n'est pas un multiple exact de la taille, donc UN arc de plus couvre sa manutention.
+  // Ce chiffre est RE-MESURÉ, jamais ajusté à la main : c'est lui qui dit l'ampleur du changement.
+  assert.equal(arcs, 4_220, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le défaut");
   assert.deepEqual(echecs, []);
   // Non vacuisant : l'invariant serait trivialement vrai si le correctif avait ramené tout le monde
   // à une seule commodité. Le remplissage multi-commodité doit rester la règle, pas l'exception.
@@ -4160,7 +4248,7 @@ test("buildChainAdjacency : estampille sur chaque saut les frais de ses DEUX ter
   assert.equal(sans.get(0)[0].fee, null);           // interrupteur inactif : rien d'estampillé
   const avec = buildChainAdjacency(MKT_NET(), f, idResolve, feeNet);
   const versCher = avec.get(0).find((l) => l.to === 1);
-  assert.deepEqual(versCher.fee, { buy: { maxBox: 32, k: 1 }, sell: { maxBox: 32, k: 2 } });
+  assert.deepEqual(versCher.fee, { buy: { taille: 32, k: 1 }, sell: { taille: 32, k: 2 } });
   // Et bestChain chiffre net sans jamais voir un terminal : il ne lit que ce que porte le leg.
   assert.deepEqual(bestChain(sans, 0, 1, { cargo: 100 }).path, [0, 1]);  // brut : « Cher » paie mieux
   const r = bestChain(avec, 0, 1, { cargo: 100 });
@@ -4327,7 +4415,9 @@ test("chaîne : sur les 4 355 arcs réels, aucun ne rapporte moins qu'avant et a
   }
   assert.equal(arcs, 4_355, "l'instantané a changé : le compte d'arcs n'est plus celui qui a mesuré le gain");
   assert.deepEqual(pertes, []);
-  assert.equal(sansManifeste, 136, "arcs sans manifeste (frais actifs) : ils doivent RESTER dans le graphe");
+  // 136 avant l'ADR-014, 135 depuis — le même mouvement vu de l'autre côté : un arc qui n'avait
+  // aucun chargement rentable en trouve un maintenant que les frais ont baissé. RE-MESURÉ.
+  assert.equal(sansManifeste, 135, "arcs sans manifeste (frais actifs) : ils doivent RESTER dans le graphe");
   // Non vacuisant : l'invariant serait trivialement vrai si les arcs étaient tous restés mono.
   assert.ok(multi > 700, `chargements multi-commodité tombés à ${multi}`);
   assert.ok(scuManifeste > scuMono * 1.04, `SCU emportés : ${scuManifeste} contre ${scuMono} avant`);
@@ -4369,7 +4459,7 @@ test("chaîne : garde de performance — le manifeste se compose par ARC, jamais
 // Chaîne : deux itinéraires A->…->D aux profits BRUTS proches, dont le mieux payé transite par une
 // station qui facture trois fois le tarif d'ancrage. Les frais sont posés sur le leg, exactement
 // comme le fait buildChainAdjacency.
-const PT_K3 = { maxBox: 32, k: 3 };
+const PT_K3 = { taille: 32, k: 3 };
 const legF = (to, margin, fee = null) => ({ to, margin, stock: 999, demand: 999, buyPrice: 100, fee });
 const CHAINE = (frais) => new Map([
   ["A", [legF("B", 300, frais ? { buy: PT_A, sell: PT_K3 } : null),

@@ -1,4 +1,4 @@
-import { cargoBoxes, scuBoxes } from "./logic.ts";
+import { caissesDe, cargoBoxes } from "./logic.ts";
 import type { LigneManifeste } from "./types.ts";
 
 // Les formateurs partagés (ADR-011).
@@ -48,13 +48,15 @@ export const signe = (n: number, texte: string): string => (n < 0 ? texte : "+" 
 const boxesLabel = (boxes: { count: number; size: number }[]): string =>
   boxes.length ? boxes.map((b) => `${b.count}×${b.size}`).join(" · ") : "";
 
-export const scuBoxesLabel = (n: number, maxBox?: number | null): string =>
-  boxesLabel(scuBoxes(n, maxBox));
+// Une seule taille par chargement (ADR-014) : « 3×32 », jamais un assortiment. Le deuxième
+// paramètre est la taille EMPLOYÉE, pas un plafond à remplir.
+export const scuBoxesLabel = (n: number, taille?: number | null): string =>
+  boxesLabel(caissesDe(n, taille));
 
 // Même libellé pour un chargement à PLUSIEURS commodités : une caisse ne contient qu'une commodité,
 // la décomposition se fait donc ligne par ligne (`cargoBoxes`) et jamais sur le total des SCU.
-export const cargoBoxesLabel = (lines: LigneManifeste[], maxBox?: number | null): string =>
-  boxesLabel(cargoBoxes(lines, maxBox));
+export const cargoBoxesLabel = (lines: LigneManifeste[], taille?: number | null): string =>
+  boxesLabel(cargoBoxes(lines, taille));
 
 // ── L'ÉCHAPPEMENT HTML ─────────────────────────────────────────────────────────────────────────
 // Il est ici pour la même raison que `fmt` : c'est la dernière étape avant l'affichage, celle qu'on

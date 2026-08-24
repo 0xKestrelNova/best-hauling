@@ -418,34 +418,67 @@ export function hydrateManifestLine(market: Marche, fromIdx: number, toIdx: numb
   return manifestLine(c, eb, es, b ? b[3] : 0, s ? s[3] : 0, units, cap);
 }
 
-// ---------- Décomposition en caisses SCU standard ----------
-// Répartit N SCU en conteneurs standard (plus grand d'abord). Renvoie [{size, count}, ...].
-// `maxBox` (optionnel) plafonne la taille de caisse : un terminal dont max_container_size vaut 16
-// ne peut pas sortir une caisse de 32, et le nombre de caisses est ce qui décide des frais
-// d'autoload. Absent ou inexploitable (sous la plus petite caisse), on garde la grille complète :
-// mieux vaut une décomposition optimiste qu'un volume qui s'évapore faute de caisse capable.
+// ---------- Le caissage : UNE taille, et elle est CHOISIE (ADR-014) ----------
+// Une cargaison part en caisses TOUTES DE LA MÊME TAILLE, la dernière éventuellement partielle.
+// Ce n'est pas une simplification : c'est ce que 101 achats relevés en jeu montrent, 101 fois sur
+// 101 (#192, #193). Le deuxième paramètre n'est donc PAS un plafond qu'on remplit au plus serré,
+// c'est la taille EMPLOYÉE — et le joueur la choisit au kiosque.
+//
+// L'ancien remplissage glouton (plus grosse caisse d'abord, reste en petites caisses jusqu'à 1 SCU)
+// fabriquait un assortiment que personne ne charge : 95 SCU « en caisses de 32 » y donnaient six
+// caisses — 2×32, 1×24, 1×4, 1×2, 1×1 — au lieu de trois, et la facture n'était même pas monotone
+// (31 SCU coûtaient 70 aUEC de PLUS que 32). Voir ADR-014 pour la démonstration complète.
+//
+// L'invariant a changé de nature, et c'est le point à retenir : « la somme des caisses redonne N »
+// est FAUX dès qu'une caisse est partielle. Ce qui tient désormais, c'est la CAPACITÉ, énoncée sur
+// la taille RETENUE (`tailleRetenue(taille)`, pas le paramètre brut) : `size × count >= n` et
+// `size × count - n < size` — on couvre le volume sans gaspiller une caisse entière.
+//
+// Repli OPTIMISTE quand la taille est inconnue, nulle, négative ou non finie : on retombe sur 32,
+// la plus grosse caisse de la grille. Elle SOUS-estime les frais au lieu de les inventer — c'est le
+// sens prudent que l'application prend partout ailleurs.
 export const SCU_BOX_SIZES: number[] = [32, 24, 16, 8, 4, 2, 1];
-export function scuBoxes(n: number | null | undefined, maxBox?: number | null): Caisse[] {
-  n = Math.max(0, Math.floor(n || 0));
-  const sizes = maxBox >= 1 ? SCU_BOX_SIZES.filter((s) => s <= maxBox) : SCU_BOX_SIZES;
-  const out = [];
-  for (const size of sizes) {
-    const count = Math.floor(n / size);
-    if (count > 0) { out.push({ size, count }); n -= count * size; }
-  }
-  return out;
+export const TAILLE_CAISSE_DEFAUT = 32;
+
+// La taille effectivement retenue : la plus grosse caisse STANDARD qui tienne dans `taille`. Un
+// comptoir peut annoncer un plafond qui n'est pas de la grille ; on ne fabrique pas de conteneur
+// qui n'existe pas.
+export function tailleRetenue(taille?: number | null): number {
+  const t = Number(taille);
+  if (!(t >= 1) || !isFinite(t)) return TAILLE_CAISSE_DEFAUT;
+  return SCU_BOX_SIZES.find((s) => s <= t) ?? 1;
 }
 
+export function caissesDe(n: number | null | undefined, taille?: number | null): Caisse[] {
+  const units = Math.max(0, Math.floor(n || 0));
+  if (!isFinite(units) || units <= 0) return [];
+  const size = tailleRetenue(taille);
+  return [{ size, count: Math.ceil(units / size) }];
+}
+
+// Compter les caisses d'une décomposition. Il en existait TROIS implémentations — le `reduce` de
+// `autoloadFee`, la Map de `cargoBoxes`, et un `boxCount` privé dans `frais.ts` qui servait à
+// composer l'infobulle. Elles s'accordaient par accident : aucun test ne les comparait, alors que
+// l'infobulle doit permettre de REFAIRE le calcul du montant. Une seule, désormais.
+export const nombreDeCaisses = (boxes: { count: number }[]): number =>
+  boxes.reduce((a, b) => a + b.count, 0);
+
 // Caisses d'un chargement à PLUSIEURS commodités. Une caisse n'en contient qu'une seule : le
-// décompte se fait donc ligne par ligne, jamais sur le total des SCU. Décomposer le total
+// décompte se fait donc ligne par ligne, jamais sur le total des SCU. Décompter sur le total
 // inventerait des caisses pleines qui n'existent pas (quatre commodités de 8 SCU font quatre
-// caisses de 8, pas une de 32) — et ce décompte sert à EXPLIQUER un montant que manifestTotals
-// facture, lui, une ligne à la fois. Un « 📦 1×32 » à côté d'un montant calculé sur quatre caisses
-// serait l'incohérence la plus visible qui soit.
-export function cargoBoxes(lines: Partial<LigneManifeste>[], maxBox?: number | null): Caisse[] {
+// caisses, pas une) — et ce décompte sert à EXPLIQUER un montant que manifestTotals facture, lui,
+// une ligne à la fois. Un « 📦 1×32 » à côté d'un montant calculé sur quatre caisses serait
+// l'incohérence la plus visible qui soit.
+//
+// CONSÉQUENCE ASSUMÉE du caissage uniforme (ADR-014) : ces quatre lignes de 8 SCU rendent
+// « 4×32 », soit quatre caisses de 32 SCU aux trois quarts vides. La CONTENANCE annoncée (128 SCU)
+// dépasse donc le volume chargé (32) — c'est exact au sens de la facture, qui compte des caisses
+// et non des SCU, mais le libellé se lit comme un volume. Les vues qui l'affichent ajoutent le
+// volume réel dans leur infobulle pour que les deux chiffres ne se contredisent pas.
+export function cargoBoxes(lines: Partial<LigneManifeste>[], taille?: number | null): Caisse[] {
   const parTaille = new Map();
   for (const l of lines) {
-    for (const b of scuBoxes(l.units, maxBox)) parTaille.set(b.size, (parTaille.get(b.size) || 0) + b.count);
+    for (const b of caissesDe(l.units, taille)) parTaille.set(b.size, (parTaille.get(b.size) || 0) + b.count);
   }
   return [...parTaille].sort((a, b) => b[0] - a[0]).map(([size, count]) => ({ size, count }));
 }
@@ -465,25 +498,30 @@ export function cargoBoxes(lines: Partial<LigneManifeste>[], maxBox?: number | n
 // 18 relevés à 2,8 % près : c'est une ESTIMATION, tout montant affiché doit porter un « ≈ ».
 export const AUTOLOAD: GrilleAutoload = { base: 150, perBox: 30, perScu: 20 };
 
-// Frais d'UNE opération (un chargement ou un déchargement) de `scu` SCU dans un terminal plafonné
-// à `maxBox` SCU par caisse, au coefficient de station `k`. Renvoie un entier d'aUEC.
-export function autoloadFee(scu: number | null, maxBox: number | null | undefined, k: number): number {
+// Frais d'UNE opération (un chargement ou un déchargement) de `scu` SCU chargés en caisses de
+// `taille` SCU, au coefficient de station `k`. Renvoie un entier d'aUEC.
+// `taille` est la taille EMPLOYÉE, pas un plafond à remplir (ADR-014).
+export function autoloadFee(scu: number | null, taille: number | null | undefined, k: number): number {
   const units = Math.max(0, Math.floor(scu || 0));
   // Rien à manutentionner, ou station qui ne facture pas (k = 0) : aucun frais. La base de 150
   // paie une transaction, pas une visite — la faire payer à vide grèverait un trajet qu'on
   // n'effectue pas, et surtout les routes non bornées, où computeUnits ne rend aucun volume.
   if (!isFinite(units) || units <= 0 || !(k > 0)) return 0;
-  const boxes = scuBoxes(units, maxBox).reduce((a, b) => a + b.count, 0);
+  const boxes = nombreDeCaisses(caissesDe(units, taille));
   return Math.round(k * (AUTOLOAD.base + AUTOLOAD.perBox * boxes + AUTOLOAD.perScu * units));
 }
 
 // ---------- Relevé de station : du montant payé au coefficient ----------
 // Déduit `k` d'un montant observé en jeu : personne ne lit un coefficient à l'écran, on lit une
-// facture. k = montant payé / montant que la formule prédirait à l'ancrage (k = 1), au plafond de
-// caisse du terminal. null quand la mesure ne dit rien : sans quantité il n'y a pas de référence à
-// diviser, sans montant il n'y a rien de mesuré (un champ vide donne Number("") = 0, un texte NaN).
-export function kFromReading(amount: number, scu: number | null, maxBox: number | null | undefined): number | null {
-  const ref = autoloadFee(scu, maxBox, 1);
+// facture. k = montant payé / montant que la formule prédirait à l'ancrage (k = 1), À LA TAILLE DE
+// CAISSE EMPLOYÉE. Cette taille est la donnée qui manquait : devinée au plafond du terminal, elle
+// met un découpage SUPPOSÉ au dénominateur, et le k « relevé » mesure alors la station multipliée
+// par l'erreur de caissage — le relevé d'Endgame (720 aUEC, 24 SCU, 3 caisses de 8) rendait 1,091
+// à la station qui DÉFINIT k = 1, et rend exactement 1 dès qu'on lui donne la taille (ADR-014).
+// null quand la mesure ne dit rien : sans quantité il n'y a pas de référence à diviser, sans
+// montant il n'y a rien de mesuré (un champ vide donne Number("") = 0, un texte NaN).
+export function kFromReading(amount: number, scu: number | null, taille: number | null | undefined): number | null {
+  const ref = autoloadFee(scu, taille, 1);
   if (!(ref > 0) || !(amount > 0)) return null;
   return Math.round((amount / ref) * 1000) / 1000;
 }
@@ -506,28 +544,36 @@ export const kPlausible = (k: number | null): boolean => k >= K_PLAUSIBLE.min &&
 // par défaut : sans lui, chaque fonction rend exactement les valeurs brutes qu'elle rendait avant
 // que les frais n'existent. L'interrupteur de l'interface est donc littéralement « passer null ».
 //
-// Un « point de frais » décrit ce qu'UN terminal facture : { maxBox, k }. Un terminal qui ne
-// propose pas l'autoload prend k = 0 — il ne facture rien — mais GARDE son maxBox : c'est encore
-// lui qui décide de la taille des caisses, même quand c'est le joueur qui les empile à la main.
+// Un « point de frais » décrit ce qu'UN terminal facture : { taille, k }. Un terminal qui ne
+// propose pas l'autoload prend k = 0 — il ne facture rien — mais GARDE sa taille : le chargement
+// part quand même en caisses, et c'est le décompte qui explique le montant de l'autre extrémité.
+// La taille retenue par défaut est `terminal.maxBox`, requalifié par l'ADR-014 : ce n'est plus le
+// décideur du découpage, c'est la plus grosse caisse que ce comptoir accepte — donc un MAJORANT
+// (vérifié sur 2 579 lignes UEX : jamais dépassé), et le choix le moins cher offert au joueur.
 // Les deux champs peuvent manquer du terminal (instantané de market.json antérieur au build qui
 // les ajoute, ou coquille servie depuis le cache du service worker) : lecture défensive.
 export function autoloadPoint(terminal: Terminal | null | undefined, k: number): PointFrais | null {
   if (!terminal) return null;
-  return { maxBox: terminal.maxBox, k: terminal.autoload === true ? k : 0 };
+  return { taille: terminal.maxBox, k: terminal.autoload === true ? k : 0 };
 }
 
 // Frais des DEUX opérations d'un chargement de `scu` SCU : chargement au terminal d'achat,
 // déchargement au terminal de vente, chacun au tarif de SA station.
 // `pair` = { buy, sell } (points de frais) ; null/absent -> aucun frais.
-// HYPOTHÈSE 1 de la spec : le nombre de caisses est fixé au CHARGEMENT. On décharge les caisses
-// qu'on a — seul le tarif change — d'où le maxBox du terminal d'ACHAT des deux côtés. Le passer
-// en paramètre plutôt que de le laisser au site d'appel évite l'erreur symétrique (re-caisser la
-// cargaison en vol au plafond du terminal d'arrivée), qu'aucune signature ne saurait interdire.
+// HYPOTHÈSE 1 de la spec, CONSERVÉE : le caissage est fixé au CHARGEMENT. On décharge les caisses
+// qu'on a — seul le tarif change — d'où la taille du terminal d'ACHAT des deux côtés. La passer
+// en paramètre plutôt que de la laisser au site d'appel évite l'erreur symétrique (re-caisser la
+// cargaison en vol à la taille du terminal d'arrivée), qu'aucune signature ne saurait interdire.
 export function haulFee(scu: number, pair?: PaireFrais | null): number {
   if (!pair) return 0;
   const { buy, sell } = pair;
-  const maxBox = buy ? buy.maxBox : sell && sell.maxBox; // sans achat connu, le seul plafond connu
-  return (buy ? autoloadFee(scu, maxBox, buy.k) : 0) + (sell ? autoloadFee(scu, maxBox, sell.k) : 0);
+  // On teste le POINT, jamais la TAILLE. Basculer sur `buy.taille || sell.taille` paraît plus
+  // complet, mais quand le terminal d'achat existe SANS taille connue, ça emprunte celle de la
+  // vente : un plafond plus bas y ferait MONTER la facture, contre la décision 5 de l'ADR-014 (le
+  // repli sous-estime, il n'invente pas), et le badge 📦 de la ligne — qui lit l'ORIGINE — cesserait
+  // de redonner le montant qu'il explique.
+  const taille = buy ? buy.taille : sell && sell.taille;
+  return (buy ? autoloadFee(scu, taille, buy.k) : 0) + (sell ? autoloadFee(scu, taille, sell.k) : 0);
 }
 
 // Frais d'UNE LIGNE de manifeste, qui ne subit pas toujours les DEUX opérations — et c'est
@@ -538,13 +584,13 @@ export function haulFee(scu: number, pair?: PaireFrais | null): number {
 //   - `acquired` (« acquis ailleurs » : butin, minage, salvage) : déjà à bord au départ. L'autoload
 //     du terminal d'achat ne l'a jamais chargée.
 // L'extrémité qui ne manutentionne rien passe à k = 0 au lieu d'être retirée de la paire : elle
-// garde ainsi son `maxBox`, donc le décompte de caisses reste celui du terminal de chargement
+// garde ainsi sa `taille`, donc le décompte de caisses reste celui du terminal de chargement
 // (hypothèse 1) — c'est-à-dire exactement celui que le « 📦 » de la ligne affiche.
 export function lineHaulFee(units: number, line: Partial<LigneManifeste> | null | undefined, pair: PaireFrais | null): number {
   if (!pair) return 0;
   const { carry, acquired } = line || {};
   if (!carry && !acquired) return haulFee(units, pair);
-  const muet = (p) => (p ? { maxBox: p.maxBox, k: 0 } : p);
+  const muet = (p) => (p ? { taille: p.taille, k: 0 } : p);
   return haulFee(units, {
     buy: acquired ? muet(pair.buy) : pair.buy,
     sell: carry ? muet(pair.sell) : pair.sell,
@@ -960,8 +1006,8 @@ export function manifestsFrom(market: Marche, origin: number, destSystem: string
     // et recommence, parce que le retrait rend de la place et que les suivantes chargent davantage,
     // ce qui peut à son tour rendre déficitaire une ligne qui tenait à plus petit volume.
     // Ce verdict-là ne vaut QUE pour le chargement qui vient d'être bâti : il dépend du volume
-    // attribué, donc de qui d'autre est à bord. 126 SCU de Human Food Bars perdent 60 aUEC là où
-    // 128 en gagnent 200 — deux SCU de moins et la cargaison ne tient plus en caisses de 32. Le
+    // attribué, donc de qui d'autre est à bord. 100 SCU de Human Food Bars perdent 80 aUEC là où
+    // 128 en gagnent 200 : la base de 150 par opération ne se couvre pas à ce volume-là. Le
     // rejet reste donc LOCAL à cet appel, et `evalue` repart toujours des candidates au complet.
     const remplir = (liste) => {
       let restantes = liste;

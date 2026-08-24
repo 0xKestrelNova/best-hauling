@@ -26,13 +26,16 @@
 // laisserait ses chiffres dans les champs, prêts à être ressuscités par « Enregistrer ».
 // La clé porte donc le relevé lui-même. Le store ne change que sur un geste délibéré (Enregistrer,
 // Oublier), jamais au milieu d'une saisie : le remontage ne peut pas tomber sur une frappe.
-import { autoloadFee } from "../logic.ts";
+import { autoloadFee, tailleRetenue } from "../logic.ts";
 import type { Terminal } from "../types.ts";
 import { etat } from "../etat.ts";
 import { fmt } from "../format.ts";
 import { alKey, kFmt, kFor } from "../frais.ts";
 
-type Releve = { k: number; amount: number; scu: number };
+// `taille` est ABSENTE des relevés faits avant l'ADR-014 : ils ont été pris sous le découpage
+// glouton, donc leur k porte l'erreur de caissage. On ne les recalcule pas — on ne sait pas quelle
+// taille était employée — et on l'affiche franchement dans la liste.
+type Releve = { k: number; amount: number; scu: number; taille?: number };
 
 const Panneau = ({ nom, children }: { nom: string; children: React.ReactNode }) => (
   <div className="fee-panel">
@@ -72,6 +75,15 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
   const rec = etat.AUTOLOAD_K[cle] as Releve | undefined;
   const k = kFor(terminal.name);
   const scu = rec ? rec.scu : 32;
+  // Prérempli comme `#alScu` l'est à 32, et pour la même raison : un champ vide donnerait
+  // `Number("") = 0`, et le relevé se persisterait sous l'hypothèse de repli tout en s'affichant
+  // « (ton relevé) » — exactement l'ambiguïté que ce champ existe pour supprimer.
+  const taille = tailleRetenue((rec && rec.taille) || terminal.maxBox);
+  // Ce que le MOTEUR facture ailleurs dans l'app : `autoloadPoint` pose `taille: terminal.maxBox`,
+  // et l'ADR-014 a écarté d'exposer un choix de taille. Le montant illustré ci-dessous doit donc
+  // être celui-là, sinon ce panneau annonce un tarif que le tableau ne pratique pas. La taille du
+  // RELEVÉ, elle, décrit la mesure — pas la facturation — et se dit à part quand les deux diffèrent.
+  const tailleMoteur = tailleRetenue(terminal.maxBox);
 
   return (
     <Panneau nom={terminal.name}>
@@ -82,6 +94,9 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
         <span>aUEC pour</span>
         <input id="alScu" type="number" min="1" step="1" defaultValue={String(scu)}
                aria-label="Quantité en SCU" />
+        <span>SCU en caisses de</span>
+        <input id="alBox" type="number" min="1" step="1" defaultValue={String(taille)}
+               aria-label="Taille de caisse employée, en SCU" />
         <span>SCU</span>
         {/* Ces trois-là restent pris par la délégation posée sur `#corrections`, le PARENT de ce
             portail : un événement natif y remonte à travers le portail. Leur ajouter un onClick
@@ -94,8 +109,12 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
       </div>
       <div className="fee-note">
         Tarif retenu : <b>k = {kFmt(k)}</b> {rec ? "(ton relevé)" : "(k global)"} — soit ≈{" "}
-        <b>{fmt(autoloadFee(scu, terminal.maxBox, k))}</b> aUEC pour {fmt(scu)} SCU
-        {terminal.maxBox ? `, caisses de ${fmt(terminal.maxBox)} SCU max` : ""}.
+        <b>{fmt(autoloadFee(scu, tailleMoteur, k))}</b> aUEC pour {fmt(scu)} SCU en caisses de{" "}
+        {fmt(tailleMoteur)} SCU{terminal.maxBox ? " (la plus grosse que ce comptoir accepte — c'est ce que l'app suppose partout)" : " (par défaut)"}.
+        {rec && rec.taille && rec.taille !== tailleMoteur
+          ? " Ta mesure, elle, a été faite en caisses de " + fmt(rec.taille) + " SCU : c'est elle qui a donné k, pas la supposition."
+          : ""}
+        {" "}Charger en plus grosses caisses coûte moins cher : c'est un choix, pas une fatalité du comptoir.
       </div>
     </Panneau>
   );
@@ -124,7 +143,8 @@ export function ListeAutoload() {
           <div className="corr-item autoload" key={cle}>
             <div>
               <b>{terminal}</b> <span className="corr-side">autoload</span>
-              <div className="loc-sub">k = <b>{kFmt(o.k)}</b> · {fmt(o.amount)} aUEC observés pour {fmt(o.scu)} SCU</div>
+              <div className="loc-sub">k = <b>{kFmt(o.k)}</b> · {fmt(o.amount)} aUEC observés pour {fmt(o.scu)} SCU
+                {" "}{o.taille ? `en caisses de ${fmt(o.taille)} SCU` : "— taille de caisse non renseignée"}</div>
             </div>
             <button className="corr-del al-del" data-key={cle} title="Oublier ce relevé">✕</button>
           </div>
