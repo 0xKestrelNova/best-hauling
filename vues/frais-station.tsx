@@ -79,10 +79,13 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
   // `Number("") = 0`, et le relevé se persisterait sous l'hypothèse de repli tout en s'affichant
   // « (ton relevé) » — exactement l'ambiguïté que ce champ existe pour supprimer.
   const taille = tailleRetenue((rec && rec.taille) || terminal.maxBox);
-  // Ce que le MOTEUR facture ailleurs dans l'app : `autoloadPoint` pose `taille: terminal.maxBox`,
-  // et l'ADR-014 a écarté d'exposer un choix de taille. Le montant illustré ci-dessous doit donc
-  // être celui-là, sinon ce panneau annonce un tarif que le tableau ne pratique pas. La taille du
-  // RELEVÉ, elle, décrit la mesure — pas la facturation — et se dit à part quand les deux diffèrent.
+  // Ce panneau est celui d'une STATION : aucune commodité n'y est en portée, et depuis #194 la
+  // taille facturée dépend du couple (comptoir, commodité). Le seul nombre qu'il puisse illustrer
+  // est donc le plafond du comptoir — qui n'est plus « ce que l'app suppose partout » mais son
+  // MAJORANT, strictement trop grand sur 23 % des points de marché. Il l'annonce comme tel : le
+  // montant montré ici est le PLANCHER de ce qu'une commodité plafonnée plus bas coûtera.
+  // La taille du RELEVÉ, elle, décrit la mesure — pas la facturation — et se dit à part quand les
+  // deux diffèrent.
   const tailleMoteur = tailleRetenue(terminal.maxBox);
 
   return (
@@ -110,7 +113,8 @@ export function FraisStation({ terminal }: { terminal: Terminal }) {
       <div className="fee-note">
         Tarif retenu : <b>k = {kFmt(k)}</b> {rec ? "(ton relevé)" : "(k global)"} — soit ≈{" "}
         <b>{fmt(autoloadFee(scu, tailleMoteur, k))}</b> aUEC pour {fmt(scu)} SCU en caisses de{" "}
-        {fmt(tailleMoteur)} SCU{terminal.maxBox ? " (la plus grosse que ce comptoir accepte — c'est ce que l'app suppose partout)" : " (par défaut)"}.
+        {fmt(tailleMoteur)} SCU{terminal.maxBox ? " (la plus grosse que ce comptoir accepte, toutes commodités confondues)" : " (par défaut)"}.
+        {terminal.maxBox ? " Une commodité peut y être offerte en caisses plus petites — l'app facture alors SA taille, et la note monte." : ""}
         {rec && rec.taille && rec.taille !== tailleMoteur
           ? " Ta mesure, elle, a été faite en caisses de " + fmt(rec.taille) + " SCU : c'est elle qui a donné k, pas la supposition."
           : ""}
