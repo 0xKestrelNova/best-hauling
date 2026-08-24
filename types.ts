@@ -448,6 +448,53 @@ export type TempsStation = {
   parCaisse: number | null;
 };
 
+// ==============================================================================================
+// Le journal du jeu (#100, ADR-009)
+// ==============================================================================================
+
+/** UNE transaction lue dans `Game.log`. Ce que le jeu écrit, rien de plus : aucun champ n'y est
+ *  déduit d'une table ni d'une hypothèse — la commodité reste un GUID, le lieu une clé de zone.
+ *  C'est `journal.ts` qui offre les deux ponts, et ils rendent `null` plutôt que de deviner. */
+export type TransactionJournal = {
+  /** Epoch en SECONDES, comme les relevés UEX. Le journal date à la milliseconde ; on n'en garde
+   *  pas plus que ce dont le domaine se sert. */
+  at: number;
+  cote: Cote;
+  /** `resourceGUID` en minuscules. Le journal n'associe JAMAIS un nom à ce GUID. */
+  guid: string;
+  /** Le dernier `Location[…]` vu au-dessus — il précède 100 % des 222 transactions mesurées.
+   *  `null` si le journal commence au milieu d'une session : on n'invente pas le comptoir. */
+  lieu: string | null;
+  /** `shopName`, un GABARIT et non un identifiant : `SCShop_Admin_lt_base_g` couvre 32 guichets. */
+  comptoir: string | null;
+  /** SCU, converti depuis les centi-SCU à l'achat. Voir `lireJournal` : les deux côtés n'ont pas
+   *  la même unité, et ce n'est pas supposé mais mesuré. */
+  scu: number;
+  /** aUEC par SCU. Publié à l'ACHAT (`shopPricePerCentiSCU` × 100), DÉDUIT à la vente depuis le
+   *  montant — donc arrondi de ce côté-là, jamais faux. `null` si ni l'un ni l'autre. */
+  prix: number | null;
+  /** Le total réellement payé ou encaissé. */
+  montant: number | null;
+  /** Taille de caisse et nombre de caisses, publiés à l'ACHAT seulement (`Cargo Box Data`). C'est
+   *  la mesure directe de ce que l'ADR-014 et l'ADR-015 modélisent — la vente, elle, n'en dit rien. */
+  taille: number | null;
+  caisses: number | null;
+  autoload: boolean;
+};
+
+/** Une transaction REFUSÉE par le serveur. La ligne ne porte NI commodité NI lieu : seulement le
+ *  type et la cause. Le lieu est celui de la zone courante — un rattachement, pas une certitude. */
+export type RefusJournal = { at: number; lieu: string | null; type: string; resultat: string };
+
+/** Ce qu'une lecture de journal rend. `anomalies` n'est pas décoratif : un motif qui cesse de
+ *  mordre doit SE VOIR, c'est la leçon payée par sc-trade-companion pendant plus d'un an. */
+export type LectureJournal = {
+  transactions: TransactionJournal[];
+  refus: RefusJournal[];
+  lieux: string[];
+  anomalies: string[];
+};
+
 export type CommoditeIdentite = { name: string; kind: string; illegal: boolean };
 
 /** Une entrée de `market.commodities` (data/market.json), publiée par `buildMarket`

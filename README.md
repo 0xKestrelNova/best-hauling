@@ -245,6 +245,7 @@ Fichiers de données (dans [`data/`](data/)) :
 | `market.json` | Graphe d'échange compact (tous les points d'achat/vente, + **code UEX** par commodité). Contient **tout ce qui est vendable**, y compris les commodités sans point d'achat — inertes pour les vues de trading, exploitées par le mode **Butin** | En route, Chaîne, Corrections, **Commodités** (chargé à la demande) |
 | `ships.json` | Vaisseaux avec soute (nom, SCU, photo) | Champ vaisseau |
 | `meta.json` | Métadonnées (date, compteurs, systèmes, **`data_signature`**) | Bandeau de fraîcheur + rebuild conditionnel |
+| `commodites-guid.json` | 206 couples `UUID` → clé de commodité, extraits des fichiers du jeu. **Ne vient pas d'UEX** et ne se régénère pas avec les autres : `node scripts/maj-commodites-guid.mjs`, à la main, aux patchs | Lecture du journal de jeu (#100) |
 
 ### Refresh & rebuild conditionnel
 
@@ -771,6 +772,33 @@ pour l'utilisateur plutôt que le fichier qui a bougé.
 - Fréquence de mise à jour : le `cron` dans [`update-data.yml`](.github/workflows/update-data.yml).
 - Volumes gardés dans les JSON / concurrence des appels : `MAX_ROUTES`, `MAX_LOOPS`, `TOP_SELLS`,
   `FETCH_CONCURRENCY` en tête de [`scripts/build-data.mjs`](scripts/build-data.mjs).
+
+## Lire le journal du jeu
+
+Star Citizen écrit dans `Game.log` **tout ce que tu fais à un comptoir**, en clair et horodaté à la
+milliseconde : ce que tu achètes, à quel prix au SCU, en combien de caisses de quelle taille, et ce
+que le serveur te refuse. C'est la seule source qui ne périme pas — contrairement à UEX, dont un
+point est republié tous les 3,1 jours en médiane.
+
+`journal.ts` sait le lire. Ce n'est **pas encore branché à l'interface** : ce module est du calcul
+pur, et le mécanisme d'accès au fichier attend trois vérifications qui demandent une boîte de
+dialogue navigateur ([ADR-009](docs/superpowers/specs/2026-08-15-veille-du-journal-de-jeu-adr.md)).
+
+Deux ponts sont nécessaires, parce que le journal ne nomme rien :
+
+- **la commodité est un GUID**, et aucune ligne n'y associe jamais un nom. La table vient des
+  fichiers du jeu (`data/commodites-guid.json`, 206 entrées) et une chaîne de trois écritures la
+  raccorde à nos noms UEX — mesuré : **23 des 24 GUID observés, soit 99 % des occurrences** ;
+- **le lieu est une clé de zone** (`RR_HUR_LEO`, `Nyx_Levski`). Ni le nom du comptoir — un gabarit
+  réutilisé 32 fois — ni son identifiant — éphémère dans 173 cas sur 178 — ne désigne un terminal.
+  Les points de Lagrange de Stanton se déduisent, les stations nommées se listent, et **cinq lieux
+  restent volontairement non appariés** : les deux bouts d'un saut affichent les mêmes prix, rien ne
+  les départage. Un lieu non apparié n'invente rien.
+
+Ce que l'appariement doit à la mesure et non au raisonnement : chaque lieu a été confronté aux prix
+UEX du terminal supposé — Everus Harbor 24 achats sur 26, Baijini Point 12/12, MIC-L1 8/8,
+Gaslight 7/7, Ruin Station 6/6. Détails et limites dans
+l'[ADR-017](docs/superpowers/specs/2026-08-24-lire-le-journal-adr.md).
 
 ## Sources de données
 
