@@ -3,6 +3,7 @@ name: Mise à jour des routes UEX
 on:
   schedule:
     - cron: "17,47 * * * *" # toutes les 30 min (à HH:17 / HH:47) — plancher de fraîcheur UEX (~30 min)
+    - cron: "41 4 * * *"    # une fois par jour : le créneau du job `keepalive` (cf. plus bas)
   workflow_dispatch:         # bouton manuel dans l'onglet Actions
   push:
     branches: [ main ]       # redéploie le site à chaque changement de code
@@ -113,9 +114,29 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4
 
+  # Sur un dépôt public, GitHub désactive un workflow `schedule` après 60 jours sans activité sur le
+  # dépôt, et les runs du cron n'en sont pas. C'est arrivé le 2026-11-18 (#207) : 8 jours sans
+  # données fraîches, et aucune alerte, puisque `notify` tourne DANS le workflow coupé. Ce job
+  # rappelle donc chaque jour l'API qui réactive le workflow (ce que fait le bouton « Enable
+  # workflow »). Sur un workflow déjà actif, l'appel répond 204 et ne change rien d'autre.
+  # Une fois par jour, sur son propre créneau, et non aux 48 rafraîchissements quotidiens.
+  keepalive:
+    if: github.event.schedule == '41 4 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write      # (ré)activer ce workflow, et rien de plus : pas de checkout, pas de code
+    steps:
+      - name: Réactiver ce workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: gh api -X PUT "repos/$REPO/actions/workflows/update-data.yml/enable"
+
   # Ouvre une issue si le build/déploiement échoue, la referme au retour à la normale.
+  # Un échec de `keepalive` l'ouvre aussi : c'est sa seule alarme avant que GitHub coupe le cron.
   notify:
-    needs: [build, deploy]
+    needs: [build, deploy, keepalive]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -125,11 +146,13 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
+          KEEPALIVE_RESULT: ${{ needs.keepalive.result }}
         with:
           script: |
             const failed =
               ["failure", "cancelled"].includes(process.env.BUILD_RESULT) ||
-              ["failure", "cancelled"].includes(process.env.DEPLOY_RESULT);
+              ["failure", "cancelled"].includes(process.env.DEPLOY_RESULT) ||
+              ["failure", "cancelled"].includes(process.env.KEEPALIVE_RESULT);
             const { owner, repo } = context.repo;
             const title = "⚠️ Échec de la mise à jour des données UEX";
             const open = await github.rest.issues.listForRepo({
@@ -137,7 +160,7 @@ jobs:
             });
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             if (failed) {
-              const body = `Le workflow a échoué (build: ${process.env.BUILD_RESULT}, deploy: ${process.env.DEPLOY_RESULT}).\n\nRun : ${runUrl}\n\n_Message automatique — cette issue se refermera au prochain succès._`;
+              const body = `Le workflow a échoué (build: ${process.env.BUILD_RESULT}, deploy: ${process.env.DEPLOY_RESULT}, keepalive: ${process.env.KEEPALIVE_RESULT}).\n\nRun : ${runUrl}\n\n_Message automatique — cette issue se refermera au prochain succès._`;
               if (open.data.length) {
                 await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
               } else {
