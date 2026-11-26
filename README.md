@@ -176,6 +176,12 @@ les calculs coûteux (distances) si rien n'a bougé. Les 30 min sont le **planch
 qui met ses prix en cache ~30 min ; un push ou un lancement manuel forcent une reconstruction complète.
 En cas d'échec, une **issue est ouverte automatiquement** (et refermée au retour à la normale).
 
+Sur un dépôt public, GitHub **coupe un cron après 60 jours sans activité** sur le dépôt, et les runs
+du cron ne comptent pas comme activité. Le job `keepalive` réactive donc le workflow une fois par jour
+(créneau `41 4 * * *`, droit `actions: write` sur ce seul job). S'il échoue, l'issue de panne s'ouvre
+comme pour un build raté. Si le cron est coupé quand même (`gh workflow list --all` affiche
+`disabled_inactivity`), relance-le avec `gh workflow enable update-data.yml`.
+
 ## Architecture
 
 ```

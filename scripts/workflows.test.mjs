@@ -82,3 +82,25 @@ test("le token n'est pas laissé en clair dans les workspaces qui exécutent du 
     }
   }
 });
+
+test("update-data.yml : le cron se réactive lui-même, faute de quoi GitHub le coupe en silence", () => {
+  // Sur un dépôt public, GitHub désactive un workflow `schedule` après 60 jours sans activité sur
+  // le dépôt. Les runs du cron ne comptent pas comme activité. C'est arrivé le 2026-11-18 (#207),
+  // et rien ne l'a signalé, puisque `notify` tourne DANS le workflow coupé.
+  const y = lire("update-data.yml");
+  const crons = [...y.matchAll(/- cron: "([^"]+)"/g)].map((m) => m[1]);
+  const j = jobs(y);
+  assert.ok(j.keepalive, "un job keepalive existe");
+  // Le job ne tourne que sur SON créneau, pas aux 48 rafraîchissements quotidiens.
+  const garde = j.keepalive.match(/if: github\.event\.schedule == '([^']+)'/);
+  assert.ok(garde, "keepalive est gardé par son propre créneau cron");
+  assert.ok(crons.includes(garde[1]), `le créneau « ${garde[1]} » est déclaré dans on.schedule`);
+  assert.match(j.keepalive, /gh api -X PUT [^\n]*\/actions\/workflows\/update-data\.yml\/enable/);
+  // Le droit de (dés)activer des workflows reste dans CE job, jamais global ni dans build.
+  assert.match(j.keepalive, /actions:\s*write/);
+  assert.ok(!/actions:\s*write/.test(permissionsGlobales(y)), "« actions: write » pas global");
+  assert.ok(!/actions:\s*write/.test(j.build), "le job build ne doit pas pouvoir toucher aux workflows");
+  // Un keepalive qui échoue doit ouvrir l'issue de panne : c'est sa seule alarme avant la coupure.
+  assert.match(j.notify, /needs: \[[^\]]*\bkeepalive\b[^\]]*\]/, "notify attend keepalive");
+  assert.match(j.notify, /KEEPALIVE_RESULT/, "notify compte l'échec de keepalive");
+});
