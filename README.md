@@ -457,6 +457,12 @@ affaire à l'escale que je quitte »** et solde ce qui s'y vendait encore. Sans 
 disparaîtrait au moment exact où il devient le sujet. Un geste explicite, lui, passe outre.
 Reculer ne revend rien.
 
+**Le départ s'annonce, et s'annule.** Sous les étapes du voyage, une ligne dit ce que repartir
+vendra, avant tout clic : « Repartir de B vendra : 96 WiDoW — +256 416 aUEC au prix UEX ». Après
+le départ, le message propose **↶ annuler** : la soute revient exactement à ce qu'elle était, et
+tu reviens à l'escale quittée. L'annulation est refusée si la soute a bougé entre-temps. Sauter une
+escale (cliquer deux étapes plus loin) n'y vend rien, et le message le dit (#212).
+
 Ce marqueur **périme en 3 h**, sur la même horloge qu'un volume corrigé — et pour la même raison.
 Un comptoir n'est plein que sur **son shard et à cet instant** : en changeant de shard, ou
 simplement dix minutes plus tard, le même terminal en reprend. Une saturation observée est donc

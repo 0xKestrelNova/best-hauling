@@ -12,9 +12,11 @@
 import {
   addableUnits, bestLegBetween, bestManifest, detacherLotsDeJambe, freeManifestLine,
   legFromManifest, manifestIntent, manifestJourneyState, nommerConvoi, reindexerRangsJambe,
-  removeJourneyStop as removeStopPure, sameIntent, setJourneyPosition, startJourneyAt,
+  journeyStations, removeJourneyStop as removeStopPure, sameIntent, setJourneyPosition, startJourneyAt,
   stationLabel,
 } from "./logic.ts";
+import { texteDepart } from "./format.ts";
+import { showToast } from "./messages.ts";
 import { flushSync } from "react-dom";
 import { etat, notifier } from "./etat.ts";
 import { readFilters } from "./filtres.ts";
@@ -52,12 +54,48 @@ const chargementCourant = () => { const r = manifesteCourant(readFilters()); ret
 
 export function setJourneyStop(i) {
   if (!etat.JOURNEY || !Number.isFinite(i)) return;
+  const depuis = etat.JOURNEY.current;
   // AVANCER sous-entend qu'on a fait son affaire à l'escale qu'on quitte : ce qu'elle reprend part.
   // Reculer, non — on ne revend pas en revenant sur ses pas.
-  if (i > etat.JOURNEY.current) venteImplicite(stationCourante());
+  const vente = i > depuis ? venteImplicite(stationCourante()) : null;
+  // Les escales SAUTÉES (de 0 à 2, B n'a jamais été « ici ») ne vendent rien : on ne vend pas en
+  // cascade dans des comptoirs où l'on ne s'est peut-être pas posé. Mais il faut le DIRE (#212) —
+  // sinon passer par B vend tout et sauter B garde tout, sans que rien n'explique la différence.
+  const stations = journeyStations(etat.JOURNEY);
+  const sautees = i > depuis + 1 ? stations.slice(depuis + 1, i).map((s) => s.name) : [];
   etat.JOURNEY = setJourneyPosition(etat.JOURNEY, i);
   syncViewsToJourney();
   rafraichir();
+  const texte = texteDepart({
+    quitte: stations[depuis]?.name ?? "", ventes: vente ? vente.ventes : [], profit: vente ? vente.profit : 0, sautees,
+  });
+  if (!texte) return;
+  // « ↶ annuler » n'existe que s'il y a eu une vente : un saut sans vente se défait en recliquant.
+  // La position d'arrivée est figée MAINTENANT : relue au clic, elle dirait toujours « rien n'a bougé ».
+  const vers = etat.JOURNEY.current;
+  showToast(texte, vente ? { label: "↶ annuler", run: () => annulerDepart(vente, depuis, vers) } : undefined);
+}
+
+/**
+ * Défait la vente du départ (#212) : la soute revient EXACTEMENT à son état d'avant, et la position
+ * à l'escale qu'on avait quittée. Un clic de trop sur une étape vendait la soute sans retour.
+ *
+ * Refusé si la soute a bougé depuis (une vente, un chargement, une déclaration…) : rétablir l'état
+ * d'avant effacerait ce geste-là, en silence. L'identité suffit à le savoir — chaque mutation de la
+ * soute en produit une nouvelle.
+ */
+export function annulerDepart(vente, depuis, vers) {
+  if (etat.SOUTE !== vente.apres) {
+    showToast("⚠ Trop tard pour annuler : la soute a changé depuis ce départ");
+    return;
+  }
+  etat.SOUTE = vente.avant;
+  saveSoute();
+  // La position ne revient que si l'on n'a pas bougé entre-temps : on ne déplace pas sous les pieds.
+  if (etat.JOURNEY && etat.JOURNEY.current === vers) etat.JOURNEY = setJourneyPosition(etat.JOURNEY, depuis);
+  syncViewsToJourney();
+  rafraichir();
+  showToast(`↶ Départ annulé — rien n'a été vendu à ${vente.quitte}, la soute est rétablie`);
 }
 
 export function clearJourney() {

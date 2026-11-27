@@ -153,14 +153,23 @@ export function vendreIci(nom, units, idxFige) {
     (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord — le comptoir n'en a pas repris plus` : ""));
 }
 
+/**
+ * La vente au DÉPART d'une escale (ADR-002) : tout ce que le comptoir quitté reprend, sauf ce qu'un
+ * refus y protège encore.
+ *
+ * Elle ne dit plus rien elle-même (#212) : c'est `setJourneyStop` qui compose UN message — la vente
+ * et les escales sautées — et qui y accroche « ↶ annuler ». Elle rend donc de quoi l'annuler : la
+ * soute d'AVANT, et celle d'APRÈS, qui permet de vérifier que rien n'a bougé entre-temps.
+ * `null` : rien n'a été vendu.
+ */
 export function venteImplicite(depuis) {
-  if (!etat.SOUTE.length || !etat.MARKET || depuis == null) return;
+  if (!etat.SOUTE.length || !etat.MARKET || depuis == null) return null;
   const r = sellAllAt(etat.SOUTE, etat.MARKET, depuis, effVals);
-  if (!r.ventes.length) return;
+  if (!r.ventes.length) return null;
+  const avant = etat.SOUTE;
   etat.SOUTE = r.hold;
   saveSoute();
-  const quoi = r.ventes.map((v) => `${fmt(v.units)} ${v.name}`).join(", ");
-  showToast(`✓ Vendu en quittant ${etat.MARKET.terminals[depuis].name} : ${quoi} — ${fmtSigne(r.profit)} aUEC`);
+  return { avant, apres: etat.SOUTE, ventes: r.ventes, profit: r.profit, quitte: etat.MARKET.terminals[depuis].name };
 }
 
 export function loadDepots() {
