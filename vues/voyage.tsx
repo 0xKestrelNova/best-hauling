@@ -255,7 +255,7 @@ export function CarteVoyage(p: ProprietesVoyage) {
       {p.apercuDepart ? (
         <p
           className="jdepart-apercu"
-          title="Avancer d'une étape vaut « j'ai fait mon affaire ici ». Une vente partielle, ou un refus déclaré dans la soute, garde le fret à bord. Le message du départ propose « ↶ annuler »."
+          title="Avancer d'une étape vaut « j'ai fait mon affaire ici ». Une vente partielle, ou « ✗ rien repris » dans la soute, garde le fret à bord. Le message du départ propose « ↶ annuler »."
         >
           {p.apercuDepart}
         </p>

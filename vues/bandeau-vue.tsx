@@ -25,7 +25,7 @@ import { createPortal } from "react-dom";
 
 import {
   freeCargo, holdByCommodity, holdScu, journeyMargin, journeyStations, lineFreshUpdated,
-  manifestTotals, offloadPlan, parseStationLabel, sellAllAt, sellableAt,
+  manifestTotals, offloadPlan, parseStationLabel, refusRestant, sellAllAt, sellableAt,
 } from "../logic.ts";
 import { etat, notifier } from "../etat.ts";
 import { readFilters } from "../filtres.ts";
@@ -87,6 +87,7 @@ function Soute() {
       ? offloadPlan(etat.MARKET, etat.SOUTE, ici, f, effVals, feeResolver(f), 5)
       : null,
     pointVente: (nom: string) => (ici != null && etat.MARKET ? sellableAt(etat.MARKET, ici, nom, effVals) : null),
+    refusIci: (nom: string) => (ici != null && etat.MARKET ? refusRestant(etat.SOUTE, nom, etat.MARKET.terminals[ici].name) : 0),
     // Le `kind` n'est pas persisté dans le lot : c'est une propriété de la commodité, pas de la
     // transaction. On le relit au marché quand il est là, et on s'en passe sinon.
     kindDe: (nom: string) => { const c = etat.MARKET && findCommodity(nom); return c ? c.kind : null; },

@@ -141,6 +141,9 @@ export function vendreIci(nom, units, idxFige) {
   if (idx == null || !etat.MARKET) return;
   const pt = sellableAt(etat.MARKET, idx, nom, effVals);
   if (!pt) return;
+  // Rien ne part : c'est un REFUS TOTAL, pas un geste vide (#209). Sortir ici sans marquer les lots
+  // laissait le départ suivant tout vendre, comme si le comptoir avait repris.
+  if (!(Math.floor(units || 0) > 0)) { refuserIci(nom, idx); return; }
   const avant = etat.SOUTE.reduce((s, l) => s + (l.name === nom ? l.units || 0 : 0), 0);
   const r = sellFromHold(etat.SOUTE, nom, units, pt.price);
   if (!r.vendu) return;
@@ -151,6 +154,27 @@ export function vendreIci(nom, units, idxFige) {
   const reste = avant - r.vendu;
   showToast(`✓ ${fmt(r.vendu)} SCU de ${nom} vendus — ${fmtSigne(r.profit)} aUEC` +
     (reste > 0 ? ` · ${fmt(reste)} SCU restent à bord — le comptoir n'en a pas repris plus` : ""));
+}
+
+/**
+ * « ✗ rien repris » : le comptoir n'a rien voulu de cette commodité (#209).
+ *
+ * Aucun SCU ne bouge. Tous les lots de la commodité sont marqués refusés À CETTE STATION, ce qui les
+ * fait traverser le départ intacts — la règle qu'ADR-002 réservait jusqu'ici au reste d'une vente
+ * partielle, et que la vente de 0 SCU n'atteignait jamais. Le marqueur périme comme un refus
+ * partiel (`DUREE_VOL`), et une vente explicite passe toujours outre.
+ */
+export function refuserIci(nom, idxFige) {
+  const idx = Number.isFinite(idxFige) ? idxFige : stationCourante();
+  if (idx == null || !etat.MARKET) return;
+  const t = etat.MARKET.terminals[idx];
+  const scu = etat.SOUTE.reduce((s, l) => s + (l.name === nom ? l.units || 0 : 0), 0);
+  if (!t || scu <= 0) return;
+  etat.SOUTE = refuseHere(etat.SOUTE, nom, t.name);
+  saveSoute();
+  etat.venteEnCours = null;
+  rafraichir();
+  showToast(`✗ ${fmt(scu)} SCU de ${nom} gardés à bord — ${t.name} n'en a rien repris, le départ ne les vendra pas`);
 }
 
 /**

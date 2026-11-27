@@ -9,7 +9,7 @@
 // logic.ts et déjà testés. app.js ne passe ici que ce qui dépend de l'état global — la station
 // courante, le point de vente résolu, l'icône d'une commodité (qui se relit au MARCHÉ), et les
 // deux interrupteurs d'affichage (`venteEnCours`, `ecoulerOuvert`).
-import { fmt } from "../format.ts";
+import { echeanceTexte, fmt } from "../format.ts";
 import { Fragment } from "react";
 import type { GroupeSoute, Destination, VenteAuTerminal, Lot, Station } from "../types.ts";
 import { BadgeSysteme, TagAvantPoste, IconeCommodite } from "./communs.tsx";
@@ -36,6 +36,9 @@ export type ProprietesSoute = {
   marchePret: boolean;
   /** Le point de vente de cette commodité ICI, ou `null` si le comptoir n'en veut pas. */
   pointVente: (nom: string) => VenteAuTerminal | null;
+  /** Secondes pendant lesquelles le comptoir d'ICI est encore tenu pour refuser la commodité — 0
+   *  s'il ne l'a pas refusée (#209). Le départ épargne ces lots : la ligne doit le dire. */
+  refusIci: (nom: string) => number;
   /** Le `kind` d'une commodité — relu au marché, absent du lot (c'est une propriété de la
    *  commodité, pas de la transaction). */
   kindDe: (nom: string) => string | null;
@@ -143,6 +146,7 @@ function LigneSoute({ p, g }: { p: ProprietesSoute; g: GroupeSoute }) {
   const sansAchat = g.lots.every((l) => !l.from) ? " — déclaré à la main, aucun terminal d'achat" : "";
   const pt = p.ici != null && p.marchePret ? p.pointVente(g.name) : null;
   const kind = p.kindDe(g.name);
+  const refus = p.ici != null && p.marchePret ? p.refusIci(g.name) : 0;
 
   return (
     <div className="hold-line">
@@ -163,6 +167,16 @@ function LigneSoute({ p, g }: { p: ProprietesSoute; g: GroupeSoute }) {
         <>
           {" "}
           <span className="hold-butin" title="Rien payé pour ce fret : « où écouler » compte donc tout l'encaissement comme profit">butin</span>
+        </>
+      ) : null}
+      {/* #209 — le marqueur qui fait traverser le départ à ces lots. Invisible, il laissait deviner
+          ce que repartir vendrait ; et il PÉRIME (#20), d'où l'échéance plutôt qu'un simple drapeau. */}
+      {refus > 0 ? (
+        <>
+          {" "}
+          <span className="hold-refus" title="Ce comptoir n'en a pas repris : le départ ne vendra pas ces lots ici. Une vente explicite reste possible.">
+            {`refusé ici · encore ${echeanceTexte(refus)}`}
+          </span>
         </>
       ) : null}
       {/* Vendre suppose que le comptoir reprenne la commodité ; DÉPOSER, non — c'est justement la
@@ -224,6 +238,12 @@ function LigneSoute({ p, g }: { p: ProprietesSoute; g: GroupeSoute }) {
           </label>
           {pt ? (
             <button className="hold-sell-ok" data-name={g.name} title={`Vendre ici à ${fmt(pt.price ?? 0)} aUEC/SCU`}>✓ vendre</button>
+          ) : null}
+          {/* #209 — le comptoir n'a RIEN voulu. Sans ce geste, le seul moyen de garder le fret au
+              départ était une vente partielle d'au moins 1 SCU : « rien » n'avait pas de mot.
+              Offert seulement là où ✓ l'est : ailleurs le départ ne vend déjà rien. */}
+          {pt ? (
+            <button className="hold-refuse" data-name={g.name} title="Le comptoir n'en a rien repris : tout reste à bord, et le départ ne le vendra pas ici">✗ rien repris</button>
           ) : null}
           <button className="hold-store" data-name={g.name} title="Déposer à la station : ni vendu, ni perdu">⬓ déposer</button>
           <button className="hold-sell-no" title="Annuler">✕</button>
