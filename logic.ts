@@ -2091,6 +2091,33 @@ export function loadHold(hold: Lot[], lignes: LigneManifeste[], from: string, at
   return hold.concat(lots);
 }
 
+// Ramène un manifeste à la PLACE LIBRE de la soute, avant de le charger (#210).
+//
+// Le manifeste d'une jambe est chiffré sur la capacité TOTALE (`legManifest`) : c'est voulu pour un
+// plan, puisqu'on ne sait pas ce qui restera à bord trois escales plus loin. Mais au moment de
+// « ✓ chargé », la soute est un fait. Charger sans plafond donnait 123 SCU dans une soute de 96
+// dès qu'un comptoir n'avait pas tout repris.
+//
+// L'ordre du manifeste DÉCIDE : il arrive trié par intérêt (`fillCargo`), donc on garde le début et
+// on laisse la fin au rayon — la ligne qui déborde est entamée, pas sautée. Une ligne `aBord` ne
+// prend aucune place (`loadHold` ne la recharge pas) et traverse telle quelle.
+// `libre` non fini (soute non bornée) : rien n'est plafonné, la même liste revient.
+// Renvoie { lignes, laisses } — `laisses` dit ce qui n'a pas été pris, pour que l'appelant le DISE.
+export function plafonnerLignes(lignes: LigneManifeste[], libre: number | null): { lignes: LigneManifeste[]; laisses: { name: string; units: number }[] } {
+  if (libre == null || !Number.isFinite(libre)) return { lignes, laisses: [] };
+  let place = Math.max(0, Math.floor(libre));
+  const gardees: LigneManifeste[] = [], laisses = [];
+  for (const l of lignes) {
+    const u = Math.max(0, Math.floor(l.units || 0));
+    if (l.aBord || u === 0) { gardees.push(l); continue; }
+    const pris = Math.min(u, place);
+    place -= pris;
+    if (pris > 0) gardees.push(pris === u ? l : { ...l, units: pris });
+    if (pris < u) laisses.push({ name: l.name, units: u - pris });
+  }
+  return { lignes: gardees, laisses };
+}
+
 // La DEUXIÈME entrée de la soute, et la seule qui ne suppose ni voyage, ni jambe, ni manifeste :
 // « j'ai ça à bord ». C'est le repli que l'option D d'ADR-002 réservait aux cargaisons que l'app
 // n'a PAS calculées — butin ramassé, vaisseau rangé plein, achat fait hors du site.

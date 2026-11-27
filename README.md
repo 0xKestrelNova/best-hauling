@@ -437,6 +437,14 @@ négatif : le relevé était faux, c'est tout ce qu'on en sait. Annuler un charg
 même point, se raviser sur la première laisse la seconde déduite. Lui rendre le stock d'avant
 reproposerait une cargaison qui est toujours à bord.
 
+**Charger tient dans la place qui reste.** Le manifeste d'une jambe se chiffre sur la capacité
+totale de la soute : c'est un plan, et on ne sait pas ce qui restera à bord trois escales plus loin.
+Mais au moment de `✓ chargé`, la soute est un fait. S'il reste à bord du fret qu'un comptoir n'a
+pas repris, la jambe se charge dans la **place libre**. Le manifeste est pris dans son ordre, la
+ligne qui déborde est entamée, et un message dit ce qui est **laissé au rayon**. La jambe se fige
+alors sur ce qui a vraiment été chargé. Avant, 90 SCU invendus plus la jambe suivante donnaient
+123 SCU dans une soute de 96 (#210).
+
 **Une jambe chargée le reste tant que tu ne l'annules pas.** Vendre, déposer, vider la soute par son
 ✕ : tous ces gestes sortent le fret, aucun ne le remet en rayon. Le bouton reste donc `⬢ à bord` et
 la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il rend toujours exactement ce
