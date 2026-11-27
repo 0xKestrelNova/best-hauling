@@ -17,7 +17,7 @@ import { debounce } from "./rendu.ts";
 import { etat } from "./etat.ts";
 import {
   basculerEcoulement, declarerABord, deposerIci, fermerDeclaration, fermerVente,
-  ouvrirDeclaration, ouvrirVente, poserPosition, reprendreIci, retirerLot, vendreIci, viderSoute,
+  ouvrirDeclaration, ouvrirVente, poserPosition, refuserIci, reprendreIci, retirerLot, vendreIci, viderSoute,
 } from "./soute-actions.ts";
 import { copierEntrepots } from "./presse-papiers.ts";
 // La seule fonction PURE dont ce module ait besoin : elle tient l'invariant `part + reste = total`
@@ -90,6 +90,12 @@ export function brancherGestesSoute() {
     if (ok) {
       const b = ok.closest(".hold-sell");
       vendreIci(ok.dataset.name, scuQuiPartent(b!), Number(b!.dataset.idx));
+      return;
+    }
+    // #209 — même station figée que ✓ et ⬓ : le refus vaut pour le comptoir dont on lit le prix.
+    const refus = cible(e).closest(".hold-refuse");
+    if (refus) {
+      refuserIci(refus.dataset.name, Number(refus.closest(".hold-sell")!.dataset.idx));
       return;
     }
     const del = cible(e).closest(".hold-del");
