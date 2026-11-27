@@ -438,9 +438,10 @@ même point, se raviser sur la première laisse la seconde déduite. Lui rendre 
 reproposerait une cargaison qui est toujours à bord.
 
 **Une jambe chargée le reste tant que tu ne l'annules pas.** Vendre, déposer, vider la soute par son
-✕ : tous ces gestes sortent le fret, aucun ne le remet en rayon. Le bouton reste donc `⬢ à bord` et
-la déduction reste posée — `⬢ à bord` est le seul chemin de retour, et il rend toujours exactement ce
-qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
+✕ : tous ces gestes sortent le fret, aucun ne le remet en rayon. La jambe reste donc **payée**, et la
+déduction reste posée. Le bouton dit `⬢ à bord` tant qu'il reste du fret de cette jambe en soute,
+puis `✓ payé` une fois tout vendu ou déposé (#211). Dans les deux cas, cliquer **annule l'achat** :
+c'est le seul chemin de retour, et il rend toujours exactement ce qui avait été pris. Sans ça, une soute vidée autrement qu'en annulant rendait la jambe rechargeable,
 et le rayon était déduit une seconde fois depuis un chiffre déjà amputé.
 
 **Vendre, déposer, repartir.** Un bouton par commodité ouvre **deux champs qui se répondent** :

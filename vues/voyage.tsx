@@ -49,8 +49,10 @@ export type Jambe = {
   /** Manifeste personnalisé (✎), et figé par une correction (🔒) plutôt que par toi. */
   editee: boolean;
   figee: boolean;
-  /** Ce manifeste est-il déjà en soute ? */
+  /** Ce manifeste a-t-il été payé et chargé ? C'est le REGISTRE : il survit au fret (#21). */
   chargee: boolean;
+  /** En reste-t-il en soute ? Seul ceci autorise à écrire « à bord » (#211). */
+  aBord: boolean;
   /** `null` tant que le marché n'est pas là : la jambe affiche « calcul… ». */
   lignes: LigneJambe[] | null;
   /** Le rendu du total (`fmtFee`) et le NOMBRE qui décide de son signe et de sa couleur. Les
@@ -188,9 +190,17 @@ function JambeVoyage({ p, j }: { p: ProprietesVoyage; j: Jambe }) {
           <button
             className={"jleg-load" + (j.chargee ? " charge" : "")}
             data-leg={j.i}
-            title={j.chargee ? "Annuler : ce chargement n'est plus à bord" : "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"}
+            title={
+              !j.chargee
+                ? "J'ai payé et chargé ce manifeste — il entre en soute à ce prix"
+                : j.aBord
+                  ? `Annuler l'achat : le fret de cette jambe quitte la soute, et le stock est rendu à ${j.from}`
+                  : `Payé, puis vendu ou déposé : plus rien de cette jambe n'est à bord. Cliquer pour annuler l'achat : le stock est rendu à ${j.from}`
+            }
           >
-            {j.chargee ? "⬢ à bord" : "✓ chargé"}
+            {/* #211 — « à bord » est une affirmation sur la SOUTE, le registre n'en dit rien : il
+                survit au fret (#21). Une jambe payée dont tout a été vendu dit donc « payé ». */}
+            {!j.chargee ? "✓ chargé" : j.aBord ? "⬢ à bord" : "✓ payé"}
           </button>
         ) : null}
         <span className={"jleg-profit " + classeProfit(j.nombreTotal)}>{signe(j.nombreTotal, j.texteTotal)}</span>
