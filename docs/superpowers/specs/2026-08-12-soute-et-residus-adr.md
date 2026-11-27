@@ -368,6 +368,34 @@ désormais sa date et suit cette horloge (`refusActif`, `logic.mjs`).
 Le scénario fondateur de cet ADR — vendre 30 SCU sur 2 200 et repartir avec 2 170 — reste
 intégralement protégé : à l'échelle d'un voyage, rien ne change. Voir #20.
 
+#### Amendement (2026-11-27) — la vente au départ s'annonce, et s'annule
+
+L'audit du chargement en station (propriétaire, 2026-11-27) a mesuré trois défauts de l'étape
+implicite. Aucun ne venait de la règle, tous venaient de ce qu'elle était **muette** :
+
+1. **Un clic vendait sans prévenir.** Le geste existe à trois endroits (pastilles du voyage,
+   Plan de vol, carte 2D), et aucun ne disait qu'il vend.
+2. **Rien ne se rattrapait.** 96 SCU → saut → 0 → retour → **0**, puisque « reculer ne revend
+   rien ». Une erreur de clic coûtait la soute.
+3. **Le résultat dépendait de l'escale cliquée.** Passer par B vendait tout, sauter B (0 → 2) ne
+   vendait rien, et rien n'expliquait la différence.
+
+La règle est **conservée** : avancer vaut toujours « j'ai fait mon affaire ici ». Trois ajouts la
+rendent lisible (#212) :
+
+- **Un aperçu avant le clic**, sous le fil d'étapes : « Repartir de B vendra : 96 WiDoW —
+  +256 416 aUEC au prix UEX ». Il est calculé par le même `sellAllAt` que la vente, avec les mêmes
+  corrections et les mêmes refus, donc l'annonce et le geste ne peuvent pas se contredire.
+- **« ↶ annuler » dans le message du départ.** La soute revient exactement à son état d'avant, et
+  la position revient à l'escale quittée. L'annulation est refusée si la soute a bougé entre-temps
+  (vente, chargement, déclaration), parce que rétablir l'état d'avant effacerait ce geste-là.
+- **Les escales sautées sont dites, et ne vendent pas.** Vendre en cascade dans des comptoirs où
+  l'on ne s'est peut-être pas posé aurait été le pire des deux mondes. Le message nomme les
+  escales sautées : « B sautée : rien n'y a été vendu, le fret reste à bord ».
+
+Écarté : **supprimer la vente implicite** au profit d'un bouton « tout vendu ». Cela remettait une
+ressaisie à chaque escale, c'est-à-dire exactement le coût que ce registre de course supprime.
+
 ### Les lots, et ce qu'ils imposent
 
 La moyenne pondérée était le choix simple ; elle est écartée au profit du **juste**. La soute est

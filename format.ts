@@ -61,6 +61,31 @@ export const echeanceTexte = (s: number | null | undefined): string => {
   return r ? `${h} h ${String(r).padStart(2, "0")}` : `${h} h`;
 };
 
+// ── Le DÉPART d'une escale (#212) ──────────────────────────────────────────────────────────────
+// Avancer d'une étape vend ce que le comptoir quitté reprend (ADR-002). Ces deux textes disent ce
+// que ce geste fait : AVANT le clic (l'aperçu, au futur) et APRÈS (le message, qui nomme aussi les
+// escales sautées — elles ne vendent rien, et sans le dire le résultat semblait arbitraire).
+type VenteDite = { name: string; units: number };
+const listeVentes = (ventes: VenteDite[]) => ventes.map((v) => `${fmt(v.units)} ${v.name}`).join(", ");
+const montant = (n: number) => `${signe(n, fmt(n))} aUEC`;
+const enumerer = (noms: string[]) =>
+  noms.length < 2 ? noms.join("") : `${noms.slice(0, -1).join(", ")} et ${noms[noms.length - 1]}`;
+
+/** L'aperçu sous le fil d'étapes : « Repartir de B vendra : 96 WiDoW — +256 416 aUEC au prix UEX ». */
+export const texteApercuDepart = ({ quitte, ventes, profit }: { quitte: string; ventes: VenteDite[]; profit: number }): string =>
+  `Repartir de ${quitte} vendra : ${listeVentes(ventes)} — ${montant(profit)} au prix UEX`;
+
+/** Le message du départ : la vente s'il y en a une, les escales sautées s'il y en a. "" sinon. */
+export function texteDepart({ quitte, ventes, profit, sautees }: { quitte: string; ventes: VenteDite[]; profit: number; sautees: string[] }): string {
+  const parts = [];
+  if (ventes.length) parts.push(`✓ Vendu en quittant ${quitte} : ${listeVentes(ventes)} — ${montant(profit)}`);
+  if (sautees.length) {
+    const s = `${enumerer(sautees)} ${sautees.length > 1 ? "sautées" : "sautée"} : rien n'y a été vendu`;
+    parts.push(ventes.length ? s : `${s}, le fret reste à bord`);
+  }
+  return parts.join(" · ");
+}
+
 // ── Les libellés de CAISSES ────────────────────────────────────────────────────────────────────
 // Ex. « 3×32 ». Le second paramètre est la taille EMPLOYÉE, et depuis #194 elle vaut par couple
 // (comptoir, COMMODITÉ) : chaque appelant passe donc celle de sa LIGNE, et retombe sur le plafond

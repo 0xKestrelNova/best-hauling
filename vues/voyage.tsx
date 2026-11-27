@@ -72,6 +72,9 @@ export type SuggestionArret = { label: string; terminal: string; commodity: stri
 export type ProprietesVoyage = {
   stations: { name: string; system: string }[];
   courante: number;
+  /** Ce que repartir de l'escale courante vendrait, déjà rédigé — ou `null` s'il n'y a rien à
+   *  vendre, ou pas d'étape suivante (#212). */
+  apercuDepart: string | null;
   nbSauts: number;
   margeCumulee: number;
   /** Sans marché, ni manifeste par jambe, ni suggestion d'arrêt : la carte le dit au lieu de mentir. */
@@ -257,6 +260,16 @@ export function CarteVoyage(p: ProprietesVoyage) {
           </Fragment>
         ))}
       </div>
+      {/* #212 — cliquer l'étape suivante VEND (ADR-002). Le dire ici, juste sous les étapes, avant le
+          clic : c'était le seul geste de l'app qui détruisait de la donnée sans prévenir. */}
+      {p.apercuDepart ? (
+        <p
+          className="jdepart-apercu"
+          title="Avancer d'une étape vaut « j'ai fait mon affaire ici ». Une vente partielle, ou « ✗ rien repris » dans la soute, garde le fret à bord. Le message du départ propose « ↶ annuler »."
+        >
+          {p.apercuDepart}
+        </p>
+      ) : null}
       {n === 0 ? <p className="journey-hint">Départ posé — ajoute un arrêt pour construire ton parcours.</p> : null}
       <div className="journey-legs">
         {p.jambes.map((j) => (

@@ -25,14 +25,14 @@ import { createPortal } from "react-dom";
 
 import {
   freeCargo, holdByCommodity, holdScu, journeyMargin, journeyStations, lineFreshUpdated,
-  manifestTotals, offloadPlan, parseStationLabel, refusRestant, sellableAt,
+  manifestTotals, offloadPlan, parseStationLabel, refusRestant, sellAllAt, sellableAt,
 } from "../logic.ts";
 import { etat, notifier } from "../etat.ts";
 import { readFilters } from "../filtres.ts";
 import { effVals } from "../corrections.ts";
 import { withMarket } from "../donnees.ts";
 import { feeResolver, lineProfitText } from "../frais.ts";
-import { fmtFee } from "../format.ts";
+import { fmtFee, texteApercuDepart } from "../format.ts";
 import { findCommodity, stationCourante } from "../marche.ts";
 import { manifestRemaining, suggestionsFor } from "../manifeste-donnees.ts";
 import {
@@ -131,6 +131,18 @@ function declaration() {
 // ── Le compagnon de voyage ─────────────────────────────────────────────────────────────────────
 // Rend la carte ET son récapitulatif : les totaux du second sont un sous-produit du premier, et les
 // recalculer séparément ferait deux passes de manifestes par jambe pour un seul écran.
+// Ce que REPARTIR de l'escale courante vendrait, sans rien vendre (#212). Le même calcul que la
+// vente du départ (`sellAllAt`, mêmes corrections, mêmes refus), pour que l'annonce et le geste ne
+// puissent pas se contredire. `null` au bout du parcours : il n'y a pas d'étape suivante à cliquer.
+function apercuDuDepart(): string | null {
+  if (!etat.JOURNEY || !etat.MARKET || !etat.SOUTE.length) return null;
+  if (etat.JOURNEY.current >= etat.JOURNEY.legs.length) return null;
+  const ici = stationCourante();
+  if (ici == null) return null;
+  const r = sellAllAt(etat.SOUTE, etat.MARKET, ici, effVals);
+  return r.ventes.length ? texteApercuDepart({ quitte: etat.MARKET.terminals[ici].name, ventes: r.ventes, profit: r.profit }) : null;
+}
+
 function compagnon() {
   if (!etat.JOURNEY) return { carte: inviteVoyage(), recap: null };
 
@@ -187,6 +199,7 @@ function compagnon() {
   return {
     carte: carteVoyage({
       stations, courante: etat.JOURNEY.current, nbSauts: n,
+      apercuDepart: apercuDuDepart(),
       margeCumulee: journeyMargin(etat.JOURNEY),
       marchePret: !!etat.MARKET,
       jambes,

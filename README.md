@@ -472,6 +472,12 @@ affiche alors **« refusé ici · encore 2 h 50 »** : ce que le départ épargn
 Avant, une vente de 0 SCU ne faisait rien, et l'étape suivante soldait toute la soute comme si le
 comptoir l'avait reprise (ADR-018, #209).
 
+**Le départ s'annonce, et s'annule.** Sous les étapes du voyage, une ligne dit ce que repartir
+vendra, avant tout clic : « Repartir de B vendra : 96 WiDoW — +256 416 aUEC au prix UEX ». Après
+le départ, le message propose **↶ annuler** : la soute revient exactement à ce qu'elle était, et
+tu reviens à l'escale quittée. L'annulation est refusée si la soute a bougé entre-temps. Sauter une
+escale (cliquer deux étapes plus loin) n'y vend rien, et le message le dit (#212).
+
 Ce marqueur **périme en 3 h**, sur la même horloge qu'un volume corrigé — et pour la même raison.
 Un comptoir n'est plein que sur **son shard et à cet instant** : en changeant de shard, ou
 simplement dix minutes plus tard, le même terminal en reprend. Une saturation observée est donc

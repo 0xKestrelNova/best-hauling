@@ -1492,6 +1492,17 @@ input.mqty-input.over-stock { color: var(--warn); border-color: var(--warn); box
   opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity 0.25s, transform 0.25s;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
+/* #212 — un message qui porte un geste (« ↶ annuler ») doit pouvoir être cliqué ; les autres
+   restent transparents à la souris pour ne rien masquer. */
+.toast.show.actionable { pointer-events: auto; }
+.toast-action {
+  margin-left: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--warn); background: none;
+  border: 1px solid var(--warn); border-radius: 2px; padding: 2px 8px; cursor: pointer;
+}
+.toast-action:hover { color: var(--panel-solid); background: var(--warn); }
+/* L'aperçu de ce que repartir vendra : sous le fil d'étapes, là où l'on s'apprête à cliquer. */
+.jdepart-apercu { margin: 4px 0 0; font-size: 11px; color: var(--warn); }
 
 /* ---------- Couleurs par catégorie (fond de l'icône) ---------- */
 .k-metal, .k-alloy, .k-manmade { --k-bg: rgba(148,163,184,.14); --k-line: #47566b; }
