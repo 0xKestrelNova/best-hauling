@@ -49,6 +49,18 @@ export const dureeTexte = (s: number | null | undefined): string => {
   return rest ? `${min} min ${rest} s` : `${min} min`;
 };
 
+// Une ÉCHÉANCE, et non une mesure : « encore 2 h 50 » avant qu'un refus de comptoir périme (#209).
+// L'arrondi est au-DESSUS, à la minute : tant qu'il reste quelque chose, la ligne ne dit jamais
+// « 0 min » — elle dirait que le refus est fini alors qu'il protège encore le lot.
+export const echeanceTexte = (s: number | null | undefined): string => {
+  const n = Number(s) || 0;
+  if (!(n > 0)) return "—";
+  const m = Math.ceil(n / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${String(r).padStart(2, "0")}` : `${h} h`;
+};
+
 // ── Les libellés de CAISSES ────────────────────────────────────────────────────────────────────
 // Ex. « 3×32 ». Le second paramètre est la taille EMPLOYÉE, et depuis #194 elle vaut par couple
 // (comptoir, COMMODITÉ) : chaque appelant passe donc celle de sa LIGNE, et retombe sur le plafond

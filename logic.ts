@@ -2228,6 +2228,19 @@ export function refusActif(lot: Lot | null, station: string, nowSec: number = Da
   return nowSec - lot.refuseAt <= dureeVol;
 }
 
+// Combien de secondes le refus d'une commodité protège ENCORE ses lots à cette station — 0 s'il n'y
+// en a pas, ou plus (#209). C'est le chiffre que la ligne de soute affiche : un marqueur invisible
+// laissait l'utilisateur deviner quels lots le départ épargnerait, et jusqu'à quand. La même règle
+// que `refusActif`, pour que l'affichage et la vente ne puissent pas se contredire.
+export function refusRestant(hold: Lot[], name: string, station: string, nowSec: number = Date.now() / 1000, dureeVol: number = DUREE_VOL): number {
+  let reste = 0;
+  for (const l of hold || []) {
+    if (l.name !== name || !refusActif(l, station, nowSec, dureeVol)) continue;
+    reste = Math.max(reste, dureeVol - (nowSec - l.refuseAt));
+  }
+  return reste;
+}
+
 // Date les marqueurs hérités d'avant #20, au chargement de la soute. Sans cette passe ils seraient
 // tous tenus pour périmés d'un coup (voir `refusActif`) et un résidu volontairement gardé pourrait
 // partir à la première étape franchie. On leur offre donc une fenêtre pleine à partir de

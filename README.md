@@ -457,6 +457,12 @@ affaire à l'escale que je quitte »** et solde ce qui s'y vendait encore. Sans 
 disparaîtrait au moment exact où il devient le sujet. Un geste explicite, lui, passe outre.
 Reculer ne revend rien.
 
+**Le comptoir n'a rien repris ?** `✗ rien repris` le dit en un clic : rien ne bouge, et toute la
+commodité est marquée refusée ici. Valider avec **0** dans « partent » revient au même. La ligne
+affiche alors **« refusé ici · encore 2 h 50 »** : ce que le départ épargnera, et jusqu'à quand.
+Avant, une vente de 0 SCU ne faisait rien, et l'étape suivante soldait toute la soute comme si le
+comptoir l'avait reprise (ADR-018, #209).
+
 Ce marqueur **périme en 3 h**, sur la même horloge qu'un volume corrigé — et pour la même raison.
 Un comptoir n'est plein que sur **son shard et à cet instant** : en changeant de shard, ou
 simplement dix minutes plus tard, le même terminal en reprend. Une saturation observée est donc
