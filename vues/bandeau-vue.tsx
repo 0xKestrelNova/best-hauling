@@ -36,7 +36,7 @@ import { fmtFee } from "../format.ts";
 import { findCommodity, stationCourante } from "../marche.ts";
 import { manifestRemaining, suggestionsFor } from "../manifeste-donnees.ts";
 import {
-  generationVoyage, jambeChargee, journeyCarriedCommodities, journeyStopSuggestions,
+  generationVoyage, jambeABord, jambeChargee, journeyCarriedCommodities, journeyStopSuggestions,
   legEffectiveLines, legFeeCtx, legKey, legSuggestCtx,
 } from "../voyage-donnees.ts";
 import { carteDeclaration } from "./declaration.tsx";
@@ -167,7 +167,8 @@ function compagnon() {
       depliee: expanded,
       editee: !!edited,
       figee: !!(edited && etat.JOURNEY_PINS[legKey(leg, i)]), // figée par une correction, pas par toi
-      chargee: !!(etat.MARKET && jambeChargee(leg, i)),       // ce manifeste est-il déjà en soute ?
+      chargee: !!(etat.MARKET && jambeChargee(leg, i)),       // ce manifeste a-t-il été payé et chargé ?
+      aBord: jambeABord(leg, i),                               // et en reste-t-il en soute ? (#211)
       lignes: lines && lines.map((l) => ({
         name: l.name, kind: l.kind, illegal: !!l.illegal, units: l.units,
         acquired: !!l.acquired, vendable: l.sellPrice != null,

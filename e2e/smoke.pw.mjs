@@ -821,7 +821,9 @@ test("Soute : vider la soute ne rend pas la jambe rechargeable, le rayon n'est p
   await page.click("#viewEnroute");
   await page.locator("#holdClear").click();
   await expect(page.locator("#holdCard")).toBeHidden();
-  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/à bord/i);
+  // Toujours payée — donc jamais « ✓ chargé », rechargeable —, mais plus « à bord » : la soute est
+  // vide, et le bouton le dit depuis #211.
+  await expect(page.locator("#journeyCard .jleg-load").first()).toHaveText(/payé/i);
   expect(await stockAchat(page, "Megumi — Pyro", nom)).toBe(Math.max(0, avant - pris));
 
   // Le clic suivant ANNULE, il ne recharge pas : le rayon retrouve exactement sa valeur d'origine.

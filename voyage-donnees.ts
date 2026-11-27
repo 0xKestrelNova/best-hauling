@@ -67,6 +67,12 @@ export function saveJourneyEdits(): void { try { localStorage.setItem(JOURNEY_ED
 // manifeste entre ses jambes 1 et 3 (éditer l'une réécrivait l'autre, la supprimer supprimait l'autre).
 /** Cette jambe est-elle déjà chargée en soute ? Le registre des chargements en est la seule preuve. */
 export const jambeChargee = (leg: Jambe, i: number): boolean => !!etat.CHARGEMENTS[legKey(leg, i)];
+/** Reste-t-il en soute du fret que CETTE jambe a chargé ? Le registre ne le dit pas : il survit au
+ *  fret (#21), puisqu'il porte ce qu'on doit au rayon. Le bouton « ⬢ à bord » doit lire ceci (#211). */
+export const jambeABord = (leg: Jambe, i: number): boolean => {
+  const k = legKey(leg, i);
+  return etat.SOUTE.some((l) => l.leg === k && (l.units || 0) > 0);
+};
 
 export const legKey = (leg: Jambe, i: number): string => `${i}|${leg.from}|${leg.to}`;
 
