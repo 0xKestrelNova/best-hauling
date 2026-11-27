@@ -17,8 +17,8 @@
 // une persistance, un message et un rendu. Le crochet de `rendu.ts` lève le dernier obstacle.
 
 import {
-  declarerLot, holdScu, loadHold,
-  migrerChargements, migrerRefus, parseStationLabel, poserChargement, refuseHere,
+  declarerLot, freeCargo, holdScu, loadHold, manifestIntent,
+  migrerChargements, migrerRefus, parseStationLabel, plafonnerLignes, poserChargement, refuseHere,
   retirerChargement, sellAllAt, sellFromHold, sellableAt, soldeDuPoint, stationLabel,
   stockApres, storeFromHold, takeFromStore,
 } from "./logic.ts";
@@ -96,8 +96,17 @@ export function chargerJambe(i) {
     etat.SOUTE = etat.SOUTE.filter((l) => l.leg !== k);
     updateOvBadge();
   } else {
-    const lignes = legEffectiveLines(leg, i, readFilters());
-    if (!lignes.length) return;
+    const f = readFilters();
+    const prevues = legEffectiveLines(leg, i, f);
+    if (!prevues.length) return;
+    // #210 — la jambe est chiffrée sur la capacité TOTALE ; la soute, elle, peut porter encore ce
+    // qu'un comptoir n'a pas repris. On charge dans la place qui reste VRAIMENT, et on dit le reste.
+    const libre = f.useCargo && f.cargo > 0 ? freeCargo(etat.SOUTE, f.cargo) : null;
+    const { lignes, laisses } = plafonnerLignes(prevues, libre);
+    if (!lignes.some((l) => (l.units || 0) > 0 && !l.aBord)) {
+      showToast(`⚠ Soute pleine — ${fmt(holdScu(etat.SOUTE))} SCU déjà à bord : rien n'a été chargé`);
+      return;
+    }
     const lots = loadHold([], lignes, leg.from, nowSec()).map((l) => ({ ...l, leg: k }));
     // Charger, c'est vider le rayon d'autant.
     const prises = [];
@@ -117,6 +126,12 @@ export function chargerJambe(i) {
     // fige EXPLICITEMENT, et pas seulement par ricochet d'une déduction : un chargement dont aucune
     // commodité n'a de stock publié n'entre dans aucune `prise`, et n'était donc jamais figé.
     if (figerJambe(i, lignes)) { saveJourneyEdits(); saveJourneyPins(); }
+    else if (laisses.length) {
+      // Jambe déjà ajustée à la main (✎) : `figerJambe` ne l'écrase pas, et elle continuerait de
+      // promettre ce qui est resté au rayon. Ce qui a été chargé est un FAIT : il devient l'intention.
+      etat.JOURNEY_EDITS[k] = manifestIntent(lignes);
+      saveJourneyEdits();
+    }
     // Les AUTRES jambes déjà chargées qui achètent le même fret au même rayon : la déduction qu'on
     // vient d'écrire ne doit pas les rétrécir non plus. Celles qui ne sont PAS chargées, si — c'est
     // le stock déduit qui est leur bon chiffre.
@@ -128,9 +143,13 @@ export function chargerJambe(i) {
     }
     etat.SOUTE = etat.SOUTE.concat(lots);
     updateOvBadge();
-    if (vides.length) {
-      showToast(`✓ Chargé — stock mis à 0 pour ${vides.join(", ")} : la station en annonçait moins que ce que tu as pris`);
+    // Un seul message, qui dit TOUT ce qui s'est écarté du manifeste affiché.
+    const ecarts = [];
+    if (laisses.length) {
+      ecarts.push(`soute pleine, laissés au rayon : ${laisses.map((x) => `${fmt(x.units)} ${x.name}`).join(", ")}`);
     }
+    if (vides.length) ecarts.push(`stock mis à 0 pour ${vides.join(", ")} : la station en annonçait moins que ce que tu as pris`);
+    if (ecarts.length) showToast(`✓ Chargé — ${ecarts.join(" · ")}`);
   }
   saveSoute(); saveChargements();
   rafraichir(); // (un seul : le doublon hérité de l'extraction rejouait `saveState` pour rien)

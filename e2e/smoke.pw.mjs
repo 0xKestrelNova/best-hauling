@@ -695,6 +695,11 @@ test("Soute : charger DÉDUIT le stock de la station, et annuler le rend", async
 });
 
 test("Soute : avoir pris plus que le stock publié met le rayon à 0, jamais en négatif", async ({ page }) => {
+  // Une soute assez GRANDE : depuis #210, un chargement tient dans la place libre, et 99 999 SCU
+  // dans une soute de 96 seraient ramenés à 96 — bien en deçà du stock, ce qui ne testerait plus
+  // rien. Ce qui est éprouvé ici, c'est le relevé faux, pas la taille du vaisseau. (Décocher la
+  // soute ne convient pas : la carte de chargement exige une soute bornée.)
+  await page.fill("#cargo", "200000");
   await manifesteDepuis(page, "Megumi — Pyro");
   const nom = await page.locator("#manifest .mline-del").first().getAttribute("data-name");
   // On force la prise BIEN au-delà de ce que la station annonce : le relevé était faux.
